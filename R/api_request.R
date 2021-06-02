@@ -4,7 +4,6 @@ base_url <- if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/a
 #' @importFrom jsonlite fromJSON
 #' @importFrom stringr str_interp str_starts
 make_request <- function(method='GET', query=NULL, body = NULL, parse_response=TRUE, path = ""){
-  print(base_url)
   res <- VERB(
     method,
     url = str_interp("${base_url}${path}"),
