@@ -100,7 +100,7 @@ Table <- setRefClass("Table",
        table_metadata <- make_request(method="GET", path=uri)
 
        max_results <- if(!is.null(limit)) min(limit, table_metadata$numRows) else table_metadata$numRows
-        print(Map(function(variable) variable$name, variables))
+
        rows <- make_rows_request(
          uri=uri,
          max_results=max_results,
