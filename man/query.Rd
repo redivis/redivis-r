@@ -4,7 +4,7 @@
 \alias{query}
 \title{query}
 \usage{
-query(query = "")
+query(query = "", default_project = NULL, default_dataset = NULL)
 }
 \arguments{
 \item{query}{The query string to execute}
