@@ -1,10 +1,11 @@
 
-base_url <- if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")
 
 #' @importFrom httr VERB headers add_headers content status_code
 #' @importFrom jsonlite fromJSON
 #' @importFrom stringr str_interp str_starts
 make_request <- function(method='GET', query=NULL, body = NULL, parse_response=TRUE, path = ""){
+  base_url <- if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")
+
   res <- VERB(
     method,
     url = str_interp("${base_url}${path}"),
@@ -63,7 +64,4 @@ make_rows_request <- function(uri, max_results, query){
   } else {
     Map(function(row) fromJSON(row), unlist(strsplit(rows, '\n')))
   }
-
-
-
 }
