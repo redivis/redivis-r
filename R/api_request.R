@@ -1,5 +1,5 @@
 
-base_url <- if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1query" else Sys.getenv("REDIVIS_API_ENDPOINT")
+base_url <- if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")
 
 #' @importFrom httr VERB headers add_headers content status_code
 #' @importFrom jsonlite fromJSON
