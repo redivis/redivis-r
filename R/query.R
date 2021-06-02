@@ -34,6 +34,8 @@ query <- function(query="") {
       # df[[variable$name]] <- as.difftime(df[[variable$name]])
     }
   }
+
+  df
 }
 
 query_wait_for_finish <- function(previous_response, count = 0){
