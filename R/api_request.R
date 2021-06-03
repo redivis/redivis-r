@@ -8,7 +8,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
 
   res <- VERB(
     method,
-    url = str_interp("${base_url}${path}"),
+    url = str_interp("${base_url}${utils::URLencode(path)}"),
     add_headers("Authorization"=str_interp("Bearer ${get_auth_token()}")),
     query = query,
     body = payload,
@@ -16,10 +16,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
   )
 
   response_content = content(res, as="text", encoding='UTF-8')
-  print(is.null(headers(res)$'content-type'))
-  print(status_code(res))
-  print(headers(res)$'content-type')
-  print(headers(res))
+
   is_json <- FALSE
 
   if (!is.null(headers(res)$'content-type') && str_starts(headers(res)$'content-type', 'application/json') && (status_code(res) >= 400 || parse_response)){
