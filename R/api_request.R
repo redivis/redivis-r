@@ -20,13 +20,15 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
   print(status_code(res))
   print(headers(res)$'content-type')
   print(headers(res))
+  is_json <- FALSE
 
   if (!is.null(headers(res)$'content-type') && str_starts(headers(res)$'content-type', 'application/json') && (status_code(res) >= 400 || parse_response)){
+    is_json <- TRUE
     response_content <- fromJSON(response_content, simplifyVector = FALSE)
   }
 
   if (status_code(res) >= 400){
-    if (str_starts(headers(res)$'content-type', 'application/json')){
+    if (is_json){
       stop(response_content$error$message)
     } else {
       stop(response_content)
