@@ -16,11 +16,8 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
   )
 
   response_content = content(res, as="text", encoding='UTF-8')
-  print(status_code(res))
-  print(headers(res)$'content-type')
-  print(headers(res))
 
-  if (str_starts(headers(res)$'content-type', 'application/json') && (status_code(res) >= 400 || parse_response)){
+  if (!is.na(headers(res)$'content-type') && str_starts(headers(res)$'content-type', 'application/json') && (status_code(res) >= 400 || parse_response)){
     response_content <- fromJSON(response_content, simplifyVector = FALSE)
   }
 
