@@ -22,3 +22,14 @@ Language: en-US
 RoxygenNote: 7.1.0
 Suggests: 
     testthat (>= 2.1.0)
+Collate: 
+    'Organization.R'
+    'User.R'
+    'Dataset.R'
+    'Project.R'
+    'Query.R'
+    'Table.R'
+    'api_request.R'
+    'auth.R'
+    'index.R'
+    'util.R'

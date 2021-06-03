@@ -1,32 +1,28 @@
-#' @title query
-#'
-#' @description Execute a redivis query
-#'
-#' @param query The query string to execute
-#'
-#' @return A data frame object containing the query results
-#' @examples
-#' output_table <- query(query = 'SELECT 1 + 1 AS two')
-#' @import tibble
-#' @importFrom hms as_hms
-#' @export
-query <- function(query="", default_project=NULL, default_dataset=NULL) {
-  payload <- list(query=query)
+#' @include Dataset.R Project.R
+Query <- setRefClass("Query",
+  fields = list(query="character", default_dataset="Dataset", default_project="Project", properties="list"),
+  methods = list(
+    initialize = function(query, default_dataset=NULL, default_project=NULL){
+      payload <- list(query=query)
 
-  if (!is.null(default_project)){
-    payload$defaultProject <- default_project$get_identifier()
-  }
-  if (!is.null(default_dataset)){
-    payload$defaultDataset <- default_dataset$get_identifier()
-  }
+      if (!is.null(default_project)){
+        payload$defaultProject <- default_project$get_identifier()
+      }
+      if (!is.null(default_dataset)){
+        payload$defaultDataset <- default_dataset$get_identifier()
+      }
 
-  res <- make_request(method='POST', path="/queries", payload=payload)
-  res <- query_wait_for_finish(res)
+      .self$properties <- make_request(method='POST', path="/queries", payload=payload)
+    },
+    to_tibble = function() {
+      res <- query_wait_for_finish(.self$properties)
 
-  rows <- make_rows_request(uri=str_interp("/queries/${res$id}"), max_results = res$outputNumRows)
+      rows <- make_rows_request(uri=str_interp("/queries/${res$id}"), max_results = res$outputNumRows)
 
-  rows_to_dataframe(rows, res$outputSchema)
-}
+      rows_to_tibble(rows, res$outputSchema)
+    }
+  )
+)
 
 query_wait_for_finish <- function(previous_response, count = 0){
   if (previous_response$status == 'running' || previous_response$status == 'queued'){

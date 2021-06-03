@@ -1,5 +1,6 @@
-
-rows_to_dataframe <- function(rows, variables){
+#' @import tibble
+#' @importFrom hms as_hms
+rows_to_tibble <- function(rows, variables){
   df <- as_tibble(matrix(unlist(rows), nrow=length(rows), byrow=TRUE), .name_repair="minimal")
   colnames(df) <- Map(function(variable) variable$name, variables)
 
