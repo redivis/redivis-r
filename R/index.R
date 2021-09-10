@@ -21,7 +21,7 @@ query <- function(query="", default_project=NULL, default_dataset=NULL) {
 #'
 #' @return class<user>
 #' @examples
-#' redivis::user('my_username')$project('my_project')$table('my_table')$to_dataframe(limit=100)
+#' redivis::user('my_username')$project('my_project')$table('my_table')$to_tibble(limit=100)
 #'
 #' We can also construct a query scoped to a particular project, removing the need to fully qualify table names
 #' redivis::user('my_username')$project('my_project')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")
@@ -39,7 +39,7 @@ user <- function(name){
 #'
 #' @return class<user>
 #' @examples
-#' redivis::organization('demo_organization')$dataset('some_dataset')$table('a_table')$to_dataframe(limit=100)
+#' redivis::organization('demo_organization')$dataset('some_dataset')$table('a_table')$to_tibble(limit=100)
 #'
 #' We can also construct a query scoped to a particular dataset, removing the need to fully qualify table names
 #' redivis::user('my_username')$project('my_project')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")
@@ -47,3 +47,39 @@ user <- function(name){
 organization <- function(name){
   Organization$new(name=name)
 }
+
+#' @title table
+#'
+#' @description Reference a specific table when the REDIVIS_DEFAULT_PROJECT or REDIVIS_DEFAULT_DATASET env variable is set
+#'
+#' @param name The table's username
+#'
+#' @return class<table>
+#' @examples
+#' redivis::table('a_table')$to_dataframe(limit=100)
+#'
+
+#' @export
+table <- function(name){
+  if (Sys.getenv("REDIVIS_DEFAULT_PROJECT") != ""){
+    user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[1]
+    project_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[2]
+    User$new(name=user_name)$project(name=project_name)$table(name=name)
+
+  }else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != ""){
+    user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[1]
+    dataset_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[2]
+
+    User$new(name=user_name)$dataset(name=dataset_name)$table(name=name)
+  }
+  else{
+    stop("Cannot reference an unqualified table if the neither the REDIVIS_DEFAULT_PROJECT or REDIVIS_DEFAULT_DATASET environment variables are set.")
+  }
+}
+
+
+
+
+
+
+

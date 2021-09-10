@@ -2,7 +2,7 @@
 Table <- setRefClass("Table",
    fields = list(name="character", dataset="Dataset", project="Project"),
    methods = list(
-     to_tibble = function(limit=NULL) {
+     to_tibble = function(max_results=NULL) {
        container <- if (length(dataset$name) == 0) project else dataset
        owner <- if(length(container$user$name) == 0) container$organization else container$user
        uri <- str_interp("/tables/${owner$name}.${container$name}.${name}")
@@ -10,7 +10,7 @@ Table <- setRefClass("Table",
 
        table_metadata <- make_request(method="GET", path=uri)
 
-       max_results <- if(!is.null(limit)) min(limit, table_metadata$numRows) else table_metadata$numRows
+       max_results <- if(!is.null(max_results)) min(max_results, table_metadata$numRows) else table_metadata$numRows
 
        rows <- make_rows_request(
          uri=uri,

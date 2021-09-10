@@ -9,4 +9,3 @@ User <- setRefClass("User",
     }
   )
 )
-

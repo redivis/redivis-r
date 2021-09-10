@@ -14,10 +14,12 @@ Query <- setRefClass("Query",
 
       .self$properties <- make_request(method='POST', path="/queries", payload=payload)
     },
-    to_tibble = function() {
+    to_tibble = function(max_results=NULL) {
       res <- query_wait_for_finish(.self$properties)
 
-      rows <- make_rows_request(uri=str_interp("/queries/${res$id}"), max_results = res$outputNumRows)
+      max_results <- if(!is.null(max_results)) min(max_results, res$outputNumRows) else res$outputNumRows
+
+      rows <- make_rows_request(uri=str_interp("/queries/${res$id}"), max_results=max_results)
 
       rows_to_tibble(rows, res$outputSchema)
     }
