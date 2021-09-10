@@ -3,6 +3,7 @@
 export(organization)
 export(query)
 export(user)
+export(table)
 import(tibble)
 importFrom(hms,as_hms)
 importFrom(httr,VERB)
