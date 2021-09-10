@@ -21,10 +21,10 @@ query <- function(query="", default_project=Sys.getenv("REDIVIS_DEFAULT_PROJECT"
 #'
 #' @return class<user>
 #' @examples
-#' redivis::user('my_username')$project('my_project')$table('my_table')$to_tibble(limit=100)
+#' redivis::user('my_username')$project('my_project')$table('my_table')$to_tibble(max_results=100)
 #'
 #' We can also construct a query scoped to a particular project, removing the need to fully qualify table names
-#' redivis::user('my_username')$project('my_project')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")
+#' redivis::user('my_username')$project('my_project')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 #' @export
 user <- function(name){
   User$new(name=name)
@@ -39,10 +39,10 @@ user <- function(name){
 #'
 #' @return class<user>
 #' @examples
-#' redivis::organization('demo_organization')$dataset('some_dataset')$table('a_table')$to_tibble(limit=100)
+#' redivis::organization('demo_organization')$dataset('some_dataset')$table('a_table')$to_tibble(max_results=100)
 #'
 #' We can also construct a query scoped to a particular dataset, removing the need to fully qualify table names
-#' redivis::user('my_username')$project('my_project')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")
+#' redivis::user('my_username')$project('my_project')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 #' @export
 organization <- function(name){
   Organization$new(name=name)
@@ -56,7 +56,7 @@ organization <- function(name){
 #'
 #' @return class<table>
 #' @examples
-#' redivis::table('a_table')$to_dataframe(limit=100)
+#' redivis::table('a_table')$to_tibble(max_results=100)
 #'
 
 #' @export
