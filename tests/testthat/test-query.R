@@ -4,11 +4,21 @@ test_that("querying works", {
 })
 
 
-test_that("scoped querying works", {
+test_that("scoped table works", {
   Sys.setenv(REDIVIS_DEFAULT_PROJECT="imathews.ghcn precipitation")
   table <- redivis::table(name="merge output")
 
   results <- table$to_tibble(100)
+  print(results)
+  expect_equal(nrow(results), 100)
+})
+
+test_that("scoped querying works", {
+  Sys.setenv(REDIVIS_DEFAULT_PROJECT="imathews.ghcn precipitation")
+  # query <- redivis::user('imathews')$project('ghcn_precipitation')$query("SELECT * FROM merge_output LIMIT 100")
+  query <- redivis::query("SELECT * FROM merge_output LIMIT 100")
+
+  results <- query$to_tibble(100)
   print(results)
   expect_equal(nrow(results), 100)
 })

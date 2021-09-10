@@ -8,7 +8,7 @@
 #' @examples
 #' output_table <- redivis::query(query = 'SELECT 1 + 1 AS two')$to_tibble()
 #' @export
-query <- function(query="", default_project=NULL, default_dataset=NULL) {
+query <- function(query="", default_project=Sys.getenv("REDIVIS_DEFAULT_PROJECT"), default_dataset=Sys.getenv("REDIVIS_DEFAULT_DATASET")) {
   Query$new(query=query, default_project=default_project, default_dataset=default_dataset)
 }
 

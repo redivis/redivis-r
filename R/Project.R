@@ -9,7 +9,7 @@ Project <- setRefClass("Project",
        Table(name=name, project=.self)
      },
      query = function(query){
-       redivis::query(query, default_project = .self)
+       redivis::query(query, default_project = .self$get_identifier())
      }
    )
 )

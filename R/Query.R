@@ -1,15 +1,15 @@
 #' @include Dataset.R Project.R
 Query <- setRefClass("Query",
-  fields = list(query="character", default_dataset="Dataset", default_project="Project", properties="list"),
+  fields = list(query="character", default_dataset="character", default_project="character", properties="list"),
   methods = list(
     initialize = function(query, default_dataset=NULL, default_project=NULL){
       payload <- list(query=query)
 
-      if (!is.null(default_project)){
-        payload$defaultProject <- default_project$get_identifier()
+      if (!is.null(default_project) && default_project != ""){
+        payload$defaultProject <- default_project
       }
-      if (!is.null(default_dataset)){
-        payload$defaultDataset <- default_dataset$get_identifier()
+      if (!is.null(default_dataset) && default_project != "" ){
+        payload$defaultDataset <- default_dataset
       }
 
       .self$properties <- make_request(method='POST', path="/queries", payload=payload)

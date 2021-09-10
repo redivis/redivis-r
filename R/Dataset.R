@@ -11,7 +11,7 @@ Dataset <- setRefClass("Dataset",
        Table$new(name=name, dataset=.self)
      },
      query = function(query){
-       redivis::query(query, default_dataset = .self)
+       redivis::query(query, default_dataset = .self$get_identifier())
      }
    )
 )
