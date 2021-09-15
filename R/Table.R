@@ -45,7 +45,7 @@ Table <- setRefClass("Table",
        )
 
        if (is.null(variables)){
-          rows_to_tibble(rows, variables)
+          rows_to_tibble(rows, variables_list)
        }else {
           rows_to_tibble(
              rows,
