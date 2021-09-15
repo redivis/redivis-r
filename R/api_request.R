@@ -73,33 +73,17 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
 
 #' @importFrom jsonlite fromJSON
 make_rows_request <- function(uri, max_results, query=list()){
-  page = 0
-  page_size = 100000
-
-  rows = ""
-
-  while (page * page_size < max_results){
-    results <- make_request(
-      method="GET",
-      path=str_interp("${uri}/rows"),
-      parse_response=FALSE,
-      query=append(
-        query,
-        list(
-          "startIndex"=page * page_size,
-          "maxResults"=if ((page  + 1) * page_size < max_results) page_size else max_results - (page * page_size)
-        )
+  rows <- make_request(
+    method="GET",
+    path=str_interp("${uri}/rows"),
+    parse_response=FALSE,
+    query=append(
+      query,
+      list(
+        "maxResults"=max_results
       )
     )
-    if (page != 0){
-      rows = paste0(rows, '\n')
-    }
-
-    rows = paste0(rows, results)
-
-    page = page + 1
-  }
-
+  )
 
   if (rows == ""){
     list()
