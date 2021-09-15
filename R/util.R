@@ -6,7 +6,7 @@ rows_to_tibble <- function(rows, variables){
 
   for (variable in variables){
     if (variable$type == 'integer'){
-      df[[variable$name]] <- as.integer(df[[variable$name]])
+      df[[variable$name]] <- as.integer64(df[[variable$name]])
     } else if (variable$type == 'float'){
       df[[variable$name]] <- as.double(df[[variable$name]])
     } else if (variable$type == 'boolean'){

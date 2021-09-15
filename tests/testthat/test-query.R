@@ -24,7 +24,7 @@
 # })
 
 test_that("temp", {
-  table <- redivis::user("imathews")$project("demo_project")$table("nyc_taxis")
+  table <- redivis::user("imathews")$project("bad r data")$table("table 4")
   # query = redivis::query("
   #       SELECT * EXCEPT(__isUpload) FROM imathews.demo_project.nyc_taxis limit 10000
   # ")
