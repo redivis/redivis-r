@@ -8,27 +8,19 @@ Table <- setRefClass("Table",
        uri <- str_interp("/tables/${owner$name}.${container$name}.${name}")
 
 
-       all_variables <- make_paginated_request(path=str_interp("${uri}/variables"))
+       all_variables <- make_paginated_request(path=str_interp("${uri}/variables"), page_size=1000)
 
        if (is.null(variables)){
           variables_list <- all_variables
-          original_variable_names <- Map(function(variable) variable$name, all_variables)
        }else{
-          variables <- str_split(variables, ',')
-          original_variable_names <- variables
           lower_variable_names <- Map(function(variable) tolower(variable), variables)
-          variables_list = list(
-             Filter(
-                function(variable) tolower(variable$name) %in% lower_variable_names,
-                all_variables,
-             )
-          )
-          # TODO
-          # variables_list.sort(
-          #    key=lambda variable: lower_variable_names.index(
-          #       variable["name"].lower()
-          #    )
-          # )
+          variables_list <- Filter(
+              function(variable) tolower(variable$name) %in% lower_variable_names,
+              all_variables
+           )
+          variables_list <- sapply(lower_variable_names,
+            function (name) all_variables[match(name, sapply(all_variables, function(variable) tolower(variable$name)))][1]
+         )
        }
 
 
@@ -40,7 +32,7 @@ Table <- setRefClass("Table",
          uri=uri,
          max_results=max_results,
          query=list(
-           "selectedVariables" = paste(Map(function(variable) variable$name, all_variables), sep='', collapse=',')
+           "selectedVariables" = if (is.null(variables)) NULL else paste(Map(function(variable_name) variable_name, variables), sep='', collapse=',')
          )
        )
 
@@ -49,14 +41,7 @@ Table <- setRefClass("Table",
        }else {
           rows_to_tibble(
              rows,
-             Map(
-                function(variable, variable_name) {
-                   variable$name <- variable_name
-                   variable
-                },
-                variables_list,
-                variables,
-             ),
+             variables_list
           )
        }
 

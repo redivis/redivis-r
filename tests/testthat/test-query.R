@@ -23,12 +23,12 @@
 #   expect_equal(nrow(results), 100)
 # })
 
-test_that("temp", {
-  table <- redivis::user("imathews")$project("demo project")$table("Table 16")
-  # query = redivis::query("
-  #       SELECT * EXCEPT(__isUpload) FROM imathews.demo_project.nyc_taxis limit 10000
-  # ")
-  df = table$to_tibble(1000)
-
-  print(df)
-})
+# test_that("temp", {
+#   table <- redivis::user("imathews")$project("demo project")$table("Table 16")
+#   # query = redivis::query("
+#   #       SELECT * EXCEPT(__isUpload) FROM imathews.demo_project.nyc_taxis limit 10000
+#   # ")
+#   df = table$to_tibble(1000)
+#
+#   print(df)
+# })
