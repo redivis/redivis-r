@@ -3,7 +3,7 @@
 #' @importFrom httr VERB headers add_headers content status_code
 #' @importFrom jsonlite fromJSON
 #' @importFrom stringr str_interp str_starts
-make_request <- function(method='GET', query=NULL, payload = NULL, progress=NULL, parse_response=TRUE, path = ""){
+make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = ""){
   base_url <- if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")
 
   res <- VERB(
@@ -11,7 +11,6 @@ make_request <- function(method='GET', query=NULL, payload = NULL, progress=NULL
     url = str_interp("${base_url}${utils::URLencode(path)}"),
     add_headers("Authorization"=str_interp("Bearer ${get_auth_token()}")),
     query = query,
-    config=progress,
     body = payload,
     encode="json"
   )
@@ -93,7 +92,6 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL){
   for (stream in read_session["streams"]){
     arrow_response <- make_request(
       method="get",
-      progress=progress(),
       path=str_interp('/readStreams/${stream[[1]]$id}'),
       parse_response=FALSE
     )
