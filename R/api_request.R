@@ -3,7 +3,7 @@
 #' @importFrom httr VERB headers add_headers content status_code
 #' @importFrom jsonlite fromJSON
 #' @importFrom stringr str_interp str_starts
-make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = ""){
+make_request <- function(method='GET', query=NULL, payload = NULL, progress=NULL, parse_response=TRUE, path = ""){
   base_url <- if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")
 
   res <- VERB(
@@ -11,9 +11,14 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
     url = str_interp("${base_url}${utils::URLencode(path)}"),
     add_headers("Authorization"=str_interp("Bearer ${get_auth_token()}")),
     query = query,
+    config=progress,
     body = payload,
     encode="json"
   )
+
+  if (!parse_response && status_code(res) < 400){
+    return(res)
+  }
 
   response_content = content(res, as="text", encoding='UTF-8')
 
@@ -72,22 +77,29 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
 
 
 #' @importFrom jsonlite fromJSON
-make_rows_request <- function(uri, max_results, query=list()){
-  rows <- make_request(
-    method="GET",
-    path=str_interp("${uri}/rows"),
-    parse_response=FALSE,
-    query=append(
-      query,
-      list(
-        "maxResults"=max_results
-      )
+make_rows_request <- function(uri, max_results, selected_variables = NULL){
+  read_session <- make_request(
+    method="post",
+    path=str_interp("${uri}/readSessions"),
+    parse_response=TRUE,
+    payload=list(
+        "maxResults"=max_results,
+        "selectedVariables"=selected_variables,
+        "format"="arrow"
     )
   )
 
-  if (rows == ""){
-    list()
-  } else {
-    Map(function(row) fromJSON(row), unlist(strsplit(rows, '\n')))
+  data_frames = list()
+  for (stream in read_session["streams"]){
+    arrow_response <- make_request(
+      method="get",
+      progress=progress(),
+      path=str_interp('/readStreams/${stream[[1]]$id}'),
+      parse_response=FALSE
+    )
+    data_frames <- append(data_frames, read_ipc_stream(content(arrow_response, type="raw"), as_data_frame=TRUE))
   }
+  # TODO: remove once BE is sorted
+  bind_rows(data_frames)[0:max_results,]
+
 }

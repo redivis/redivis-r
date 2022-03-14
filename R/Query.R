@@ -19,9 +19,9 @@ Query <- setRefClass("Query",
 
       max_results <- if(!is.null(max_results)) min(max_results, res$outputNumRows) else res$outputNumRows
 
-      rows <- make_rows_request(uri=str_interp("/queries/${res$id}"), max_results=max_results)
+      df <- make_rows_request(uri=str_interp("/queries/${res$id}"), max_results=max_results)
 
-      rows_to_tibble(rows, res$outputSchema)
+      set_tibble_types(df, res$outputSchema)
     }
   )
 )

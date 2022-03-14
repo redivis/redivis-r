@@ -1,18 +1,19 @@
 
 test_that("streaming table works", {
   organization <- redivis::organization("Demo")
-  dataset <- organization$dataset('Global Historical Climatology Network Daily Weather Data')
+  dataset <- organization$dataset('GHCN Daily Weather Data')
   table <- dataset$table("daily observations")
-  results <- table$to_tibble(100)
+  count <- 10000
+  results <- table$to_tibble(count, variables=list('id'))
   print(results)
-  expect_equal(nrow(results), 100)
+  expect_equal(nrow(results), count)
 })
-
-test_that("streaming table specific variables works", {
-  organization <- redivis::organization("Demo")
-  dataset <- organization$dataset('Global Historical Climatology Network Daily Weather Data')
-  table <- dataset$table("daily observations")
-  results <- table$to_tibble(100, variables=c('DATE', 'ID'))
-  print(results)
-  expect_equal(nrow(results), 100)
-})
+#
+# test_that("streaming table specific variables works", {
+#   organization <- redivis::organization("Demo")
+#   dataset <- organization$dataset('GHCN Daily Weather Data')
+#   table <- dataset$table("daily observations")
+#   results <- table$to_tibble(100, variables=c('DATE', 'ID'))
+#   print(results)
+#   expect_equal(nrow(results), 100)
+# })
