@@ -75,7 +75,6 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
 }
 
 
-#' @importFrom jsonlite fromJSON
 make_rows_request <- function(uri, max_results, selected_variables = NULL){
   read_session <- make_request(
     method="post",

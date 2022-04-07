@@ -19,7 +19,8 @@ Imports:
     stringr (>= 1.4.0),
     tibble (>= 3.0.0),
     arrow (>= 7.0.0),
-    bit64 (>= 4.0.5)
+    bit64 (>= 4.0.5),
+    sf (>= 1.0)
 Encoding: UTF-8
 Language: en-US
 RoxygenNote: 7.1.0

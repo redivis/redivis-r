@@ -3,7 +3,7 @@ Table <- setRefClass("Table",
    fields = list(name="character", dataset="Dataset", project="Project"),
 
    methods = list(
-     to_tibble = function(max_results=NULL, variables=NULL) {
+     to_tibble = function(max_results=NULL, variables=NULL, geography_variable='') {
        container <- if (length(dataset$name) == 0) project else dataset
        owner <- if(length(container$user$name) == 0) container$organization else container$user
        uri <- str_interp("/tables/${owner$name}.${container$name}.${name}")
@@ -35,7 +35,7 @@ Table <- setRefClass("Table",
          selected_variables = if (is.null(variables)) NULL else Map(function(variable_name) variable_name, variables)
        )
 
-       set_tibble_types(df, variables_list)
+       set_tibble_types(df, variables_list, geography_variable)
      }
    )
 )

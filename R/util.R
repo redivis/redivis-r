@@ -1,6 +1,7 @@
 #' @import tibble
 #' @importFrom hms as_hms
-set_tibble_types <- function(df, variables){
+set_tibble_types <- function(df, variables, geography_variable = ''){
+  has_geography = FALSE
   for (variable in variables){
     if (variable$type == 'integer'){
       df[[variable$name]] <- as.integer64(df[[variable$name]])
@@ -19,8 +20,17 @@ set_tibble_types <- function(df, variables){
       df[[variable$name]] <- as.POSIXlt(df[[variable$name]])
     } else if (variable$type == 'time'){
       df[[variable$name]] <- as_hms(df[[variable$name]])
+    } else if (variable$type == 'geography' && !is.null(geography_variable)){
+      has_geography <- TRUE
+      if (geography_variable == ''){
+        geography_variable <- variable$name
+      }
     }
   }
 
-  df
+  if (has_geography){
+    st_as_sf(df, wkt=geography_variable, crs=4326)
+  } else {
+    df
+  }
 }
