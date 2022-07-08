@@ -1,5 +1,6 @@
 #' @import tibble
 #' @importFrom hms as_hms
+#' @importFrom sf st_as_sf
 set_tibble_types <- function(df, variables, geography_variable = ''){
   has_geography = FALSE
   for (variable in variables){

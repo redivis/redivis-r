@@ -74,7 +74,7 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
   results
 }
 
-
+#' @importFrom arrow read_ipc_stream
 make_rows_request <- function(uri, max_results, selected_variables = NULL){
   read_session <- make_request(
     method="post",

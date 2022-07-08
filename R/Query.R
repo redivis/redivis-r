@@ -8,7 +8,7 @@ Query <- setRefClass("Query",
       if (!is.null(default_project) && default_project != ""){
         payload$defaultProject <- default_project
       }
-      if (!is.null(default_dataset) && default_project != "" ){
+      if (!is.null(default_dataset) && default_dataset != "" ){
         payload$defaultDataset <- default_dataset
       }
 
