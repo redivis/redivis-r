@@ -77,6 +77,19 @@ table <- function(name){
   }
 }
 
+#' @title file
+#'
+#' @description Reference a file stored on Redivis
+#'
+#' @param id The id of the file
+#'
+#' @return class<File>
+#' @examples
+#' file <- redivis::file("s335-8ey8zt7bx.qKmzpdttY2ZcaLB0wbRB7A")$download()
+#' @export
+file <- function(id) {
+  File$new(id=id)
+}
 
 
 

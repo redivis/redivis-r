@@ -1,13 +1,19 @@
 
 
-#' @importFrom httr VERB headers add_headers content status_code
+#' @importFrom httr VERB headers add_headers content status_code write_memory write_disk write_stream
 #' @importFrom jsonlite fromJSON
 #' @importFrom stringr str_interp str_starts
-make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = ""){
+make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, stream_callback = NULL){
   base_url <- if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")
+
+  handler <- write_memory()
+
+  if (!is.null(download_path)) handler <- write_disk(download_path, overwrite = download_overwrite)
+  else if (!is.null(stream_callback)) handler <- write_stream(stream_callback)
 
   res <- VERB(
     method,
+    handler,
     url = str_interp("${base_url}${utils::URLencode(path)}"),
     add_headers("Authorization"=str_interp("Bearer ${get_auth_token()}")),
     query = query,
@@ -75,6 +81,7 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
 }
 
 #' @importFrom arrow read_ipc_stream
+#' @importFrom dplyr bind_rows
 make_rows_request <- function(uri, max_results, selected_variables = NULL){
   read_session <- make_request(
     method="post",

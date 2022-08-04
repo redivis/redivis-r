@@ -16,8 +16,8 @@ class<user>
 Reference organization-owned resources on Redivis
 }
 \examples{
-redivis::organization('demo_organization')$dataset('some_dataset')$table('a_table')$to_dataframe(limit=100)
+redivis::organization('demo_organization')$dataset('some_dataset')$table('a_table')$to_tibble(max_results=100)
 
 We can also construct a query scoped to a particular dataset, removing the need to fully qualify table names
-redivis::user('my_username')$project('my_project')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")
+redivis::user('my_username')$project('my_project')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 }

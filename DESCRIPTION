@@ -20,16 +20,18 @@ Imports:
     tibble (>= 3.0.0),
     arrow (>= 7.0.0),
     bit64 (>= 4.0.5),
+    pbapply (>= 1.5-0),
     sf (>= 1.0)
 Encoding: UTF-8
 Language: en-US
-RoxygenNote: 7.1.0
+RoxygenNote: 7.1.2
 Suggests: 
     testthat (>= 2.1.0)
 Collate: 
     'Organization.R'
     'User.R'
     'Dataset.R'
+    'File.R'
     'Project.R'
     'Query.R'
     'Table.R'
