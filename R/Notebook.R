@@ -1,6 +1,7 @@
 #' @importFrom uuid UUIDgenerate
-#' @importFrom arrow write_parquet
+#' @importFrom arrow write_parquet write_dataset
 #' @importFrom httr upload_file
+#' @include Table.R
 Notebook <- setRefClass("Notebook",
    fields = list(current_notebook_job_id="character"),
    methods = list(
@@ -31,19 +32,37 @@ Notebook <- setRefClass("Notebook",
 
        temp_file_path <- str_interp('${folder}/${uuid::UUIDgenerate()}')
 
+       if (is(df,"sf")){
+         sf_column_name <- attr(df, "sf_column")
+         if (is.null(geography_variables)){
+           geography_variables = list(sf_column_name)
+         }
+         wkt_geopoint <- sapply(st_geometry(df), function(x) st_as_text(x))
+         st_geometry(df) <- NULL
+         df[sf_column_name] <- wkt_geopoint
+       }
+
        if(is.character(df)){
          file_path = df
          temp_file_path = NULL
+       } else if (is(df, "Dataset")){
+         dir.create(temp_file_path)
+         arrow::write_dataset(df, 'temp_file_path', format='parquet', max_partitions=1, basename_template="part-{i}.parquet")
+         temp_file_path <- str_interp('${temp_file_path}/part-0.parquet')
+         file_path = temp_file_path
        } else {
           write_parquet(df, sink=temp_file_path)
           file_path = temp_file_path
        }
 
-       make_request(method='PUT', path=str_interp("/notebookJobs/${current_notebook_job_id}/outputTable"), query = query, payload = upload_file(file_path) )
+       res <- make_request(method='PUT', path=str_interp("/notebookJobs/${current_notebook_job_id}/outputTable"), query = query, payload = upload_file(file_path) )
 
        if (!is.null(temp_file_path)){
          file.remove(temp_file_path)
        }
+       print(res)
+       res
+       #Table$new(name=name, dataset=.self)
      }
    )
 )
