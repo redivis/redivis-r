@@ -2,7 +2,7 @@
 #' @importFrom stringr str_interp
 #' @importFrom pbapply pblapply
 Table <- setRefClass("Table",
-   fields = list(name="character", dataset="Dataset", project="Project"),
+   fields = list(name="character", dataset="Dataset", project="Project", properties="list"),
 
    methods = list(
      get_table_request_params = function(max_results, variables, geography_variable=NULL){

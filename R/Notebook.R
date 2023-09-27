@@ -2,6 +2,7 @@
 #' @importFrom arrow write_parquet write_dataset
 #' @importFrom httr upload_file
 #' @include Table.R
+#' @include User.R
 Notebook <- setRefClass("Notebook",
    fields = list(current_notebook_job_id="character"),
    methods = list(
@@ -60,9 +61,13 @@ Notebook <- setRefClass("Notebook",
        if (!is.null(temp_file_path)){
          file.remove(temp_file_path)
        }
-       print(res)
-       res
-       #Table$new(name=name, dataset=.self)
+
+       user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[1]
+       project_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[2]
+       table <- User$new(name=user_name)$project(name=project_name)$table(name=res$name)
+       table$properties <- res
+
+       table
      }
    )
 )
