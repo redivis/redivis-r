@@ -98,9 +98,16 @@ file <- function(id) {
 #'
 #' @return class<Notebook>
 #' @examples
-#' redivis::current_notebook$create_output_table(df)
+#' redivis::current_notebook()$create_output_table(df)
 #' @export
-current_notebook <- if(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != "") Notebook$new(current_notebook_job_id=Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID")) else NULL
+current_notebook <- function() {
+  if(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != "") {
+    Notebook$new(current_notebook_job_id=Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID"))
+  }else {
+    NULL
+  }
+}
+
 
 
 
