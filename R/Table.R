@@ -33,7 +33,7 @@ Table <- setRefClass("Table",
        selected_variables <- if (is.null(variables)) NULL else Map(function(variable_name) variable_name, variables)
        schema <- get_arrow_schema(variables_list)
 
-       if (geography_variable == ''){
+       if (!is.null(geography_variable) && geography_variable == ''){
          geography_variable = NULL
          for (variable in variables_list){
            if (variable$type == 'geography'){
