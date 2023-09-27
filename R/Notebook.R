@@ -37,7 +37,10 @@ Notebook <- setRefClass("Notebook",
        if (is(df,"sf")){
          sf_column_name <- attr(df, "sf_column")
          if (is.null(geography_variables)){
-           geography_variables = list(sf_column_name)
+           query=base::append(
+             query,
+             list("geographyVariables" = list(sf_column_name))
+           )
          }
          wkt_geopoint <- sapply(sf::st_geometry(df), function(x) sf::st_as_text(x))
          sf::st_geometry(df) <- NULL
