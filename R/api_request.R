@@ -1,16 +1,15 @@
 
 
-#' @importFrom httr VERB headers add_headers content status_code write_memory write_disk write_stream upload_file
+#' @importFrom httr VERB headers add_headers content status_code write_memory write_disk write_stream
 #' @importFrom jsonlite fromJSON
 #' @importFrom stringr str_interp str_starts
-make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, stream_callback = NULL, upload_file_path = NULL){
+make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, stream_callback = NULL){
   base_url <- if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")
 
   handler <- write_memory()
 
   if (!is.null(download_path)) handler <- write_disk(download_path, overwrite = download_overwrite)
   else if (!is.null(stream_callback)) handler <- write_stream(stream_callback)
-  else if (!is.null(upload_file_path)) handler <- upload_file(upload_file_path)
 
   res <- VERB(
     method,
