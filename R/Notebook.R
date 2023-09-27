@@ -1,6 +1,7 @@
 #' @importFrom uuid UUIDgenerate
 #' @importFrom arrow write_parquet write_dataset
 #' @importFrom httr upload_file
+#' @importFrom sf st_geometry st_as_text
 #' @include Table.R
 #' @include User.R
 Notebook <- setRefClass("Notebook",
@@ -38,8 +39,8 @@ Notebook <- setRefClass("Notebook",
          if (is.null(geography_variables)){
            geography_variables = list(sf_column_name)
          }
-         wkt_geopoint <- sapply(st_geometry(df), function(x) st_as_text(x))
-         st_geometry(df) <- NULL
+         wkt_geopoint <- sapply(sf::st_geometry(df), function(x) sf::st_as_text(x))
+         sf::st_geometry(df) <- NULL
          df[sf_column_name] <- wkt_geopoint
        }
 
@@ -48,7 +49,7 @@ Notebook <- setRefClass("Notebook",
          temp_file_path = NULL
        } else if (is(df, "Dataset")){
          dir.create(temp_file_path)
-         arrow::write_dataset(df, 'temp_file_path', format='parquet', max_partitions=1, basename_template="part-{i}.parquet")
+         arrow::write_dataset(df, temp_file_path, format='parquet', max_partitions=1, basename_template="part-{i}.parquet")
          temp_file_path <- str_interp('${temp_file_path}/part-0.parquet')
          file_path = temp_file_path
        } else {
