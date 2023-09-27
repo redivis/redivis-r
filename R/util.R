@@ -38,7 +38,7 @@ set_tibble_types <- function(df, variables, geography_variable = ''){
 }
 
 #' @importFrom arrow schema
-#' @importFrom purr map set_names
+#' @importFrom purrr map set_names
 get_arrow_schema <- function(variables){
   schema <- map(variables, function(variable) {
     if (variable$type == 'integer'){
