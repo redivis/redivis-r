@@ -92,5 +92,7 @@ file <- function(id) {
 }
 
 
+current_notebook <- if(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != "") Notebook$new(current_notebook_job_id=Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID")) else NULL
+
 
 

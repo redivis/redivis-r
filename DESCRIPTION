@@ -39,6 +39,7 @@ Collate:
     'Query.R'
     'util.R'
     'Table.R'
+    'Notebook.R'
     'api_request.R'
     'auth.R'
     'index.R'
