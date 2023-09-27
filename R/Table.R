@@ -5,7 +5,7 @@ Table <- setRefClass("Table",
    fields = list(name="character", dataset="Dataset", project="Project"),
 
    methods = list(
-     get_table_request_params = function(max_results, variables, geography_variable){
+     get_table_request_params = function(max_results, variables, geography_variable=NULL){
        container <- if (length(dataset$name) == 0) project else dataset
        owner <- if(length(container$user$name) == 0) container$organization else container$user
        uri <- str_interp("/tables/${owner$name}.${container$name}.${name}")
