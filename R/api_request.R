@@ -80,9 +80,11 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
   results
 }
 
-#' @importFrom arrow read_ipc_stream
-#' @importFrom dplyr bind_rows
-make_rows_request <- function(uri, max_results, selected_variables = NULL){
+#' @importFrom dplyr collect
+#' @importFrom data.table as.data.table
+#' @importFrom arrow read_ipc_stream open_dataset write_feather
+#' @importFrom uuid UUIDgenerate
+make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL){
   read_session <- make_request(
     method="post",
     path=str_interp("${uri}/readSessions"),
@@ -94,16 +96,39 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL){
     )
   )
 
-  data_frames = list()
+  folder <- str_interp('/tmp/redivis/tables/${uuid::UUIDgenerate()}')
+
+  dir.create(folder, recursive = TRUE)
+  dir.create(str_interp('${folder}/stream'))
+  dir.create(str_interp('${folder}/feather'))
+
   for (stream in read_session["streams"]){
     arrow_response <- make_request(
       method="get",
       path=str_interp('/readStreams/${stream[[1]]$id}'),
-      parse_response=FALSE
+      parse_response=FALSE,
+      download_path=str_interp('${folder}/stream/${stream[[1]]$id}')
     )
-    data_frames <- append(data_frames, read_ipc_stream(content(arrow_response, type="raw"), as_data_frame=TRUE))
+
+    # Temporarily store the stream as a file, and then remove it, avoiding needing to bring it into memory
+    arrow::write_feather(arrow::read_ipc_stream(str_interp('${folder}/stream/${stream[[1]]$id}'), as_data_frame = FALSE), str_interp('${folder}/feather/${stream[[1]]$id}'))
+    file.remove(str_interp('${folder}/stream/${stream[[1]]$id}'))
   }
-  # TODO: remove once BE is sorted
-  bind_rows(data_frames)[0:max_results,]
+  arrow_dataset <- arrow::open_dataset(str_interp('${folder}/feather'), format = "feather", schema = schema)
+
+  # TODO: remove head() once BE is sorted
+
+  if (type == 'tibble'){
+    head(arrow_dataset, max_results) %>% dplyr::collect()
+  } else if (type == 'arrow_table'){
+    head(arrow_dataset, max_results)
+  } else if (type == 'arrow_dataset'){
+    arrow_dataset
+  } else if (type == 'data_frame'){
+    as.data.frame(head(arrow_dataset, max_results))
+  } else if (type == 'data_table'){
+    as.data.table(head(arrow_dataset, max_results))
+  }
+
 
 }

@@ -14,6 +14,7 @@ Query <- setRefClass("Query",
 
       .self$properties <- make_request(method='POST', path="/queries", payload=payload)
     },
+
     to_tibble = function(max_results=NULL, geography_variable='') {
       res <- query_wait_for_finish(.self$properties)
 

@@ -15,13 +15,16 @@ Imports:
     hms (>= 1.1.0),
     httr (>= 1.4.0),
     jsonlite (>= 1.6.0),
+    data.table (>= 1.14.8),
     dplyr (>= 1.0.0),
     stringr (>= 1.4.0),
     tibble (>= 3.0.0),
     arrow (>= 7.0.0),
     bit64 (>= 4.0.5),
     pbapply (>= 1.5-0),
-    sf (>= 1.0)
+    sf (>= 1.0),
+    purrr (>= 1.0.0),
+    uuid (>= 1.1-1)
 Encoding: UTF-8
 Language: en-US
 RoxygenNote: 7.1.2
