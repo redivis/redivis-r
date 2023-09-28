@@ -28,7 +28,7 @@ Notebook <- setRefClass("Notebook",
          )
        }
 
-       folder <- '/tmp/redivis/out'
+       folder <- str_interp('/${tempdir()}/redivis/out')
 
        if (!dir.exists(folder)) dir.create(folder, recursive = TRUE)
 

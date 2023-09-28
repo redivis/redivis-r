@@ -82,9 +82,11 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
 
 #' @importFrom dplyr collect
 #' @importFrom data.table as.data.table
-#' @importFrom arrow read_ipc_stream open_dataset write_feather
+#' @importFrom arrow read_ipc_stream open_dataset write_feather RecordBatchStreamReader RecordBatchFileWriter FileOutputStream ReadableFile
 #' @importFrom uuid UUIDgenerate
-make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL){
+#' @importFrom furrr future_map
+#' @importFrom future plan
+make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, stream_count = 1){
   read_session <- make_request(
     method="post",
     path=str_interp("${uri}/readSessions"),
@@ -92,29 +94,54 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
     payload=list(
         "maxResults"=max_results,
         "selectedVariables"=selected_variables,
-        "format"="arrow"
+        "format"="arrow",
+        "requestedStreamCount"=stream_count
     )
   )
 
-  folder <- str_interp('/tmp/redivis/tables/${uuid::UUIDgenerate()}')
+  folder <- str_interp('/${tempdir()}/redivis/tables/${uuid::UUIDgenerate()}')
 
   dir.create(folder, recursive = TRUE)
   dir.create(str_interp('${folder}/stream'))
   dir.create(str_interp('${folder}/feather'))
 
-  for (stream in read_session["streams"]){
+  # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
+  oplan <- future::plan(multicore, workers = stream_count)
+  on.exit(plan(oplan), add = TRUE)
+
+  furrr::future_map(read_session["streams"][[1]], function(stream) {
+    tmp_download_file_path <- str_interp('${folder}/stream/${stream$id}')
+    output_file_path <- str_interp('${folder}/feather/${stream$id}')
+
+    on.exit(unlink(tmp_download_file_path))
+
+    # TODO: should just stream the req, need to upgrade to httr2
     arrow_response <- make_request(
       method="get",
-      path=str_interp('/readStreams/${stream[[1]]$id}'),
+      path=str_interp('/readStreams/${stream$id}'),
       parse_response=FALSE,
-      download_path=str_interp('${folder}/stream/${stream[[1]]$id}')
+      download_path=tmp_download_file_path
     )
 
-    # Temporarily store the stream as a file, and then remove it, avoiding needing to bring it into memory
-    arrow::write_feather(arrow::read_ipc_stream(str_interp('${folder}/stream/${stream[[1]]$id}'), as_data_frame = FALSE), str_interp('${folder}/feather/${stream[[1]]$id}'))
-    file.remove(str_interp('${folder}/stream/${stream[[1]]$id}'))
-  }
-  arrow_dataset <- arrow::open_dataset(str_interp('${folder}/feather'), format = "feather", schema = schema)
+    stream_reader <- arrow::RecordBatchStreamReader$create(arrow::ReadableFile$create(tmp_download_file_path))
+    output_file <- arrow::FileOutputStream$create(output_file_path)
+
+    stream_writer <- arrow::RecordBatchFileWriter$create(output_file, stream_reader$schema)
+
+    while (TRUE){
+      batch = stream_reader$read_next_batch()
+      if (is.null(batch)){
+        break
+      } else {
+        stream_writer$write_batch(batch)
+      }
+    }
+
+    stream_writer$close()
+    output_file$close()
+  })
+
+  arrow_dataset <- arrow::open_dataset(str_interp('${folder}/feather'), format = "feather")
 
   # TODO: remove head() once BE is sorted
 
