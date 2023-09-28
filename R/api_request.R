@@ -85,7 +85,7 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
 #' @importFrom arrow read_ipc_stream open_dataset write_feather RecordBatchStreamReader RecordBatchFileWriter FileOutputStream ReadableFile
 #' @importFrom uuid UUIDgenerate
 #' @importFrom furrr future_map
-#' @importFrom future plan
+#' @importFrom future plan multicore
 make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, stream_count = 1){
   read_session <- make_request(
     method="post",
@@ -106,7 +106,7 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
   dir.create(str_interp('${folder}/feather'))
 
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
-  oplan <- future::plan(multicore, workers = stream_count)
+  oplan <- future::plan(future::multicore, workers = stream_count)
   on.exit(plan(oplan), add = TRUE)
 
   furrr::future_map(read_session["streams"][[1]], function(stream) {
