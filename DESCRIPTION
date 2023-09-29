@@ -24,6 +24,7 @@ Imports:
     pbapply (>= 1.5-0),
     sf (>= 1.0),
     purrr (>= 0.3.0),
+    progressr (>= 0.10.0),
     furrr (>= 0.2.0),
     uuid (>= 1.0.0)
 Encoding: UTF-8
@@ -42,5 +43,4 @@ Collate:
     'Notebook.R'
     'Query.R'
     'api_request.R'
-    'auth.R'
     'index.R'

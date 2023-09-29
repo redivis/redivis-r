@@ -3,19 +3,47 @@
 #' @importFrom httr VERB headers add_headers content status_code write_memory write_disk write_stream
 #' @importFrom jsonlite fromJSON
 #' @importFrom stringr str_interp str_starts
-make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, stream_callback = NULL){
-  base_url <- if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")
+make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, stream_callback = NULL){
 
   handler <- write_memory()
 
   if (!is.null(download_path)) handler <- write_disk(download_path, overwrite = download_overwrite)
-  else if (!is.null(stream_callback)) handler <- write_stream(stream_callback)
+  else if (!is.null(stream_callback)) handler <- write_stream(stream_callback) # TODO
 
+  # req <- httr2::request(str_interp("${base_url}${utils::URLencode(path)}")) %>%
+  #   httr2::req_auth_bearer_token(get_auth_token()) %>%
+  #   httr2::req_method(method)
+  #
+  # if (!is.null(payload)){
+  #   req %>% httr2::req_body_json(payload)
+  # }
+  #
+  # if (!is.null(download_path)){
+  #   if (download_overwrite == FALSE && file.exists(download_path)){
+  #     stop(str_interp("File already exists at path '${download_path}'. To overwrite existing files, set parameter overwrite=TRUE."))
+  #   }
+  #   conn = base::file(download_path, 'w+b')
+  #   httr2::req_stream(req, function(buff) {
+  #     writeBin(buff, conn, append=TRUE)
+  #     print('chunk')
+  #     TRUE
+  #   })
+  #   close(conn)
+  # } else if (as_stream){
+  #   return(httr2::req_stream(req))
+  # } else {
+  #   resp <- httr2::req_perform(req)
+  #   if (parse_response){
+  #     httr2::resp_body_json(resp)
+  #   } else {
+  #     httr2::resp_body_raw(resp)
+  #   }
+  # }
   res <- VERB(
     method,
     handler,
-    url = str_interp("${base_url}${utils::URLencode(path)}"),
-    add_headers("Authorization"=str_interp("Bearer ${get_auth_token()}")),
+    url = generate_api_url(path),
+    add_headers(get_authorization_header()),
     query = query,
     body = payload,
     encode="json"
@@ -82,11 +110,10 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
 
 #' @importFrom dplyr collect
 #' @importFrom data.table as.data.table
-#' @importFrom arrow read_ipc_stream open_dataset write_feather RecordBatchStreamReader RecordBatchFileWriter FileOutputStream ReadableFile
+#' @importFrom arrow open_dataset
 #' @importFrom uuid UUIDgenerate
-#' @importFrom furrr future_map
-#' @importFrom future plan multicore
-make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, stream_count = 1){
+#' @importFrom progressr progress with_progress
+make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, stream_count = 1, progress = TRUE){
   read_session <- make_request(
     method="post",
     path=str_interp("${uri}/readSessions"),
@@ -100,62 +127,88 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
   )
 
   folder <- str_interp('/${tempdir()}/redivis/tables/${uuid::UUIDgenerate()}')
-
   dir.create(folder, recursive = TRUE)
-  dir.create(str_interp('${folder}/stream'))
-  dir.create(str_interp('${folder}/feather'))
+
+  if (progress){
+    progressr::with_progress(parallel_stream_arrow(folder, read_session[[1]], max_results))
+  } else {
+    parallel_stream_arrow(folder, read_session[[1]], max_results)
+  }
+
+  arrow_dataset <- arrow::open_dataset(folder, format = "feather")
+
+  print(folder)
+  # TODO: remove head() once BE is sorted
+  if (type == 'arrow_dataset'){
+    arrow_dataset
+  } else {
+    on.exit(on.exit(unlink(folder)))
+    if (type == 'tibble'){
+      head(arrow_dataset, max_results) %>% dplyr::collect()
+    } else if (type == 'arrow_table'){
+      head(arrow_dataset, max_results)
+    } else if (type == 'data_frame'){
+      as.data.frame(head(arrow_dataset, max_results))
+    } else if (type == 'data_table'){
+      as.data.table(head(arrow_dataset, max_results))
+    }
+  }
+
+}
+
+generate_api_url <- function(path){
+  str_interp('${if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")}${utils::URLencode(path)}')
+}
+
+get_authorization_header <- function(){
+  if (Sys.getenv("REDIVIS_API_TOKEN") == ""){
+    stop("The environment variable REDIVIS_API_TOKEN must be set.")
+  }
+
+  c("Authorization"=str_interp("Bearer ${Sys.getenv('REDIVIS_API_TOKEN')}"))
+}
+
+#' @importFrom furrr future_map
+#' @importFrom future plan multicore
+#' @importFrom progressr progressor
+#' @import arrow
+parallel_stream_arrow <- function(folder, streams, max_results){
+  p <- progressr::progressor(steps = max_results)
 
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
-  oplan <- future::plan(future::multicore, workers = stream_count)
+  oplan <- future::plan(future::multicore, workers = length(streams))
   on.exit(plan(oplan), add = TRUE)
 
-  furrr::future_map(read_session["streams"][[1]], function(stream) {
-    tmp_download_file_path <- str_interp('${folder}/stream/${stream$id}')
-    output_file_path <- str_interp('${folder}/feather/${stream$id}')
+  furrr::future_map(streams, function(stream) {
+    output_file_path <- str_interp('${folder}/${stream$id}')
 
-    on.exit(unlink(tmp_download_file_path))
+    con <- url(generate_api_url(str_interp('/readStreams/${stream$id}')), open = "rb", headers = get_authorization_header())
+    on.exit(close(con))
+    stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
 
-    # TODO: should just stream the req, need to upgrade to httr2
-    arrow_response <- make_request(
-      method="get",
-      path=str_interp('/readStreams/${stream$id}'),
-      parse_response=FALSE,
-      download_path=tmp_download_file_path
-    )
-
-    stream_reader <- arrow::RecordBatchStreamReader$create(arrow::ReadableFile$create(tmp_download_file_path))
     output_file <- arrow::FileOutputStream$create(output_file_path)
-
     stream_writer <- arrow::RecordBatchFileWriter$create(output_file, stream_reader$schema)
 
+    current_progress_rows <- 0
+    last_measured_time <- Sys.time()
     while (TRUE){
       batch = stream_reader$read_next_batch()
+
       if (is.null(batch)){
         break
       } else {
+        current_progress_rows = current_progress_rows + batch$num_rows
+        if (Sys.time() - last_measured_time > 0.2){
+          p(amount = current_progress_rows)
+          current_progress_rows <- 0
+          last_measured_time = Sys.time()
+        }
         stream_writer$write_batch(batch)
       }
     }
+    p(amount = current_progress_rows)
 
     stream_writer$close()
     output_file$close()
   })
-
-  arrow_dataset <- arrow::open_dataset(str_interp('${folder}/feather'), format = "feather")
-
-  # TODO: remove head() once BE is sorted
-
-  if (type == 'tibble'){
-    head(arrow_dataset, max_results) %>% dplyr::collect()
-  } else if (type == 'arrow_table'){
-    head(arrow_dataset, max_results)
-  } else if (type == 'arrow_dataset'){
-    arrow_dataset
-  } else if (type == 'data_frame'){
-    as.data.frame(head(arrow_dataset, max_results))
-  } else if (type == 'data_table'){
-    as.data.table(head(arrow_dataset, max_results))
-  }
-
-
 }

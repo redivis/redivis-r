@@ -53,7 +53,8 @@ Table <- setRefClass("Table",
        )
      },
 
-     to_arrow_dataset = function(max_results=NULL, variables=NULL, stream_count=1){
+     to_arrow_dataset = function(max_results=NULL, variables=NULL, stream_count=1, progress=TRUE){
+
        params <- get_table_request_params(max_results, variables)
 
        make_rows_request(
@@ -62,8 +63,10 @@ Table <- setRefClass("Table",
          selected_variables = params$selected_variables,
          type = 'arrow_dataset',
          schema = params$schema,
-         stream_count = stream_count
+         stream_count = stream_count,
+         progress = progress
        )
+
      },
 
      to_arrow_table = function(max_results=NULL, variables=NULL) {
