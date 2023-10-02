@@ -136,8 +136,7 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
     parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema)
   }
 
-  arrow_dataset <- arrow::open_dataset(folder, format = "feather"#, schema = schema
-                                       )
+  arrow_dataset <- arrow::open_dataset(folder, format = "feather", schema = schema)
 
   # TODO: remove head() once BE is sorted
   if (type == 'arrow_dataset'){
@@ -177,57 +176,12 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
   p <- progressr::progressor(steps = max_results)
   headers <- get_authorization_header()
   strategy <- if (parallelly::supportsMulticore()) future::multicore else future::multisession
-  oplan <- future::plan(strategy, workers = length(streams))
+  oplan <- future::plan(strategy, workers = 1)
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
   on.exit(plan(oplan), add = TRUE)
   base_url = generate_api_url('/readStreams')
 
-  if (coerce_schema){
-    schema_retype_map = list()
-
-    for (field in schema$fields){
-      if (!is.null(schema_retype_map[class(field$type)[1]][[1]])){
-        schema_retype_map[class(field$type)[1]][[1]]$variable_names = append(schema_retype_map[class(field$type)[1]][[1]]$variable_names, c(field$name))
-      }
-      else {
-        if (is(field$type, "Date32")){
-          schema_retype_map <- append(schema_retype_map, list(Date32=list(
-            type="date",
-            variable_names = c(field$name)
-          )))
-        } else if (is(field$type, "Timestamp")){
-          schema_retype_map <- append(schema_retype_map, list(Timestamp=list(
-            type="dateTime",
-            variable_names = c(field$name)
-          )))
-        } else if (is(field$type, "Time64")){
-          schema_retype_map <- append(schema_retype_map, list(Time64=list(
-            type="time",
-            variable_names = c(field$name)
-          )))
-        } else if (is(field$type, "Int64")){
-          schema_retype_map <- append(schema_retype_map, list(Int64=list(
-            type="integer",
-            variable_names = c(field$name)
-          )))
-        } else if (is(field$type, "Float64")){
-          schema_retype_map <- append(schema_retype_map, list(Float64=list(
-            type="float",
-            variable_names = c(field$name)
-          )))
-        }
-        else if (is(field$type, "Boolean")){
-          schema_retype_map <- append(schema_retype_map, list(Boolean=list(
-            type="boolean",
-            variable_names = c(field$name)
-          )))
-        }
-      }
-    }
-  }
-
   furrr::future_map(streams, function(stream) {
-
     output_file_path <- str_interp('${folder}/${stream$id}')
 
     con <- url(str_interp('${base_url}/${stream$id}'), open = "rb", headers = headers)
@@ -235,7 +189,58 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
     stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
 
     output_file <- arrow::FileOutputStream$create(output_file_path)
-    stream_writer <- arrow::RecordBatchFileWriter$create(output_file, schema)
+
+    writer_schema_fields <- list()
+
+    for (field_name in stream_reader$schema$names){
+      writer_schema_fields <- append(writer_schema_fields, schema$GetFieldByName(field_name))
+    }
+
+    if (coerce_schema){
+      schema_retype_map = list()
+
+      for (field in writer_schema_fields){
+        if (!is.null(schema_retype_map[class(field$type)[1]][[1]])){
+          schema_retype_map[class(field$type)[1]][[1]]$variable_names = append(schema_retype_map[class(field$type)[1]][[1]]$variable_names, c(field$name))
+        }
+        else {
+          if (is(field$type, "Date32")){
+            schema_retype_map <- append(schema_retype_map, list(Date32=list(
+              type="date",
+              variable_names = c(field$name)
+            )))
+          } else if (is(field$type, "Timestamp")){
+            schema_retype_map <- append(schema_retype_map, list(Timestamp=list(
+              type="dateTime",
+              variable_names = c(field$name)
+            )))
+          } else if (is(field$type, "Time64")){
+            schema_retype_map <- append(schema_retype_map, list(Time64=list(
+              type="time",
+              variable_names = c(field$name)
+            )))
+          } else if (is(field$type, "Int64")){
+            schema_retype_map <- append(schema_retype_map, list(Int64=list(
+              type="integer",
+              variable_names = c(field$name)
+            )))
+          } else if (is(field$type, "Float64")){
+            schema_retype_map <- append(schema_retype_map, list(Float64=list(
+              type="float",
+              variable_names = c(field$name)
+            )))
+          }
+          else if (is(field$type, "Boolean")){
+            schema_retype_map <- append(schema_retype_map, list(Boolean=list(
+              type="boolean",
+              variable_names = c(field$name)
+            )))
+          }
+        }
+      }
+    }
+
+    stream_writer <- arrow::RecordBatchFileWriter$create(output_file, arrow::schema(writer_schema_fields))
 
     current_progress_rows <- 0
     last_measured_time <- Sys.time()
@@ -316,6 +321,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
                 )
             }
           }
+
           stream_writer$write_batch(as_record_batch(batch))
         } else {
           stream_writer$write_batch(batch)
