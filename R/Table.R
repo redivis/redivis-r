@@ -172,6 +172,6 @@ get_table_request_params = function(self, max_results, variables, geography_vari
     "variables_list" = variables_list,
     "schema"=schema,
     "geography_variable"=geography_variable,
-    "coerce_schema"=is.null(table_metadata$source) || table_metadata$source$kind == 'project'
+    "coerce_schema"=is.null(table_metadata$container) || table_metadata$container$kind == 'project'
   )
 }
