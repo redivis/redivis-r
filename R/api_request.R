@@ -108,12 +108,13 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
   results
 }
 
-#' @importFrom dplyr collect
+#' @importFrom tibble as_tibble
 #' @importFrom data.table as.data.table
 #' @importFrom arrow open_dataset
 #' @importFrom uuid UUIDgenerate
 #' @importFrom progressr progress with_progress
-make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, stream_count = 1, progress = TRUE){
+#' @importFrom parallelly availableCores supportsMulticore
+make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, progress = TRUE, coerce_schema=FALSE){
   read_session <- make_request(
     method="post",
     path=str_interp("${uri}/readSessions"),
@@ -122,7 +123,7 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
         "maxResults"=max_results,
         "selectedVariables"=selected_variables,
         "format"="arrow",
-        "requestedStreamCount"=stream_count
+        "requestedStreamCount"=1 #parallelly::availableCores()
     )
   )
 
@@ -130,24 +131,24 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
   dir.create(folder, recursive = TRUE)
 
   if (progress){
-    progressr::with_progress(parallel_stream_arrow(folder, read_session[[1]], max_results))
+    progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema))
   } else {
-    parallel_stream_arrow(folder, read_session[[1]], max_results)
+    parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema)
   }
 
-  arrow_dataset <- arrow::open_dataset(folder, format = "feather")
+  arrow_dataset <- arrow::open_dataset(folder, format = "feather"#, schema = schema
+                                       )
 
-  print(folder)
   # TODO: remove head() once BE is sorted
   if (type == 'arrow_dataset'){
     arrow_dataset
   } else {
     on.exit(on.exit(unlink(folder)))
-    if (type == 'tibble'){
-      head(arrow_dataset, max_results) %>% dplyr::collect()
-    } else if (type == 'arrow_table'){
+    if (type == 'arrow_table'){
       head(arrow_dataset, max_results)
-    } else if (type == 'data_frame'){
+    }else if (type == 'tibble'){
+     as_tibble(head(arrow_dataset, max_results))
+    }else if (type == 'data_frame'){
       as.data.frame(head(arrow_dataset, max_results))
     } else if (type == 'data_table'){
       as.data.table(head(arrow_dataset, max_results))
@@ -169,31 +170,78 @@ get_authorization_header <- function(){
 }
 
 #' @importFrom furrr future_map
-#' @importFrom future plan multicore
+#' @importFrom future plan multicore multisession
 #' @importFrom progressr progressor
 #' @import arrow
-parallel_stream_arrow <- function(folder, streams, max_results){
+parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema){
   p <- progressr::progressor(steps = max_results)
-
+  headers <- get_authorization_header()
+  strategy <- if (parallelly::supportsMulticore()) future::multicore else future::multisession
+  oplan <- future::plan(strategy, workers = length(streams))
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
-  oplan <- future::plan(future::multicore, workers = length(streams))
   on.exit(plan(oplan), add = TRUE)
+  base_url = generate_api_url('/readStreams')
+
+  if (coerce_schema){
+    schema_retype_map = list()
+
+    for (field in schema$fields){
+      if (!is.null(schema_retype_map[class(field$type)[1]][[1]])){
+        schema_retype_map[class(field$type)[1]][[1]]$variable_names = append(schema_retype_map[class(field$type)[1]][[1]]$variable_names, c(field$name))
+      }
+      else {
+        if (is(field$type, "Date32")){
+          schema_retype_map <- append(schema_retype_map, list(Date32=list(
+            type="date",
+            variable_names = c(field$name)
+          )))
+        } else if (is(field$type, "Timestamp")){
+          schema_retype_map <- append(schema_retype_map, list(Timestamp=list(
+            type="dateTime",
+            variable_names = c(field$name)
+          )))
+        } else if (is(field$type, "Time64")){
+          schema_retype_map <- append(schema_retype_map, list(Time64=list(
+            type="time",
+            variable_names = c(field$name)
+          )))
+        } else if (is(field$type, "Int64")){
+          schema_retype_map <- append(schema_retype_map, list(Int64=list(
+            type="integer",
+            variable_names = c(field$name)
+          )))
+        } else if (is(field$type, "Float64")){
+          schema_retype_map <- append(schema_retype_map, list(Float64=list(
+            type="float",
+            variable_names = c(field$name)
+          )))
+        }
+        else if (is(field$type, "Boolean")){
+          schema_retype_map <- append(schema_retype_map, list(Boolean=list(
+            type="boolean",
+            variable_names = c(field$name)
+          )))
+        }
+      }
+    }
+  }
 
   furrr::future_map(streams, function(stream) {
+
     output_file_path <- str_interp('${folder}/${stream$id}')
 
-    con <- url(generate_api_url(str_interp('/readStreams/${stream$id}')), open = "rb", headers = get_authorization_header())
+    con <- url(str_interp('${base_url}/${stream$id}'), open = "rb", headers = headers)
     on.exit(close(con))
     stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
 
     output_file <- arrow::FileOutputStream$create(output_file_path)
-    stream_writer <- arrow::RecordBatchFileWriter$create(output_file, stream_reader$schema)
+    stream_writer <- arrow::RecordBatchFileWriter$create(output_file, schema)
 
     current_progress_rows <- 0
     last_measured_time <- Sys.time()
+
     while (TRUE){
       batch = stream_reader$read_next_batch()
-
       if (is.null(batch)){
         break
       } else {
@@ -203,7 +251,75 @@ parallel_stream_arrow <- function(folder, streams, max_results){
           current_progress_rows <- 0
           last_measured_time = Sys.time()
         }
-        stream_writer$write_batch(batch)
+        # We need to coerce_schema for all dataset tables, since their underlying storage type is always a string
+        if (coerce_schema){
+          cast = getNamespace("arrow")$cast
+          for (retype_spec in schema_retype_map){
+            names <- retype_spec$variable_names
+
+            if (retype_spec$type == 'date'){
+              batch <- batch %>%
+                mutate(
+                  across(
+                    all_of(names),
+                    ~(cast(cast(.x, timestamp()),date32()))
+                  )
+                )
+            } else if (retype_spec$type == 'dateTime'){
+              batch <- batch %>%
+                mutate(
+                  across(
+                    all_of(names),
+                    ~(cast(.x, timestamp(unit="us")))
+                  )
+                )
+            } else if (retype_spec$type == 'time'){
+              batch <- batch %>%
+                mutate(
+                  across(
+                    all_of(names),
+                    ~(
+                      getNamespace("arrow")$cast(
+                        getNamespace("arrow")$cast(
+                          if_else(is.na(.x), NA, paste0('2000-01-01T', .x)),
+                          timestamp(unit="us")
+                        ),
+                        time64(unit="us")
+                      )
+                    )
+                  )
+                )
+            } else if (retype_spec$type == 'integer'){
+              batch <- batch %>%
+                mutate(
+                  across(
+                    all_of(names),
+                    ~(cast(.x, int64()))
+                  )
+                )
+            } else if (retype_spec$type == 'float'){
+              batch <- batch %>%
+                mutate(
+                  across(
+                    all_of(names),
+                    ~(cast(.x, float64()))
+                  )
+                )
+            }
+            else if (retype_spec$type == 'boolean'){
+              batch <- batch %>%
+                mutate(
+                  across(
+                    all_of(names),
+                    ~(cast(.x, bool()))
+                  )
+                )
+            }
+          }
+          stream_writer$write_batch(as_record_batch(batch))
+        } else {
+          stream_writer$write_batch(batch)
+        }
       }
     }
     p(amount = current_progress_rows)

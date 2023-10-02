@@ -50,10 +50,13 @@ get_arrow_schema <- function(variables){
     } else if (variable$type == 'date'){
       arrow::date32()
     } else if (variable$type == 'dateTime'){
-      arrow::date64()
-    } else if (variable$type == 'time'){
+      arrow::timestamp(unit="us", timezone="")
+    }
+    else if (variable$type == 'time'){
+      #arrow::string()
       arrow::time64(unit="us")
-    } else {
+    }
+    else {
       arrow::string()
     }
   })

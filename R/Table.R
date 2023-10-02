@@ -5,57 +5,8 @@ Table <- setRefClass("Table",
    fields = list(name="character", dataset="Dataset", project="Project", properties="list"),
 
    methods = list(
-     get_table_request_params = function(max_results, variables, geography_variable=NULL){
-       container <- if (length(dataset$name) == 0) project else dataset
-       owner <- if(length(container$user$name) == 0) container$organization else container$user
-       uri <- str_interp("/tables/${owner$name}.${container$name}.${name}")
-
-       all_variables <- make_paginated_request(path=str_interp("${uri}/variables"), page_size=1000)
-
-       if (is.null(variables)){
-         variables_list <- all_variables
-       }else{
-         variables = as.list(variables)
-         lower_variable_names <- Map(function(variable) tolower(variable), variables)
-         variables_list <- Filter(
-           function(variable) tolower(variable$name) %in% lower_variable_names,
-           all_variables
-         )
-         variables_list <- sapply(lower_variable_names,
-                                  function (name) all_variables[match(name, sapply(all_variables, function(variable) tolower(variable$name)))][1]
-         )
-       }
-
-       table_metadata <- make_request(method="GET", path=uri)
-
-       max_results <- if(!is.null(max_results)) min(max_results, table_metadata$numRows) else table_metadata$numRows
-
-       selected_variables <- if (is.null(variables)) NULL else Map(function(variable_name) variable_name, variables)
-       schema <- get_arrow_schema(variables_list)
-
-       if (!is.null(geography_variable) && geography_variable == ''){
-         geography_variable = NULL
-         for (variable in variables_list){
-           if (variable$type == 'geography'){
-             geography_variable <- variable$name
-             break
-           }
-         }
-       }
-
-       list(
-         "max_results" = max_results,
-         "uri" = uri,
-         "selected_variables" = selected_variables,
-         "variables_list" = variables_list,
-         "schema"=schema,
-         "geography_variable"=geography_variable
-       )
-     },
-
-     to_arrow_dataset = function(max_results=NULL, variables=NULL, stream_count=1, progress=TRUE){
-
-       params <- get_table_request_params(max_results, variables)
+     to_arrow_dataset = function(max_results=NULL, variables=NULL, progress=TRUE){
+       params <- get_table_request_params(.self, max_results, variables)
 
        make_rows_request(
          uri=params$uri,
@@ -63,33 +14,35 @@ Table <- setRefClass("Table",
          selected_variables = params$selected_variables,
          type = 'arrow_dataset',
          schema = params$schema,
-         stream_count = stream_count,
-         progress = progress
+         progress = progress,
+         coerce_schema = params$coerce_schema
        )
 
      },
 
      to_arrow_table = function(max_results=NULL, variables=NULL) {
-       params <- get_table_request_params(max_results, variables)
+       params <- get_table_request_params(.self, max_results, variables)
 
        make_rows_request(
          uri=params$uri,
          max_results=params$max_results,
          selected_variables = params$selected_variables,
          type = 'arrow_table',
-         schema = params$schema
+         schema = params$schema,
+         coerce_schema = params$coerce_schema
        )
      },
 
      to_tibble = function(max_results=NULL, variables=NULL, geography_variable='') {
-       params <- get_table_request_params(max_results, variables, geography_variable)
+       params <- get_table_request_params(.self, max_results, variables, geography_variable)
 
        df <- make_rows_request(
          uri=params$uri,
          max_results=params$max_results,
          selected_variables = params$selected_variables,
          type = 'tibble',
-         schema = params$schema
+         schema = params$schema,
+         coerce_schema = params$coerce_schema
        )
 
        if (!is.null(params$geography_variable)){
@@ -100,14 +53,15 @@ Table <- setRefClass("Table",
      },
 
      to_data_frame = function(max_results=NULL, variables=NULL, geography_variable='') {
-       params <- get_table_request_params(max_results, variables, geography_variable)
+       params <- get_table_request_params(.self, max_results, variables, geography_variable)
 
        df <- make_rows_request(
          uri=params$uri,
          max_results=params$max_results,
          selected_variables = params$selected_variables,
          type = 'data_frame',
-         schema = params$schema
+         schema = params$schema,
+         coerce_schema = params$coerce_schema
        )
        if (!is.null(params$geography_variable)){
          st_as_sf(df, wkt=params$geography_variable, crs=4326)
@@ -117,14 +71,15 @@ Table <- setRefClass("Table",
      },
 
      to_data_table = function(max_results=NULL, variables=NULL, geography_variable='') {
-       params <- get_table_request_params(max_results, variables, geography_variable)
+       params <- get_table_request_params(.self, max_results, variables, geography_variable)
 
        df <- make_rows_request(
          uri=params$uri,
          max_results=params$max_results,
          selected_variables = params$selected_variables,
          type = 'data_table',
-         schema = params$schema
+         schema = params$schema,
+         coerce_schema = params$coerce_schema
        )
 
        if (!is.null(params$geography_variable)){
@@ -159,7 +114,9 @@ Table <- setRefClass("Table",
           uri=uri,
           max_results=max_results,
           selected_variables = list(file_id_variable),
-          type='data_table'
+          type='data_table',
+          schema=arrow::schema(arrow::field(file_id_variable, string())),
+          progress=FALSE
         )
         pblapply(df[[file_id_variable]], function(id) {
           File$new(id=id)$download(path = path, overwrite = overwrite)
@@ -167,3 +124,54 @@ Table <- setRefClass("Table",
       }
    )
 )
+
+get_table_request_params = function(self, max_results, variables, geography_variable=NULL){
+  container <- if (length(self$dataset$name) == 0) self$project else self$dataset
+  owner <- if(length(container$user$name) == 0) container$organization else container$user
+  uri <- str_interp("/tables/${owner$name}.${container$name}.${self$name}")
+
+  all_variables <- make_paginated_request(path=str_interp("${uri}/variables"), page_size=1000)
+
+  if (is.null(variables)){
+    variables_list <- all_variables
+  }else{
+    variables = as.list(variables)
+    lower_variable_names <- Map(function(variable) tolower(variable), variables)
+    variables_list <- Filter(
+      function(variable) tolower(variable$name) %in% lower_variable_names,
+      all_variables
+    )
+    variables_list <- sapply(
+      lower_variable_names,
+      function (name) all_variables[match(name, sapply(all_variables, function(variable) tolower(variable$name)))][1]
+    )
+  }
+
+  table_metadata <- make_request(method="GET", path=uri)
+  self$properties = table_metadata
+
+  max_results <- if(!is.null(max_results)) min(max_results, table_metadata$numRows) else table_metadata$numRows
+
+  selected_variables <- if (is.null(variables)) NULL else Map(function(variable_name) variable_name, variables)
+  schema <- get_arrow_schema(variables_list)
+
+  if (!is.null(geography_variable) && geography_variable == ''){
+    geography_variable = NULL
+    for (variable in variables_list){
+      if (variable$type == 'geography'){
+        geography_variable <- variable$name
+        break
+      }
+    }
+  }
+
+  list(
+    "max_results" = max_results,
+    "uri" = uri,
+    "selected_variables" = selected_variables,
+    "variables_list" = variables_list,
+    "schema"=schema,
+    "geography_variable"=geography_variable,
+    "coerce_schema"=is.null(table_metadata$source) || table_metadata$source$kind == 'project'
+  )
+}
