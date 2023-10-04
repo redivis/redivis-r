@@ -1,6 +1,6 @@
 
 
-#' @importFrom httr VERB headers add_headers content status_code write_memory write_disk write_stream
+#' @importFrom httr VERB headers add_headers content status_code write_memory write_disk write_stream timeout
 #' @importFrom jsonlite fromJSON
 #' @importFrom stringr str_interp str_starts
 make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, stream_callback = NULL){
@@ -46,7 +46,8 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
     add_headers(get_authorization_header()),
     query = query,
     body = payload,
-    encode="json"
+    encode="json",
+    httr::timeout(10000)
   )
 
   if (!parse_response && status_code(res) < 400){
