@@ -123,7 +123,7 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
         "maxResults"=max_results,
         "selectedVariables"=selected_variables,
         "format"="arrow",
-        "requestedStreamCount"=1 #parallelly::availableCores()
+        "requestedStreamCount"=parallelly::availableCores()
     )
   )
 
@@ -142,7 +142,7 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
   if (type == 'arrow_dataset'){
     arrow_dataset
   } else {
-    on.exit(on.exit(unlink(folder)))
+    on.exit(unlink(folder))
     if (type == 'arrow_table'){
       head(arrow_dataset, max_results)
     }else if (type == 'tibble'){
@@ -172,6 +172,7 @@ get_authorization_header <- function(){
 #' @importFrom future plan multicore multisession
 #' @importFrom progressr progressor
 #' @import arrow
+#' @import dplyr
 parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema){
   p <- progressr::progressor(steps = max_results)
   headers <- get_authorization_header()
