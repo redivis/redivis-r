@@ -177,7 +177,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
   p <- progressr::progressor(steps = max_results)
   headers <- get_authorization_header()
   strategy <- if (parallelly::supportsMulticore()) future::multicore else future::multisession
-  oplan <- future::plan(strategy, workers = 1)
+  oplan <- future::plan(strategy, workers = length(streams))
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
   on.exit(plan(oplan), add = TRUE)
   base_url = generate_api_url('/readStreams')
