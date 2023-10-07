@@ -199,6 +199,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
     }
 
     if (coerce_schema){
+      cast = getNamespace("arrow")$cast
       schema_retype_map = list()
 
       for (field in writer_schema_fields){
@@ -211,30 +212,9 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
               type="date",
               variable_names = c(field$name)
             )))
-          } else if (is(field$type, "Timestamp")){
-            schema_retype_map <- append(schema_retype_map, list(Timestamp=list(
-              type="dateTime",
-              variable_names = c(field$name)
-            )))
           } else if (is(field$type, "Time64")){
             schema_retype_map <- append(schema_retype_map, list(Time64=list(
               type="time",
-              variable_names = c(field$name)
-            )))
-          } else if (is(field$type, "Int64")){
-            schema_retype_map <- append(schema_retype_map, list(Int64=list(
-              type="integer",
-              variable_names = c(field$name)
-            )))
-          } else if (is(field$type, "Float64")){
-            schema_retype_map <- append(schema_retype_map, list(Float64=list(
-              type="float",
-              variable_names = c(field$name)
-            )))
-          }
-          else if (is(field$type, "Boolean")){
-            schema_retype_map <- append(schema_retype_map, list(Boolean=list(
-              type="boolean",
               variable_names = c(field$name)
             )))
           }
@@ -242,7 +222,8 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
       }
     }
 
-    stream_writer <- arrow::RecordBatchFileWriter$create(output_file, arrow::schema(writer_schema_fields))
+    writer_schema <- arrow::schema(writer_schema_fields)
+    stream_writer <- arrow::RecordBatchFileWriter$create(output_file, schema=writer_schema)
 
     current_progress_rows <- 0
     last_measured_time <- Sys.time()
@@ -260,7 +241,6 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
         }
         # We need to coerce_schema for all dataset tables, since their underlying storage type is always a string
         if (coerce_schema){
-          cast = getNamespace("arrow")$cast
           for (retype_spec in schema_retype_map){
             names <- retype_spec$variable_names
 
@@ -270,14 +250,6 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
                   across(
                     all_of(names),
                     ~(cast(cast(.x, timestamp()),date32()))
-                  )
-                )
-            } else if (retype_spec$type == 'dateTime'){
-              batch <- batch %>%
-                mutate(
-                  across(
-                    all_of(names),
-                    ~(cast(.x, timestamp(unit="us")))
                   )
                 )
             } else if (retype_spec$type == 'time'){
@@ -296,35 +268,10 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
                     )
                   )
                 )
-            } else if (retype_spec$type == 'integer'){
-              batch <- batch %>%
-                mutate(
-                  across(
-                    all_of(names),
-                    ~(cast(.x, int64()))
-                  )
-                )
-            } else if (retype_spec$type == 'float'){
-              batch <- batch %>%
-                mutate(
-                  across(
-                    all_of(names),
-                    ~(cast(.x, float64()))
-                  )
-                )
-            }
-            else if (retype_spec$type == 'boolean'){
-              batch <- batch %>%
-                mutate(
-                  across(
-                    all_of(names),
-                    ~(cast(.x, bool()))
-                  )
-                )
             }
           }
 
-          stream_writer$write_batch(as_record_batch(batch))
+          stream_writer$write_batch(as_record_batch(batch, schema=writer_schema))
         } else {
           stream_writer$write_batch(batch)
         }
