@@ -194,30 +194,21 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
 
     writer_schema_fields <- list()
 
+    # Make sure to only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
     for (field_name in stream_reader$schema$names){
       writer_schema_fields <- append(writer_schema_fields, schema$GetFieldByName(field_name))
     }
 
     if (coerce_schema){
       cast = getNamespace("arrow")$cast
-      schema_retype_map = list()
+      date_variables = c()
+      time_variables = c()
 
       for (field in writer_schema_fields){
-        if (!is.null(schema_retype_map[class(field$type)[1]][[1]])){
-          schema_retype_map[class(field$type)[1]][[1]]$variable_names = append(schema_retype_map[class(field$type)[1]][[1]]$variable_names, c(field$name))
-        }
-        else {
-          if (is(field$type, "Date32")){
-            schema_retype_map <- append(schema_retype_map, list(Date32=list(
-              type="date",
-              variable_names = c(field$name)
-            )))
-          } else if (is(field$type, "Time64")){
-            schema_retype_map <- append(schema_retype_map, list(Time64=list(
-              type="time",
-              variable_names = c(field$name)
-            )))
-          }
+        if (is(field$type, "Date32")){
+          date_variables <- append(date_variables, field$name)
+        } else if (is(field$type, "Time64")){
+          time_variables <- append(time_variables, field$name)
         }
       }
     }
@@ -241,34 +232,12 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
         }
         # We need to coerce_schema for all dataset tables, since their underlying storage type is always a string
         if (coerce_schema){
-          for (retype_spec in schema_retype_map){
-            names <- retype_spec$variable_names
-
-            if (retype_spec$type == 'date'){
-              batch <- batch %>%
-                mutate(
-                  across(
-                    all_of(names),
-                    ~(cast(cast(.x, timestamp()),date32()))
-                  )
-                )
-            } else if (retype_spec$type == 'time'){
-              batch <- batch %>%
-                mutate(
-                  across(
-                    all_of(names),
-                    ~(
-                      getNamespace("arrow")$cast(
-                        getNamespace("arrow")$cast(
-                          if_else(is.na(.x), NA, paste0('2000-01-01T', .x)),
-                          timestamp(unit="us")
-                        ),
-                        time64(unit="us")
-                      )
-                    )
-                  )
-                )
-            }
+          # Note: this approach is much more performant than using %>% mutate(across())
+          for (date_variable in date_variables){
+            batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
+          }
+          for (time_variable in time_variables){
+            batch[[time_variable]] <- arrow::Array$create(paste0('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
           }
 
           stream_writer$write_batch(as_record_batch(batch, schema=writer_schema))
