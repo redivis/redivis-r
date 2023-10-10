@@ -92,6 +92,21 @@ file <- function(id) {
 }
 
 
+#' @title current_notebook
+#'
+#' @description A reference to the current Redivis notebook. Will be NULL if not running in a Redivis notebook environment.
+#'
+#' @return class<Notebook>
+#' @examples
+#' redivis::current_notebook()$create_output_table(df)
+#' @export
+current_notebook <- function() {
+  if(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != "") {
+    Notebook$new(current_notebook_job_id=Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID"))
+  }else {
+    NULL
+  }
+}
 
 
 

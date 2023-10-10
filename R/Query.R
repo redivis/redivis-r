@@ -14,17 +14,156 @@ Query <- setRefClass("Query",
 
       .self$properties <- make_request(method='POST', path="/queries", payload=payload)
     },
-    to_tibble = function(max_results=NULL, geography_variable='') {
-      res <- query_wait_for_finish(.self$properties)
 
-      max_results <- if(!is.null(max_results)) min(max_results, res$outputNumRows) else res$outputNumRows
+    to_arrow_dataset = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL){
+      params <- get_query_request_params(.self, max_results, variables)
 
-      df <- make_rows_request(uri=str_interp("/queries/${res$id}"), max_results=max_results)
+      make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variables = params$selected_variables,
+        type = 'arrow_dataset',
+        schema = params$schema,
+        progress = progress,
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
+      )
+    },
 
-      set_tibble_types(df, res$outputSchema, geography_variable)
+    to_arrow_table = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
+      params <- get_query_request_params(.self, max_results, variables)
+
+      make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variables = params$selected_variables,
+        type = 'arrow_table',
+        schema = params$schema,
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
+      )
+    },
+
+    to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', batch_preprocessor=NULL) {
+      params <- get_query_request_params(.self, max_results, variables, geography_variable)
+
+      if (!is.null(params$geography_variable)){
+        warning('Returning sf tibbles via the to_tibble method is deprecated, and will be removed soon. Please use table$to_sf_tibble() instead.', immediate. = TRUE)
+      }
+
+      df <- make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variables = params$selected_variables,
+        type = 'tibble',
+        schema = params$schema,
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
+      )
+
+      if (!is.null(params$geography_variable)){
+        st_as_sf(df, wkt=params$geography_variable, crs=4326)
+      } else {
+        df
+      }
+    },
+
+    to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', batch_preprocessor=NULL) {
+      params <- get_query_request_params(.self, max_results, variables, geography_variable)
+
+      if (is.null(params$geography_variable)){
+        stop('Unable to find geography variable in table')
+      }
+
+      df <- make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variables = params$selected_variables,
+        type = 'tibble',
+        schema = params$schema,
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
+      )
+
+      st_as_sf(df, wkt=params$geography_variable, crs=4326)
+    },
+
+    to_data_frame = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
+      params <- get_query_request_params(.self, max_results, variables)
+
+      make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variables = params$selected_variables,
+        type = 'data_frame',
+        schema = params$schema,
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
+      )
+    },
+
+    to_data_table = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
+      params <- get_query_request_params(.self, max_results, variables)
+
+      make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variables = params$selected_variables,
+        type = 'data_table',
+        schema = params$schema,
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
+      )
     }
   )
 )
+
+get_query_request_params = function(self, max_results, variables, geography_variable = NULL){
+  res <- query_wait_for_finish(self$properties)
+  self$properties = res
+
+  uri <- str_interp("/queries/${res$id}")
+  all_variables <- res$outputSchema
+  max_results <- if(!is.null(max_results)) min(max_results, res$numRows) else res$numRows
+
+  if (is.null(variables)){
+    variables_list <- all_variables
+  }else{
+    variables = as.list(variables)
+    lower_variable_names <- Map(function(variable) tolower(variable), variables)
+    variables_list <- Filter(
+      function(variable) tolower(variable$name) %in% lower_variable_names,
+      all_variables
+    )
+    variables_list <- sapply(
+      lower_variable_names,
+      function (name) all_variables[match(name, sapply(all_variables, function(variable) tolower(variable$name)))][1]
+    )
+  }
+
+  selected_variables <- if (is.null(variables)) NULL else Map(function(variable_name) variable_name, variables)
+  schema <- get_arrow_schema(variables_list)
+
+  if (!is.null(geography_variable) && geography_variable == ''){
+    geography_variable = NULL
+    for (variable in variables_list){
+      if (variable$type == 'geography'){
+        geography_variable <- variable$name
+        break
+      }
+    }
+  }
+
+  list(
+    "max_results" = max_results,
+    "uri" = uri,
+    "selected_variables" = selected_variables,
+    "variables_list" = variables_list,
+    "schema"=schema,
+    "geography_variable"=geography_variable,
+    "coerce_schema"=FALSE
+  )
+}
 
 query_wait_for_finish <- function(previous_response, count = 0){
   if (previous_response$status == 'running' || previous_response$status == 'queued'){
