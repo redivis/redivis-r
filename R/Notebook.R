@@ -60,7 +60,7 @@ Notebook <- setRefClass("Notebook",
           file_path = temp_file_path
        }
 
-       res <- make_request(method='PUT', path=str_interp("/notebookJobs/${current_notebook_job_id}/outputTable"), query = query, payload = upload_file(file_path), httr::timeout(10000))
+       res <- make_request(method='PUT', path=str_interp("/notebookJobs/${current_notebook_job_id}/outputTable"), query = query, payload = upload_file(file_path))
 
        if (!is.null(temp_file_path)){
          file.remove(temp_file_path)
