@@ -42,12 +42,12 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
   res <- VERB(
     method,
     handler,
+    config = httr::config(connecttimeout = 3600),
     url = generate_api_url(path),
     add_headers(get_authorization_header()),
     query = query,
     body = payload,
     encode="json",
-    httr::timeout(10000)
   )
 
   if (!parse_response && status_code(res) < 400){
