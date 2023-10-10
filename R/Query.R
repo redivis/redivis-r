@@ -15,7 +15,7 @@ Query <- setRefClass("Query",
       .self$properties <- make_request(method='POST', path="/queries", payload=payload)
     },
 
-    to_arrow_dataset = function(max_results=NULL, variables=NULL, progress=TRUE){
+    to_arrow_dataset = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL){
       params <- get_query_request_params(.self, max_results, variables)
 
       make_rows_request(
@@ -25,11 +25,12 @@ Query <- setRefClass("Query",
         type = 'arrow_dataset',
         schema = params$schema,
         progress = progress,
-        coerce_schema = params$coerce_schema
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
       )
     },
 
-    to_arrow_table = function(max_results=NULL, variables=NULL) {
+    to_arrow_table = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
       params <- get_query_request_params(.self, max_results, variables)
 
       make_rows_request(
@@ -38,12 +39,17 @@ Query <- setRefClass("Query",
         selected_variables = params$selected_variables,
         type = 'arrow_table',
         schema = params$schema,
-        coerce_schema = params$coerce_schema
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
       )
     },
 
-    to_tibble = function(max_results=NULL, variables=NULL, geography_variable='') {
+    to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', batch_preprocessor=NULL) {
       params <- get_query_request_params(.self, max_results, variables, geography_variable)
+
+      if (!is.null(params$geography_variable)){
+        warning('Returning sf tibbles via the to_tibble method is deprecated, and will be removed soon. Please use table$to_sf_tibble() instead.', immediate. = TRUE)
+      }
 
       df <- make_rows_request(
         uri=params$uri,
@@ -51,7 +57,8 @@ Query <- setRefClass("Query",
         selected_variables = params$selected_variables,
         type = 'tibble',
         schema = params$schema,
-        coerce_schema = params$coerce_schema
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
       )
 
       if (!is.null(params$geography_variable)){
@@ -61,41 +68,52 @@ Query <- setRefClass("Query",
       }
     },
 
-    to_data_frame = function(max_results=NULL, variables=NULL, geography_variable='') {
+    to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', batch_preprocessor=NULL) {
       params <- get_query_request_params(.self, max_results, variables, geography_variable)
 
+      if (is.null(params$geography_variable)){
+        stop('Unable to find geography variable in table')
+      }
+
       df <- make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variables = params$selected_variables,
+        type = 'tibble',
+        schema = params$schema,
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
+      )
+
+      st_as_sf(df, wkt=params$geography_variable, crs=4326)
+    },
+
+    to_data_frame = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
+      params <- get_query_request_params(.self, max_results, variables)
+
+      make_rows_request(
         uri=params$uri,
         max_results=params$max_results,
         selected_variables = params$selected_variables,
         type = 'data_frame',
         schema = params$schema,
-        coerce_schema = params$coerce_schema
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
       )
-      if (!is.null(params$geography_variable)){
-        st_as_sf(df, wkt=params$geography_variable, crs=4326)
-      } else {
-        df
-      }
     },
 
-    to_data_table = function(max_results=NULL, variables=NULL, geography_variable='') {
-      params <- get_query_request_params(.self, max_results, variables, geography_variable)
+    to_data_table = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
+      params <- get_query_request_params(.self, max_results, variables)
 
-      df <- make_rows_request(
+      make_rows_request(
         uri=params$uri,
         max_results=params$max_results,
         selected_variables = params$selected_variables,
         type = 'data_table',
         schema = params$schema,
-        coerce_schema = params$coerce_schema
+        coerce_schema = params$coerce_schema,
+        batch_preprocessor = batch_preprocessor
       )
-
-      if (!is.null(params$geography_variable)){
-        st_as_sf(df, wkt=params$geography_variable, crs=4326)
-      } else {
-        df
-      }
     }
   )
 )

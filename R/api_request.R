@@ -109,13 +109,29 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
   results
 }
 
+# TODO
+# RedivisBatchReader <- setRefClass(
+#   "RedivisBatchReader",
+#   fields = list(streams = "list", mapped_variables="list", progress="boolean", coerce_schema="boolean" ),
+#
+#   methods = list(
+#     get_next_reader_ = function(){
+#
+#
+#     },
+#     read_next_batch = function() {
+#
+#     }
+#   )
+# )
+
 #' @importFrom tibble as_tibble
 #' @importFrom data.table as.data.table
 #' @importFrom arrow open_dataset
 #' @importFrom uuid UUIDgenerate
 #' @importFrom progressr progress with_progress
 #' @importFrom parallelly availableCores supportsMulticore
-make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, progress = TRUE, coerce_schema=FALSE){
+make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL){
   read_session <- make_request(
     method="post",
     path=str_interp("${uri}/readSessions"),
@@ -128,16 +144,21 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
     )
   )
 
+  # TODO
+  # if (type == 'arrow_stream'){
+  #   return(RedivisBatchReader$new(streams=read_session$streams, mapped_variable))
+  # }
+
   folder <- str_interp('/${tempdir()}/redivis/tables/${uuid::UUIDgenerate()}')
   dir.create(folder, recursive = TRUE)
 
   if (progress){
-    progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema))
+    progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema, batch_preprocessor))
   } else {
-    parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema)
+    parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema, batch_preprocessor)
   }
 
-  arrow_dataset <- arrow::open_dataset(folder, format = "feather", schema = schema)
+  arrow_dataset <- arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) schema else NULL)
 
   # TODO: remove head() once BE is sorted
   if (type == 'arrow_dataset'){
@@ -174,7 +195,7 @@ get_authorization_header <- function(){
 #' @importFrom progressr progressor
 #' @import arrow
 #' @import dplyr
-parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema){
+parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema, batch_preprocessor){
   p <- progressr::progressor(steps = max_results)
   headers <- get_authorization_header()
   strategy <- if (parallelly::supportsMulticore()) future::multicore else future::multisession
@@ -213,23 +234,19 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
       }
     }
 
+    stream_writer <- NULL
     writer_schema <- arrow::schema(writer_schema_fields)
-    stream_writer <- arrow::RecordBatchFileWriter$create(output_file, schema=writer_schema)
 
     current_progress_rows <- 0
     last_measured_time <- Sys.time()
 
     while (TRUE){
-      batch = stream_reader$read_next_batch()
+      batch <- stream_reader$read_next_batch()
       if (is.null(batch)){
         break
       } else {
         current_progress_rows = current_progress_rows + batch$num_rows
-        if (Sys.time() - last_measured_time > 0.2){
-          p(amount = current_progress_rows)
-          current_progress_rows <- 0
-          last_measured_time = Sys.time()
-        }
+
         # We need to coerce_schema for all dataset tables, since their underlying storage type is always a string
         if (coerce_schema){
           # Note: this approach is much more performant than using %>% mutate(across())
@@ -240,9 +257,24 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
             batch[[time_variable]] <- arrow::Array$create(paste0('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
           }
 
-          stream_writer$write_batch(as_record_batch(batch, schema=writer_schema))
-        } else {
+          batch <- (as_record_batch(batch, schema=writer_schema))
+        }
+
+        if (!is.null(batch_preprocessor)){
+          batch <- batch_preprocessor(batch)
+        }
+
+        if (!is.null(batch)){
+          if (is.null(stream_writer)){
+            stream_writer <- arrow::RecordBatchFileWriter$create(output_file, schema=if (is.null(batch_preprocessor)) writer_schema else batch$schema)
+          }
           stream_writer$write_batch(batch)
+        }
+
+        if (Sys.time() - last_measured_time > 0.2){
+          p(amount = current_progress_rows)
+          current_progress_rows <- 0
+          last_measured_time = Sys.time()
         }
       }
     }
