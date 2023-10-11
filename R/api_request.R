@@ -47,7 +47,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
     query = query,
     body = payload,
     encode="json",
-    httr::timeout(10000)
+    httr::timeout(3600)
   )
 
   if (!parse_response && status_code(res) < 400){
@@ -207,7 +207,9 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
   furrr::future_map(streams, function(stream) {
     output_file_path <- str_interp('${folder}/${stream$id}')
 
-    con <- url(str_interp('${base_url}/${stream$id}'), open = "rb", headers = headers)
+    # This ensures the url method doesn't time out after 60s. Only applies to this function, doesn't set globally
+    options(timeout=3600)
+    con <- url(str_interp('${base_url}/${stream$id}'), open = "rb", headers = headers, blocking=FALSE)
     on.exit(close(con))
     stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
 
