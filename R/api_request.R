@@ -299,7 +299,7 @@ get_authorization_header <- function(){
 parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema, batch_preprocessor){
   p <- progressr::progressor(steps = max_results)
   headers <- get_authorization_header()
-  worker_count <- if (return_stream) 1 else length(streams)
+  worker_count <- length(streams)
 
   if (parallelly::supportsMulticore()){
     oplan <- future::plan(future::multicore, workers = worker_count)
