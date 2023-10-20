@@ -30,7 +30,7 @@ Query <- setRefClass("Query",
       )
     },
 
-    to_arrow_table = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
+    to_arrow_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
       params <- get_query_request_params(.self, max_results, variables)
 
       make_rows_request(
@@ -39,12 +39,28 @@ Query <- setRefClass("Query",
         selected_variables = params$selected_variables,
         type = 'arrow_table',
         schema = params$schema,
+        progress=progress,
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor
       )
     },
 
-    to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', batch_preprocessor=NULL) {
+    to_arrow_batch_reader = function(max_results=NULL, variables=NULL, progress=TRUE) {
+      params <- get_query_request_params(.self, max_results, variables)
+
+      make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variables = params$selected_variables,
+        type = 'arrow_stream',
+        progress=progress,
+        schema = params$schema,
+        progress = progress,
+        coerce_schema = params$coerce_schema
+      )
+    },
+
+    to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL) {
       params <- get_query_request_params(.self, max_results, variables, geography_variable)
 
       if (!is.null(params$geography_variable)){
@@ -56,6 +72,7 @@ Query <- setRefClass("Query",
         max_results=params$max_results,
         selected_variables = params$selected_variables,
         type = 'tibble',
+        progress=progress,
         schema = params$schema,
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor
@@ -68,7 +85,7 @@ Query <- setRefClass("Query",
       }
     },
 
-    to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', batch_preprocessor=NULL) {
+    to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL) {
       params <- get_query_request_params(.self, max_results, variables, geography_variable)
 
       if (is.null(params$geography_variable)){
@@ -81,6 +98,7 @@ Query <- setRefClass("Query",
         selected_variables = params$selected_variables,
         type = 'tibble',
         schema = params$schema,
+        progress=progress,
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor
       )
@@ -88,7 +106,7 @@ Query <- setRefClass("Query",
       st_as_sf(df, wkt=params$geography_variable, crs=4326)
     },
 
-    to_data_frame = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
+    to_data_frame = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
       params <- get_query_request_params(.self, max_results, variables)
 
       make_rows_request(
@@ -96,13 +114,14 @@ Query <- setRefClass("Query",
         max_results=params$max_results,
         selected_variables = params$selected_variables,
         type = 'data_frame',
+        progress=progress,
         schema = params$schema,
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor
       )
     },
 
-    to_data_table = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
+    to_data_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
       params <- get_query_request_params(.self, max_results, variables)
 
       make_rows_request(
@@ -110,6 +129,7 @@ Query <- setRefClass("Query",
         max_results=params$max_results,
         selected_variables = params$selected_variables,
         type = 'data_table',
+        progress=progress,
         schema = params$schema,
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor
@@ -124,7 +144,7 @@ get_query_request_params = function(self, max_results, variables, geography_vari
 
   uri <- str_interp("/queries/${res$id}")
   all_variables <- res$outputSchema
-  max_results <- if(!is.null(max_results)) min(max_results, res$numRows) else res$numRows
+  max_results <- if(!is.null(max_results)) min(max_results, res$outputNumRows) else res$outputNumRows
 
   if (is.null(variables)){
     variables_list <- all_variables

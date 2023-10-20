@@ -22,7 +22,7 @@ Table <- setRefClass("Table",
 
      },
 
-     to_arrow_table = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
+     to_arrow_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
        params <- get_table_request_params(.self, max_results, variables)
 
        make_rows_request(
@@ -30,13 +30,29 @@ Table <- setRefClass("Table",
          max_results=params$max_results,
          selected_variables = params$selected_variables,
          type = 'arrow_table',
+         progress=progress,
          schema = params$schema,
+         progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
        )
      },
 
-     to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', batch_preprocessor=NULL) {
+     to_arrow_batch_reader = function(max_results=NULL, variables=NULL, progress=TRUE) {
+       params <- get_table_request_params(.self, max_results, variables)
+
+       make_rows_request(
+         uri=params$uri,
+         max_results=params$max_results,
+         selected_variables = params$selected_variables,
+         type = 'arrow_stream',
+         schema = params$schema,
+         progress = progress,
+         coerce_schema = params$coerce_schema
+       )
+     },
+
+     to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL) {
        params <- get_table_request_params(.self, max_results, variables, geography_variable)
 
        if (!is.null(params$geography_variable)){
@@ -49,6 +65,7 @@ Table <- setRefClass("Table",
          selected_variables = params$selected_variables,
          type = 'tibble',
          schema = params$schema,
+         progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
        )
@@ -60,7 +77,7 @@ Table <- setRefClass("Table",
        }
      },
 
-     to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', batch_preprocessor=NULL) {
+     to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL) {
        params <- get_table_request_params(.self, max_results, variables, geography_variable)
 
        if (is.null(params$geography_variable)){
@@ -73,6 +90,7 @@ Table <- setRefClass("Table",
          selected_variables = params$selected_variables,
          type = 'tibble',
          schema = params$schema,
+         progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
        )
@@ -80,7 +98,7 @@ Table <- setRefClass("Table",
        st_as_sf(df, wkt=params$geography_variable, crs=4326)
      },
 
-     to_data_frame = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
+     to_data_frame = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
        params <- get_table_request_params(.self, max_results, variables)
 
        make_rows_request(
@@ -89,12 +107,13 @@ Table <- setRefClass("Table",
          selected_variables = params$selected_variables,
          type = 'data_frame',
          schema = params$schema,
+         progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
        )
      },
 
-     to_data_table = function(max_results=NULL, variables=NULL, batch_preprocessor=NULL) {
+     to_data_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
        params <- get_table_request_params(.self, max_results, variables)
 
        make_rows_request(
@@ -103,6 +122,7 @@ Table <- setRefClass("Table",
          selected_variables = params$selected_variables,
          type = 'data_table',
          schema = params$schema,
+         progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
        )

@@ -109,27 +109,109 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
   results
 }
 
-# TODO
-# RedivisBatchReader <- setRefClass(
-#   "RedivisBatchReader",
-#   fields = list(streams = "list", mapped_variables="list", progress="boolean", coerce_schema="boolean" ),
-#
-#   methods = list(
-#     get_next_reader_ = function(){
-#
-#
-#     },
-#     read_next_batch = function() {
-#
-#     }
-#   )
-# )
+#' @importFrom progressr progressor handlers progress
+#' @import arrow
+RedivisBatchReader <- setRefClass(
+  "RedivisBatchReader",
+  fields = list(
+    streams = "list",
+    progress="logical",
+    coerce_schema="logical",
+    current_progress_rows="numeric",
+    # Can't figure out how to pass non-built-in classes here, so just pass as list
+    custom_classes="list",
+    current_stream_index="numeric",
+    date_variables="list",
+    time_variables="list",
+    last_progressed_time="POSIXct"
+  ),
+
+  methods = list(
+    get_next_reader__ = function(){
+      options(timeout=3600)
+      headers <- get_authorization_header()
+      base_url = generate_api_url('/readStreams')
+      con <- url(str_interp('${base_url}/${streams[[.self$current_stream_index]]$id}'), open = "rb", headers = headers, blocking=FALSE)
+      stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
+      writer_schema_fields <- list()
+
+      # Make sure to only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
+      for (field_name in stream_reader$schema$names){
+        writer_schema_fields <- append(writer_schema_fields, .self$custom_classes$schema$GetFieldByName(field_name))
+      }
+
+      if (coerce_schema){
+        cast = getNamespace("arrow")$cast
+        .self$date_variables = list()
+        .self$time_variables = list()
+
+        for (field in writer_schema_fields){
+          if (is(field$type, "Date32")){
+            .self$date_variables <- append(.self$date_variables, field$name)
+          } else if (is(field$type, "Time64")){
+            .self$time_variables <- append(.self$time_variables, field$name)
+          }
+        }
+      }
+      .self$custom_classes = list(
+        current_record_batch_reader=stream_reader,
+        writer_schema=arrow::schema(writer_schema_fields),
+        schema=.self$custom_classes$schema,
+        progressor=.self$custom_classes$progressor,
+        current_connection=con
+      )
+    },
+    read_next_batch = function() {
+      batch <- .self$custom_classes$current_record_batch_reader$read_next_batch()
+      if (is.null(batch)){
+        if (.self$current_stream_index == length(.self$streams)){
+          # if (.self$current_progress_rows > 0 && .self.progress){
+          #   .self$custom_classes$progressor(amount = .self$current_progress_rows)
+          # }
+          return(NULL)
+        } else {
+          .self$current_stream_index = .self$current_stream_index + 1
+          .self$get_next_reader__()
+          return(.self$read_next_batch())
+        }
+      } else {
+        if (.self$coerce_schema){
+          # Note: this approach is much more performant than using %>% mutate(across())
+          # TODO: in the future, Arrow may support native coversion from date / time string to their type
+          for (date_variable in .self$date_variables){
+            batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
+          }
+          for (time_variable in .self$time_variables){
+            # vec <- batch[[time_variable]]$as_vector()
+            # batch[[time_variable]] <- arrow::Array$create(ifelse(is.na(vec), vec, paste0('2000-01-01T', vec)))$cast(arrow::timestamp(unit='us'))
+            batch[[time_variable]] <- arrow::Array$create(sapply(batch[[time_variable]]$as_vector(), function(x) if (is.na(x)) NA else paste0('2000-01-01T', x)))$cast(arrow::timestamp(unit='us'))
+          }
+
+          batch <- (as_record_batch(batch, schema=.self$custom_classes$writer_schema))
+        }
+        # if (.self$progress){
+        #   .self$current_progress_rows = .self$current_progress_rows + batch$num_rows
+        #   if (Sys.time() - .self$last_progressed_time > 0.2){
+        #     .self$custom_classes$progressor(amount = .self$current_progress_rows)
+        #     .self$current_progress_rows <- 0
+        #     .self$last_progressed_time = Sys.time()
+        #   }
+        # }
+        return (batch)
+      }
+    },
+    close = function(){
+      base::close(.self$custom_classes$current_connection)
+      progressr::handlers(global=FALSE)
+    }
+  )
+)
 
 #' @importFrom tibble as_tibble
 #' @importFrom data.table as.data.table
 #' @importFrom arrow open_dataset
 #' @importFrom uuid UUIDgenerate
-#' @importFrom progressr progress with_progress
+#' @importFrom progressr progress with_progress handlers
 #' @importFrom parallelly availableCores supportsMulticore
 make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL){
   read_session <- make_request(
@@ -140,17 +222,37 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
         "maxResults"=max_results,
         "selectedVariables"=selected_variables,
         "format"="arrow",
-        "requestedStreamCount"=parallelly::availableCores()
+        "requestedStreamCount"=if (type == 'arrow_stream') 1 else parallelly::availableCores()
     )
   )
 
-  # TODO
-  # if (type == 'arrow_stream'){
-  #   return(RedivisBatchReader$new(streams=read_session$streams, mapped_variable))
-  # }
+  if (type == 'arrow_stream'){
+    p <- NULL
+    # if (progress){
+    #   progressr::handlers(global = TRUE)
+    #   p <- progressr::progressor(steps = max_results)
+    # }
+    reader = RedivisBatchReader$new(
+      streams=read_session$streams,
+      progress=FALSE,
+      coerce_schema=coerce_schema,
+      current_stream_index=1,
+      date_variables=list(),
+      time_variables=list(),
+      custom_classes=list(schema=schema, progressor=p),
+      last_progressed_time=Sys.time(),
+      current_progress_rows=0
+    )
+    reader$get_next_reader__()
+
+    return(reader)
+  }
 
   folder <- str_interp('/${tempdir()}/redivis/tables/${uuid::UUIDgenerate()}')
   dir.create(folder, recursive = TRUE)
+  if (type != 'arrow_dataset'){
+    on.exit(unlink(folder))
+  }
 
   if (progress){
     progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema, batch_preprocessor))
@@ -164,7 +266,6 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
   if (type == 'arrow_dataset'){
     arrow_dataset
   } else {
-    on.exit(unlink(folder))
     if (type == 'arrow_table'){
       head(arrow_dataset, max_results)
     }else if (type == 'tibble'){
@@ -198,8 +299,16 @@ get_authorization_header <- function(){
 parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema, batch_preprocessor){
   p <- progressr::progressor(steps = max_results)
   headers <- get_authorization_header()
-  strategy <- if (parallelly::supportsMulticore()) future::multicore else future::multisession
-  oplan <- future::plan(strategy, workers = length(streams))
+  worker_count <- if (return_stream) 1 else length(streams)
+
+  if (parallelly::supportsMulticore()){
+    oplan <- future::plan(future::multicore, workers = worker_count)
+  } else {
+    oplan <- future::plan(future::sequential)
+    # This is currently throwing NULL pointer errors (?)
+    # oplan <- future::plan(future::multisession, workers = length(streams))
+  }
+
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
   on.exit(plan(oplan), add = TRUE)
   base_url = generate_api_url('/readStreams')
@@ -252,11 +361,14 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
         # We need to coerce_schema for all dataset tables, since their underlying storage type is always a string
         if (coerce_schema){
           # Note: this approach is much more performant than using %>% mutate(across())
+          # TODO: in the future, Arrow may support native coversion from date / time string to their type
           for (date_variable in date_variables){
             batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
           }
           for (time_variable in time_variables){
-            batch[[time_variable]] <- arrow::Array$create(paste0('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
+            # vec <- batch[[time_variable]]$as_vector()
+            # batch[[time_variable]] <- arrow::Array$create(ifelse(is.na(vec), vec, paste0('2000-01-01T', vec)))$cast(arrow::timestamp(unit='us'))
+            batch[[time_variable]] <- arrow::Array$create(sapply(batch[[time_variable]]$as_vector(), function(x) if (is.na(x)) NA else paste0('2000-01-01T', x)))$cast(arrow::timestamp(unit='us'))
           }
 
           batch <- (as_record_batch(batch, schema=writer_schema))
