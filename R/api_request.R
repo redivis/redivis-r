@@ -182,9 +182,9 @@ RedivisBatchReader <- setRefClass(
             batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
           }
           for (time_variable in .self$time_variables){
-            # vec <- batch[[time_variable]]$as_vector()
-            # batch[[time_variable]] <- arrow::Array$create(ifelse(is.na(vec), vec, paste0('2000-01-01T', vec)))$cast(arrow::timestamp(unit='us'))
-            batch[[time_variable]] <- arrow::Array$create(sapply(batch[[time_variable]]$as_vector(), function(x) if (is.na(x)) NA else paste0('2000-01-01T', x)))$cast(arrow::timestamp(unit='us'))
+            vec <- batch[[time_variable]]$as_vector()
+            batch[[time_variable]] <- arrow::Array$create(ifelse(is.na(vec), vec, paste0('2000-01-01T', vec)))$cast(arrow::timestamp(unit='us'))
+            # batch[[time_variable]] <- arrow::Array$create(sapply(batch[[time_variable]]$as_vector(), function(x) if (is.na(x)) NA else paste0('2000-01-01T', x)))$cast(arrow::timestamp(unit='us'))
           }
 
           batch <- (as_record_batch(batch, schema=.self$custom_classes$writer_schema))
@@ -202,7 +202,7 @@ RedivisBatchReader <- setRefClass(
     },
     close = function(){
       base::close(.self$custom_classes$current_connection)
-      progressr::handlers(global=FALSE)
+      # progressr::handlers(global=FALSE)
     }
   )
 )
