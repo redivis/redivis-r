@@ -252,7 +252,7 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
     on.exit(unlink(folder))
   }
 
-  if (progress){
+  if (progress && FALSE){
     progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema, batch_preprocessor))
   } else {
     parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema, batch_preprocessor)
@@ -296,7 +296,8 @@ get_authorization_header <- function(){
 #' @import arrow
 #' @import dplyr
 parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema, batch_preprocessor){
-  p <- progressr::progressor(steps = max_results)
+  # pb <- progressr::progressor(steps = max_results)
+  pb <- txtProgressBar(0, max_results, style = 3)
   headers <- get_authorization_header()
   worker_count <- length(streams)
 
@@ -384,13 +385,16 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
         }
 
         if (Sys.time() - last_measured_time > 0.2){
-          p(amount = current_progress_rows)
-          current_progress_rows <- 0
+          setTxtProgressBar(pb, current_progress_rows)
+          # pb(amount = current_progress_rows)
+          # current_progress_rows <- 0
           last_measured_time = Sys.time()
         }
       }
     }
-    p(amount = current_progress_rows)
+
+    # pb(amount = current_progress_rows)
+    setTxtProgressBar(pb, current_progress_rows)
 
     stream_writer$close()
     output_file$close()
