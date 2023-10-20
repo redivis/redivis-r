@@ -109,7 +109,7 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
   results
 }
 
-#' @importFrom progressr progressor handlers progress
+#' @importFrom progressr progressor progress
 #' @import arrow
 RedivisBatchReader <- setRefClass(
   "RedivisBatchReader",
@@ -177,14 +177,12 @@ RedivisBatchReader <- setRefClass(
       } else {
         if (.self$coerce_schema){
           # Note: this approach is much more performant than using %>% mutate(across())
-          # TODO: in the future, Arrow may support native coversion from date / time string to their type
+          # TODO: in the future, Arrow may support native conversion from date / time string to their type
           for (date_variable in .self$date_variables){
             batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
           }
-          for (time_variable in .self$time_variables){
-            # vec <- batch[[time_variable]]$as_vector()
-            # batch[[time_variable]] <- arrow::Array$create(ifelse(is.na(vec), vec, paste0('2000-01-01T', vec)))$cast(arrow::timestamp(unit='us'))
-            batch[[time_variable]] <- arrow::Array$create(sapply(batch[[time_variable]]$as_vector(), function(x) if (is.na(x)) NA else paste0('2000-01-01T', x)))$cast(arrow::timestamp(unit='us'))
+          for (time_variable in time_variables){
+            batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
           }
 
           batch <- (as_record_batch(batch, schema=.self$custom_classes$writer_schema))
@@ -202,7 +200,7 @@ RedivisBatchReader <- setRefClass(
     },
     close = function(){
       base::close(.self$custom_classes$current_connection)
-      progressr::handlers(global=FALSE)
+      # progressr::handlers(global=FALSE)
     }
   )
 )
@@ -211,7 +209,7 @@ RedivisBatchReader <- setRefClass(
 #' @importFrom data.table as.data.table
 #' @importFrom arrow open_dataset
 #' @importFrom uuid UUIDgenerate
-#' @importFrom progressr progress with_progress handlers
+#' @importFrom progressr progress with_progress
 #' @importFrom parallelly availableCores supportsMulticore
 make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL){
   read_session <- make_request(
@@ -294,12 +292,15 @@ get_authorization_header <- function(){
 #' @importFrom furrr future_map
 #' @importFrom future plan multicore multisession
 #' @importFrom progressr progressor
+#' @importFrom stringr str_c
 #' @import arrow
 #' @import dplyr
 parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema, batch_preprocessor){
-  p <- progressr::progressor(steps = max_results)
+  pb <- progressr::progressor(steps = max_results)
+  # pb <- txtProgressBar(0, max_results, style = 3)
   headers <- get_authorization_header()
   worker_count <- length(streams)
+
 
   if (parallelly::supportsMulticore()){
     oplan <- future::plan(future::multicore, workers = worker_count)
@@ -313,7 +314,8 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
   on.exit(plan(oplan), add = TRUE)
   base_url = generate_api_url('/readStreams')
 
-  furrr::future_map(streams, function(stream) {
+  furrr::future_map(streams, function(stream){
+    # for (stream in streams){
     output_file_path <- str_interp('${folder}/${stream$id}')
 
     # This ensures the url method doesn't time out after 60s. Only applies to this function, doesn't set globally
@@ -366,9 +368,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
             batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
           }
           for (time_variable in time_variables){
-            # vec <- batch[[time_variable]]$as_vector()
-            # batch[[time_variable]] <- arrow::Array$create(ifelse(is.na(vec), vec, paste0('2000-01-01T', vec)))$cast(arrow::timestamp(unit='us'))
-            batch[[time_variable]] <- arrow::Array$create(sapply(batch[[time_variable]]$as_vector(), function(x) if (is.na(x)) NA else paste0('2000-01-01T', x)))$cast(arrow::timestamp(unit='us'))
+            batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
           }
 
           batch <- (as_record_batch(batch, schema=writer_schema))
@@ -386,15 +386,19 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
         }
 
         if (Sys.time() - last_measured_time > 0.2){
-          p(amount = current_progress_rows)
+          # setTxtProgressBar(pb, current_progress_rows)
+          pb(amount = current_progress_rows)
           current_progress_rows <- 0
           last_measured_time = Sys.time()
         }
       }
     }
-    p(amount = current_progress_rows)
+
+    pb(amount = current_progress_rows)
+    # setTxtProgressBar(pb, current_progress_rows)
 
     stream_writer$close()
     output_file$close()
+    # }
   })
 }
