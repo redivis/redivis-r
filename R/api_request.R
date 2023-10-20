@@ -294,6 +294,7 @@ get_authorization_header <- function(){
 #' @importFrom furrr future_map
 #' @importFrom future plan multicore multisession
 #' @importFrom progressr progressor
+#' @importFrom stringr str_c
 #' @import arrow
 #' @import dplyr
 parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema, batch_preprocessor){
@@ -367,8 +368,9 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
           }
           for (time_variable in time_variables){
             # batch[[time_variable]] <- arrow::Array$create(strptime(batch[[time_variable]], format="%H:%M:%OS"))
-            vec <- batch[[time_variable]]$as_vector()
-            batch[[time_variable]] <- arrow::Array$create(paste0('2000-01-01T', na.omit(vec)))$cast(arrow::timestamp(unit='us'))
+            # vec <- batch[[time_variable]]$as_vector()
+            # batch[[time_variable]] <- arrow::Array$create(stringr::str_c('2000-01-01T', vec))$cast(arrow::timestamp(unit='us'))
+            batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
 
             # batch[[time_variable]] <- arrow::Array$create(ifelse(is.na(vec), vec, paste0('2000-01-01T', vec)))$cast(arrow::timestamp(unit='us'))
             # batch[[time_variable]] <- arrow::Array$create(sapply(batch[[time_variable]]$as_vector(), function(x) if (is.na(x)) NA else paste0('2000-01-01T', x)))$cast(arrow::timestamp(unit='us'))
