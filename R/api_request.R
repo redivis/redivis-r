@@ -109,7 +109,7 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
   results
 }
 
-#' @importFrom progressr progressor handlers progress
+#' @importFrom progressr progressor progress
 #' @import arrow
 RedivisBatchReader <- setRefClass(
   "RedivisBatchReader",
@@ -209,7 +209,7 @@ RedivisBatchReader <- setRefClass(
 #' @importFrom data.table as.data.table
 #' @importFrom arrow open_dataset
 #' @importFrom uuid UUIDgenerate
-#' @importFrom progressr progress with_progress handlers
+#' @importFrom progressr progress with_progress
 #' @importFrom parallelly availableCores supportsMulticore
 make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL){
   read_session <- make_request(
@@ -252,7 +252,7 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
     on.exit(unlink(folder))
   }
 
-  if (progress && FALSE){
+  if (progress){
     progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema, batch_preprocessor))
   } else {
     parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema, batch_preprocessor)
@@ -296,10 +296,11 @@ get_authorization_header <- function(){
 #' @import arrow
 #' @import dplyr
 parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema, batch_preprocessor){
-  # pb <- progressr::progressor(steps = max_results)
-  pb <- txtProgressBar(0, max_results, style = 3)
+  pb <- progressr::progressor(steps = max_results)
+  # pb <- txtProgressBar(0, max_results, style = 3)
   headers <- get_authorization_header()
   worker_count <- length(streams)
+
 
   if (parallelly::supportsMulticore()){
     oplan <- future::plan(future::multicore, workers = worker_count)
@@ -313,8 +314,8 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
   on.exit(plan(oplan), add = TRUE)
   base_url = generate_api_url('/readStreams')
 
-  # furrr::future_map(streams, function(stream)
-    for (stream in streams){
+  furrr::future_map(streams, function(stream){
+    # for (stream in streams){
     output_file_path <- str_interp('${folder}/${stream$id}')
 
     # This ensures the url method doesn't time out after 60s. Only applies to this function, doesn't set globally
@@ -385,19 +386,19 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
         }
 
         if (Sys.time() - last_measured_time > 0.2){
-          setTxtProgressBar(pb, current_progress_rows)
-          # pb(amount = current_progress_rows)
-          # current_progress_rows <- 0
+          # setTxtProgressBar(pb, current_progress_rows)
+          pb(amount = current_progress_rows)
+          current_progress_rows <- 0
           last_measured_time = Sys.time()
         }
       }
     }
 
-    # pb(amount = current_progress_rows)
-    setTxtProgressBar(pb, current_progress_rows)
+    pb(amount = current_progress_rows)
+    # setTxtProgressBar(pb, current_progress_rows)
 
     stream_writer$close()
     output_file$close()
-    }
-  # })
+    # }
+  })
 }
