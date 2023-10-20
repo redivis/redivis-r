@@ -181,10 +181,8 @@ RedivisBatchReader <- setRefClass(
           for (date_variable in .self$date_variables){
             batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
           }
-          for (time_variable in .self$time_variables){
-            vec <- batch[[time_variable]]$as_vector()
-            batch[[time_variable]] <- arrow::Array$create(ifelse(is.na(vec), vec, paste0('2000-01-01T', vec)))$cast(arrow::timestamp(unit='us'))
-            # batch[[time_variable]] <- arrow::Array$create(sapply(batch[[time_variable]]$as_vector(), function(x) if (is.na(x)) NA else paste0('2000-01-01T', x)))$cast(arrow::timestamp(unit='us'))
+          for (time_variable in time_variables){
+            batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
           }
 
           batch <- (as_record_batch(batch, schema=.self$custom_classes$writer_schema))
@@ -294,7 +292,7 @@ get_authorization_header <- function(){
 #' @importFrom furrr future_map
 #' @importFrom future plan multicore multisession
 #' @importFrom progressr progressor
-#' @importFrom stringi str_c
+#' @importFrom stringr str_c
 #' @import arrow
 #' @import dplyr
 parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema, batch_preprocessor){
@@ -314,7 +312,8 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
   on.exit(plan(oplan), add = TRUE)
   base_url = generate_api_url('/readStreams')
 
-  furrr::future_map(streams, function(stream) {
+  # furrr::future_map(streams, function(stream)
+    for (stream in streams){
     output_file_path <- str_interp('${folder}/${stream$id}')
 
     # This ensures the url method doesn't time out after 60s. Only applies to this function, doesn't set globally
@@ -367,13 +366,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
             batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
           }
           for (time_variable in time_variables){
-            # batch[[time_variable]] <- arrow::Array$create(strptime(batch[[time_variable]], format="%H:%M:%OS"))
-            # vec <- batch[[time_variable]]$as_vector()
-            # batch[[time_variable]] <- arrow::Array$create(stringr::str_c('2000-01-01T', vec))$cast(arrow::timestamp(unit='us'))
-            batch[[time_variable]] <- arrow::arrow_array(stringi::stri_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
-
-            # batch[[time_variable]] <- arrow::Array$create(ifelse(is.na(vec), vec, paste0('2000-01-01T', vec)))$cast(arrow::timestamp(unit='us'))
-            # batch[[time_variable]] <- arrow::Array$create(sapply(batch[[time_variable]]$as_vector(), function(x) if (is.na(x)) NA else paste0('2000-01-01T', x)))$cast(arrow::timestamp(unit='us'))
+            batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
           }
 
           batch <- (as_record_batch(batch, schema=writer_schema))
@@ -401,5 +394,6 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
 
     stream_writer$close()
     output_file$close()
-  })
+    }
+  # })
 }
