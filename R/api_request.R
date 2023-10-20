@@ -177,7 +177,7 @@ RedivisBatchReader <- setRefClass(
       } else {
         if (.self$coerce_schema){
           # Note: this approach is much more performant than using %>% mutate(across())
-          # TODO: in the future, Arrow may support native coversion from date / time string to their type
+          # TODO: in the future, Arrow may support native conversion from date / time string to their type
           for (date_variable in .self$date_variables){
             batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
           }
@@ -366,8 +366,11 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
             batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
           }
           for (time_variable in time_variables){
+            # batch[[time_variable]] <- arrow::Array$create(strptime(batch[[time_variable]], format="%H:%M:%OS"))
             vec <- batch[[time_variable]]$as_vector()
-            batch[[time_variable]] <- arrow::Array$create(ifelse(is.na(vec), vec, paste0('2000-01-01T', vec)))$cast(arrow::timestamp(unit='us'))
+            batch[[time_variable]] <- arrow::Array$create(paste0('2000-01-01T', na.omit(vec)))$cast(arrow::timestamp(unit='us'))
+
+            # batch[[time_variable]] <- arrow::Array$create(ifelse(is.na(vec), vec, paste0('2000-01-01T', vec)))$cast(arrow::timestamp(unit='us'))
             # batch[[time_variable]] <- arrow::Array$create(sapply(batch[[time_variable]]$as_vector(), function(x) if (is.na(x)) NA else paste0('2000-01-01T', x)))$cast(arrow::timestamp(unit='us'))
           }
 
