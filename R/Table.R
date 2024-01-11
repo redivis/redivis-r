@@ -1,11 +1,120 @@
-#' @include Dataset.R Project.R util.R
+#' @include Dataset.R Project.R Variable.R Upload.R util.R
 #' @importFrom stringr str_interp
 #' @importFrom pbapply pblapply
 #' @importFrom purrr map
 Table <- setRefClass("Table",
-   fields = list(name="character", dataset="Dataset", project="Project", properties="list"),
+   fields = list(name="character", dataset="ANY", project="ANY", properties="list", qualified_reference="character", scoped_reference="character", uri="character"),
 
    methods = list(
+     initialize = function(..., name="", dataset=NULL, project=NULL, properties=list()){
+       parent_reference <- if (is.null(dataset)) project$qualified_reference else dataset$qualified_reference
+       scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else name
+       qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${parent_reference}.${name}")
+       callSuper(...,
+                 name=name,
+                 dataset=dataset,
+                 project=project,
+                 qualified_reference=qualified_reference_val,
+                 scoped_reference=scoped_reference_val,
+                 uri=str_interp("/tables/${URLencode(qualified_reference_val)}")
+       )
+     },
+     show = function(){
+       print(str_interp("<Table ${.self$qualified_reference}>"))
+     },
+
+     get = function(){
+       res <- make_request(path=.self$uri)
+       update_properties(.self, res)
+       .self
+     },
+
+     exists = function(){
+       res <- make_request(method="HEAD", path=.self$uri, stop_on_error=FALSE)
+       if (length(res$error)){
+         if (res$error$status == 404){
+           return(FALSE)
+         } else {
+           stop(res$error$message)
+         }
+       } else {
+         return(TRUE)
+       }
+     },
+
+     update = function(name=NULL, description=NULL, upload_merge_strategy=NULL){
+       payload <- list()
+       if (!is.null(name)){
+         payload <- append(payload, list("name"=name))
+       }
+       if (!is.null(description)){
+         payload <- append(payload, list("description"=description))
+       }
+       if (!is.null(upload_merge_strategy)){
+         payload <- append(payload, list("upload_merge_strategy"=upload_merge_strategy))
+       }
+       res <- make_request(
+         method="PATCH",
+         path=.self$uri,
+         payload=payload,
+       )
+       update_properties(.self, res)
+       .self
+     },
+
+     delete = function(){
+       make_request(method="DELETE", path=.self$uri)
+     },
+
+     list_variables = function(max_results=NULL){
+       variables <- make_paginated_request(
+         path=str_interp("${.self$uri}/variables"),
+         page_size=100,
+         max_results=max_results
+       )
+       purrr::map(variables, function(variable_properties) {
+         Variable$new(name=variable_properties$name, table=.self, properties=variable_properties)
+       })
+     },
+
+     # add_file = function(){
+     #
+     # },
+
+     # list_uploads = function(max_results){
+     #   uploads <- make_paginated_request(
+     #     path=str_interp("${.self$uri}/uploads"),
+     #     page_size=100,
+     #     max_results=max_results
+     #   )
+     #   purrr::map(uploads, function(upload_properties) {
+     #     Upload$new(name=upload_properties$name, table=.self, properties=upload_properties)
+     #   })
+     # },
+
+     variable = function(name){
+       Variable$new(name=name, table=.self)
+     },
+
+     # upload = function(name){
+     #   Upload$new(name=name, table=.self)
+     # },
+
+     create = function(description=NULL, upload_merge_strategy="append", is_file_index=FALSE){
+       res <- make_request(
+         method="POST",
+         path=str_interp("${.self$dataset$uri}/tables"),
+         payload=list(
+           "name"=.self$name,
+           "description"=description,
+           "uploadMergeStrategy"=upload_merge_strategy,
+           "isFileIndex"=is_file_index
+         )
+       )
+       update_properties(.self, res)
+       .self
+     },
+
      to_arrow_dataset = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL){
        params <- get_table_request_params(.self, max_results, variables)
 
@@ -129,12 +238,8 @@ Table <- setRefClass("Table",
      },
 
      list_files = function(max_results = NULL, file_id_variable = NULL){
-       container <- if (length(dataset$name) == 0) project else dataset
-       owner <- if(length(container$user$name) == 0) container$organization else container$user
-       uri <- str_interp("/tables/${owner$name}.${container$name}.${name}")
-
        if (is.null(file_id_variable)){
-         file_id_variables <- make_paginated_request(path=str_interp("${uri}/variables"), max_results=2, query = list(isFileId = TRUE))
+         file_id_variables <- make_paginated_request(path=str_interp("${.self$uri}/variables"), max_results=2, query = list(isFileId = TRUE))
 
          if (length(file_id_variables) == 0){
            stop("No variable containing file ids was found on this table")
@@ -144,11 +249,8 @@ Table <- setRefClass("Table",
          file_id_variable = file_id_variables[[1]]$'name'
        }
 
-       table_metadata <- make_request(method="GET", path=uri)
-       max_results <- if(!is.null(max_results)) min(max_results, table_metadata$numRows) else table_metadata$numRows
-
        df <- make_rows_request(
-         uri=uri,
+         uri=.self$uri,
          max_results=max_results,
          selected_variables = list(file_id_variable),
          type='data_table',
@@ -161,14 +263,10 @@ Table <- setRefClass("Table",
      },
 
      download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL){
-       container <- if (length(dataset$name) == 0) project else dataset
-       owner <- if(length(container$user$name) == 0) container$organization else container$user
-       uri <- str_interp("/tables/${owner$name}.${container$name}.${name}")
-
        if (!endsWith(path, '/')) path = str_interp("${path}/")
 
         if (is.null(file_id_variable)){
-          file_id_variables <- make_paginated_request(path=str_interp("${uri}/variables"), max_results=2, query = list(isFileId = TRUE))
+          file_id_variables <- make_paginated_request(path=str_interp("${.self$uri}/variables"), max_results=2, query = list(isFileId = TRUE))
 
           if (length(file_id_variables) == 0){
             stop("No variable containing file ids was found on this table")
@@ -178,11 +276,8 @@ Table <- setRefClass("Table",
           file_id_variable = file_id_variables[[1]]$'name'
         }
 
-         table_metadata <- make_request(method="GET", path=uri)
-         max_results <- if(!is.null(max_results)) min(max_results, table_metadata$numRows) else table_metadata$numRows
-
         df <- make_rows_request(
-          uri=uri,
+          uri=.self$uri,
           max_results=max_results,
           selected_variables = list(file_id_variable),
           type='data_table',
@@ -196,12 +291,18 @@ Table <- setRefClass("Table",
    )
 )
 
-get_table_request_params = function(self, max_results, variables, geography_variable=NULL){
-  container <- if (length(self$dataset$name) == 0) self$project else self$dataset
-  owner <- if(length(container$user$name) == 0) container$organization else container$user
-  uri <- str_interp("/tables/${owner$name}.${container$name}.${self$name}")
 
-  all_variables <- make_paginated_request(path=str_interp("${uri}/variables"), page_size=1000)
+update_properties <- function(instance, properties){
+  instance$properties = properties
+  instance$qualified_reference = properties$qualifiedReference
+  instance$scoped_reference = properties$scopedReference
+  instance$name = properties$name
+  instance$uri = properties$uri
+}
+
+
+get_table_request_params = function(self, max_results, variables, geography_variable=NULL){
+  all_variables <- make_paginated_request(path=str_interp("${self$uri}/variables"), page_size=1000)
 
   if (is.null(variables)){
     variables_list <- all_variables
@@ -218,10 +319,9 @@ get_table_request_params = function(self, max_results, variables, geography_vari
     )
   }
 
-  table_metadata <- make_request(method="GET", path=uri)
-  self$properties = table_metadata
-
-  max_results <- if(!is.null(max_results)) min(max_results, table_metadata$numRows) else table_metadata$numRows
+  if (is.null(self$properties$container)){
+    self$get()
+  }
 
   selected_variables <- if (is.null(variables)) NULL else Map(function(variable_name) variable_name, variables)
   schema <- get_arrow_schema(variables_list)
@@ -238,11 +338,11 @@ get_table_request_params = function(self, max_results, variables, geography_vari
 
   list(
     "max_results" = max_results,
-    "uri" = uri,
+    "uri" = self$uri,
     "selected_variables" = selected_variables,
     "variables_list" = variables_list,
     "schema"=schema,
     "geography_variable"=geography_variable,
-    "coerce_schema"=is.null(table_metadata$container) || table_metadata$container$kind == 'dataset'
+    "coerce_schema"=self$properties$container$kind == 'dataset'
   )
 }

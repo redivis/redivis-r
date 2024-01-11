@@ -1,17 +1,148 @@
+
 #' @include User.R
 #' @include Organization.R
 Dataset <- setRefClass("Dataset",
-   fields = list(name="character", version="character", user="User", organization="Organization"),
+   fields = list(
+    name="character",
+    version="character",
+    user="ANY",
+    organization="ANY",
+    uri="character",
+    qualified_reference="character",
+    scoped_reference="character",
+    properties="list"
+  ),
    methods = list(
-     get_identifier = function(){
-       owner <- if(length(user$name) == 0) organization else user
-       str_interp("${owner$name}.${name}")
-     },
-     table = function(name) {
-       Table$new(name=name, dataset=.self)
-     },
-     query = function(query){
-       redivis::query(query, default_dataset = .self$get_identifier())
-     }
-   )
+
+    initialize = function(..., name="", version="current", user=NULL, organization=NULL, properties=list()){
+      owner_name <- if (is.null(user)) organization$name else user$name
+      scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else str_interp("${name}:${version}")
+      qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${owner_name}.${name}:${version}")
+      callSuper(...,
+                name=name,
+                version=version,
+                user=user,
+                organization=organization,
+                qualified_reference=qualified_reference_val,
+                scoped_reference=scoped_reference_val,
+                uri=str_interp("/datasets/${URLencode(qualified_reference_val)}")
+              )
+    },
+
+    show = function(){
+      print(str_interp("<Dataset ${.self$qualified_reference}>"))
+    },
+
+    create = function(public_access_level="none", description=NULL){
+      if (is.null(.self$organization)){
+        path <- str_interp("/users/${.self$user$name}/datasets")
+      } else {
+        path <- str_interp("/organizations/${.self$organization$name}/datasets")
+      }
+      res <- make_request(
+        method="POST",
+        path=path,
+        payload=list(
+          "name"=.self$name,
+          "publicAccessLevel"=public_access_level,
+          "description"= description
+        )
+      )
+      update_properties(.self, res)
+      .self
+    },
+
+  create_next_version = function(if_not_exists=FALSE){
+    if (is.null(.self$properties) || is.null(attr(.self$properties, "nextVersion"))){
+      .self$get()
+    }
+    if (is.null(.self$properties$nextVersion)){
+      make_request(method="POST", path=str_interp("/${.self$uri}/versions"))
+    } else if (!if_not_exists){
+      stop(str_interp("Next version already exists at ${.self$properties$nextVersion$datasetUri}. To avoid this error, set argument if_not_exists to TRUE"))
+    }
+
+    Dataset$new(name=.self$name, user=.self$user, organization=.self$organization, version="next")$get()
+  },
+
+  delete = function(){
+    make_request(method="DELETE", path=.self$uri)
+  },
+
+  get = function(){
+    res <- make_request(path=.self$uri)
+    update_properties(.self, res)
+    .self
+  },
+
+  exists = function(){
+    res <- make_request(method="HEAD", path=.self$uri, stop_on_error=FALSE)
+    if (length(res$error)){
+      if (res$error$status == 404){
+        return(FALSE)
+      } else {
+        stop(res$error$message)
+      }
+    } else {
+      return(TRUE)
+    }
+  },
+
+  list_tables = function(max_results=NULL) {
+    tables <- make_paginated_request(
+      path=str_interp("/${.self$uri}/tables"),
+      page_size=100,
+      max_results=max_results
+    )
+    purrr::map(tables, function(table_properties) {
+      Table$new(name=table_properties$name, dataset=.self, properties=table_properties)
+    })
+  },
+
+  query = function(query){
+    redivis::query(query, default_dataset=.self$uri)
+  },
+
+  release = function(){
+    version_res <- make_request(method="POST", path=str_interp("${.self$uri}/versions/next/release"))
+    .self$uri = version_res$datasetUri
+    .self$get()
+    .self
+  },
+
+  table = function(name) {
+    Table$new(name=name, dataset=.self)
+  },
+
+  update = function(name=NULL, public_access_level=NULL, description=NULL){
+    payload <- list()
+    if (!is.null(name)){
+      payload <- append(payload, list("name"=name))
+    }
+    if (!is.null(public_access_level)){
+      payload <- append(payload, list("public_access_level"=public_access_level))
+    }
+    if (!is.null(description)){
+      payload <- append(payload, list("description"=description))
+    }
+    res <- make_request(
+      method="PATCH",
+      path=.self$uri,
+      payload=payload,
+    )
+    update_properties(.self, res)
+    .self
+  }
+  )
 )
+
+update_properties <- function(instance, properties){
+  instance$properties = properties
+  instance$qualified_reference = properties$qualifiedReference
+  instance$scoped_reference = properties$scopedReference
+  instance$name = properties$name
+  instance$uri = properties$uri
+  instance$version = properties$version$tag
+}
+
+
