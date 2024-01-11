@@ -147,7 +147,6 @@ get_query_request_params = function(self, max_results, variables, geography_vari
 
   uri <- str_interp("/queries/${res$id}")
   all_variables <- res$outputSchema
-  max_results <- if(!is.null(max_results)) min(max_results, res$outputNumRows) else res$outputNumRows
 
   if (is.null(variables)){
     variables_list <- all_variables
