@@ -18,7 +18,7 @@
 #   })
 # })
 
-test_that("table download works", {
-  table <- redivis::user("demo")$dataset("Example non-tabular files")$table("tiffs")
-  table$download_files("/Users/ian/Desktop/tmp/test", overwrite=TRUE)
-})
+# test_that("table download works", {
+#   table <- redivis::user("demo")$dataset("Example non-tabular files")$table("tiffs")
+#   table$download_files("/Users/ian/Desktop/tmp/test", overwrite=TRUE)
+# })

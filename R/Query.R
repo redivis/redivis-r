@@ -2,6 +2,9 @@
 Query <- setRefClass("Query",
   fields = list(query="character", default_dataset="character", default_project="character", properties="list"),
   methods = list(
+    show = function(){
+      print(str_interp("<Query ${.self$properties$id}>"))
+    },
     initialize = function(query, default_dataset=NULL, default_project=NULL){
       payload <- list(query=query)
 

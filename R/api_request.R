@@ -3,7 +3,7 @@
 #' @importFrom httr VERB headers add_headers content status_code write_memory write_disk write_stream timeout
 #' @importFrom jsonlite fromJSON
 #' @importFrom stringr str_interp str_starts
-make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, stream_callback = NULL){
+make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, stream_callback = NULL, stop_on_error=TRUE){
 
   handler <- write_memory()
 
@@ -54,16 +54,24 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
     return(res)
   }
 
-  response_content = content(res, as="text", encoding='UTF-8')
-
   is_json <- FALSE
+  response_content <- NULL
 
-  if (!is.null(headers(res)$'content-type') && str_starts(headers(res)$'content-type', 'application/json') && (status_code(res) >= 400 || parse_response)){
-    is_json <- TRUE
-    response_content <- fromJSON(response_content, simplifyVector = FALSE)
+  if (method == "HEAD"){
+    if (status_code(res) >= 400){
+      response_content <- fromJSON(URLdecode(headers(res)$'x-redivis-error-payload'))
+    }
+  } else {
+    response_content <- content(res, as="text", encoding='UTF-8')
+
+    if (!is.null(headers(res)$'content-type') && str_starts(headers(res)$'content-type', 'application/json') && (status_code(res) >= 400 || parse_response)){
+      is_json <- TRUE
+      response_content <- fromJSON(response_content, simplifyVector = FALSE)
+    }
   }
 
-  if (status_code(res) >= 400){
+
+  if (status_code(res) >= 400 && stop_on_error){
     if (is_json){
       stop(response_content$error$message)
     } else {
@@ -207,11 +215,11 @@ RedivisBatchReader <- setRefClass(
 
 #' @importFrom tibble as_tibble
 #' @importFrom data.table as.data.table
-#' @importFrom arrow open_dataset
+#' @importFrom arrow open_dataset Scanner
 #' @importFrom uuid UUIDgenerate
 #' @importFrom progressr progress with_progress
 #' @importFrom parallelly availableCores supportsMulticore
-make_rows_request <- function(uri, max_results, selected_variables = NULL, type = 'tibble', schema = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL){
+make_rows_request <- function(uri, max_results=NULL, selected_variables = NULL, type = 'tibble', schema = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL){
   read_session <- make_request(
     method="post",
     path=str_interp("${uri}/readSessions"),
@@ -228,7 +236,7 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
     p <- NULL
     # if (progress){
     #   progressr::handlers(global = TRUE)
-    #   p <- progressr::progressor(steps = max_results)
+    #   p <- progressr::progressor(steps = read_session$numRows)
     # }
     reader = RedivisBatchReader$new(
       streams=read_session$streams,
@@ -253,9 +261,9 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
   }
 
   if (progress){
-    progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema, batch_preprocessor))
+    progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, schema, coerce_schema, batch_preprocessor))
   } else {
-    parallel_stream_arrow(folder, read_session$streams, max_results, schema, coerce_schema, batch_preprocessor)
+    parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, schema, coerce_schema, batch_preprocessor)
   }
 
   arrow_dataset <- arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) schema else NULL)
@@ -264,14 +272,15 @@ make_rows_request <- function(uri, max_results, selected_variables = NULL, type 
   if (type == 'arrow_dataset'){
     arrow_dataset
   } else {
+    arrow_table = if (is.null(max_results)) arrow::Scanner$create(arrow_dataset)$ToTable() else head(arrow_dataset, max_results)
     if (type == 'arrow_table'){
-      head(arrow_dataset, max_results)
+      arrow_table
     }else if (type == 'tibble'){
-     as_tibble(head(arrow_dataset, max_results))
+      as_tibble(arrow_table)
     }else if (type == 'data_frame'){
-      as.data.frame(head(arrow_dataset, max_results))
+      as.data.frame(arrow_table)
     } else if (type == 'data_table'){
-      as.data.table(head(arrow_dataset, max_results))
+      as.data.table(arrow_table)
     }
   }
 
