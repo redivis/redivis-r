@@ -100,7 +100,7 @@ Dataset <- setRefClass("Dataset",
   },
 
   query = function(query){
-    redivis::query(query, default_dataset=.self$uri)
+    redivis::query(query, default_dataset=.self$qualified_reference)
   },
 
   release = function(){
