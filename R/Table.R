@@ -16,9 +16,11 @@ Table <- setRefClass("Table",
                  project=project,
                  qualified_reference=qualified_reference_val,
                  scoped_reference=scoped_reference_val,
-                 uri=str_interp("/tables/${URLencode(qualified_reference_val)}")
+                 uri=str_interp("/tables/${URLencode(qualified_reference_val)}"),
+                 properties=properties
        )
      },
+
      show = function(){
        print(str_interp("<Table ${.self$qualified_reference}>"))
      },

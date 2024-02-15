@@ -25,7 +25,8 @@ Dataset <- setRefClass("Dataset",
                 organization=organization,
                 qualified_reference=qualified_reference_val,
                 scoped_reference=scoped_reference_val,
-                uri=str_interp("/datasets/${URLencode(qualified_reference_val)}")
+                uri=str_interp("/datasets/${URLencode(qualified_reference_val)}"),
+                properties=properties
               )
     },
 

@@ -9,7 +9,8 @@ Variable <- setRefClass("Variable",
                 name=name,
                 upload=upload,
                 table=table,
-                uri=uri_val
+                uri=uri_val,
+                properties=properties
       )
     },
     show = function(){

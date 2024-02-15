@@ -18,7 +18,8 @@ Project <- setRefClass("Project",
                  user=user,
                  qualified_reference=qualified_reference_val,
                  scoped_reference=scoped_reference_val,
-                 uri=str_interp("/projects/${URLencode(qualified_reference_val)}")
+                 uri=str_interp("/projects/${URLencode(qualified_reference_val)}"),
+                 properties=properties
        )
      },
 
