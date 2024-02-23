@@ -68,7 +68,9 @@ Notebook <- setRefClass("Notebook",
 
        user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[1]
        project_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[2]
-       table <- User$new(name=user_name)$project(name=project_name)$table(name=res$name, properties=res)
+       table <- User$new(name=user_name)$project(name=project_name)$table(name=res$name)
+
+       table$properties <- res
 
        table
      }
