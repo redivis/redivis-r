@@ -15,12 +15,18 @@ Dataset <- setRefClass("Dataset",
    methods = list(
 
     initialize = function(..., name="", version="current", user=NULL, organization=NULL, properties=list()){
+      version_arg <- version
+      if (!is.null(version) && version != "current" && version != "next" && !startsWith(tolower(version), "v")){
+        version_arg <- str_interp("v${version}")
+      }
+
       owner_name <- if (is.null(user)) organization$name else user$name
-      scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else str_interp("${name}:${version}")
-      qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${owner_name}.${name}:${version}")
+      scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else str_interp("${name}:${version_arg}")
+      qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${owner_name}.${name}:${version_arg}")
+
       callSuper(...,
                 name=name,
-                version=version,
+                version=version_arg,
                 user=user,
                 organization=organization,
                 qualified_reference=qualified_reference_val,
