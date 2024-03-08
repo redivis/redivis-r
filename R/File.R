@@ -1,6 +1,7 @@
 
 #' @importFrom stringr str_interp str_sub
 #' @importFrom httr headers content
+#' @include api_request.R
 File <- setRefClass(
   "File",
   fields = list(id = "character"),
@@ -24,24 +25,41 @@ File <- setRefClass(
 
       file_name <- path
 
-      if (is_dir){
-        header_res <- make_request(method="HEAD", path=str_interp("/rawFiles/${id}"), parse_response = FALSE)
-        name <- headers(header_res)$'x-redivis-filename'
-        file_name <- file.path(path, name)
-      }
-
-      if (!overwrite && file.exists(file_name)){
-        stop(str_interp("File already exists at '${file_name}'. Set parameter overwrite=TRUE to overwrite existing files."))
-      }
-
       target_dir <- dirname(file_name)
 
       # Make sure output directory exists
-      if (!dir.exists(target_dir)) dir.create(target_dir, recursive = TRUE)
+      if (!dir.exists(target_dir)) {
+        dir.create(target_dir, recursive = TRUE)
+      }
 
-      res <- make_request(method="GET", path=str_interp("/rawFiles/${id}"), parse_response = FALSE, download_path = file_name, download_overwrite = overwrite)
+      get_download_path_callback <- NULL
+      stream_callback <- NULL
+      if (is_dir){
+        get_download_path_callback <- function(headers){
+          name <- headers$'x-redivis-filename'
+          file_name <- file.path(path, name)
+          if (!overwrite && base::file.exists(file_name)){
+            stop(str_interp("File already exists at '${file_name}'. Set parameter overwrite=TRUE to overwrite existing files."))
+          }
+          return(file_name)
+        }
+      } else {
+        if (!overwrite && base::file.exists(file_name)){
+          stop(str_interp("File already exists at '${file_name}'. Set parameter overwrite=TRUE to overwrite existing files."))
+        }
+        con <- base::file(base::file.path(path, name), "w+b")
+        stream_callback = function(){
+          writeBin(chunk, con)
+        }
+        on.exit(close(con))
+      }
 
-      file_name
+      res <- make_request(method="GET", path=str_interp("/rawFiles/${id}"), parse_response=FALSE, get_download_path_callback=get_download_path_callback, stream_callback=stream_callback)
+      if (is_dir){
+        return(res)
+      } else {
+        return(file_name)
+      }
     },
 
     read = function(as_text = FALSE) {

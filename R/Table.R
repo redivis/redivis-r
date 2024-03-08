@@ -1,4 +1,4 @@
-#' @include Dataset.R Project.R Variable.R Upload.R util.R
+#' @include Dataset.R Project.R Variable.R util.R api_request.R
 #' @importFrom stringr str_interp
 #' @importFrom pbapply pblapply
 #' @importFrom purrr map
@@ -27,7 +27,7 @@ Table <- setRefClass("Table",
 
      get = function(){
        res <- make_request(path=.self$uri)
-       update_properties(.self, res)
+       update_table_properties(.self, res)
        .self
      },
 
@@ -60,7 +60,7 @@ Table <- setRefClass("Table",
          path=.self$uri,
          payload=payload,
        )
-       update_properties(.self, res)
+       update_table_properties(.self, res)
        .self
      },
 
@@ -113,7 +113,7 @@ Table <- setRefClass("Table",
            "isFileIndex"=is_file_index
          )
        )
-       update_properties(.self, res)
+       update_table_properties(.self, res)
        .self
      },
 
@@ -264,8 +264,10 @@ Table <- setRefClass("Table",
        })
      },
 
-     download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL){
-       if (!endsWith(path, '/')) path = str_interp("${path}/")
+     download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE){
+        if (!endsWith(path, '/')) {
+          path = str_interp("${path}/")
+        }
 
         if (is.null(file_id_variable)){
           file_id_variables <- make_paginated_request(path=str_interp("${.self$uri}/variables"), max_results=2, query = list(isFileId = TRUE))
@@ -286,15 +288,40 @@ Table <- setRefClass("Table",
           schema=arrow::schema(arrow::field(file_id_variable, string())),
           progress=FALSE
         )
-        pblapply(df[[file_id_variable]], function(id) {
-          File$new(id=id)$download(path = path, overwrite = overwrite)
-        })
+
+        if (!dir.exists(path)) dir.create(path, recursive = TRUE)
+
+        if (progress){
+          progressr::with_progress(perform_table_parallel_file_download(df[[file_id_variable]], path, overwrite))
+        } else {
+          perform_parallel_file_download(df[[file_id_variable]], path, overwrite)
+        }
       }
    )
 )
 
+#' @importFrom future plan multicore multisession sequential
+#' @importFrom parallelly supportsMulticore
+#' @importFrom progressr progressor
+perform_table_parallel_file_download <- function(vec, path, overwrite){
+  pb <- progressr::progressor(steps = length(vec))
+  download_paths <- list()
+  get_download_path_from_headers <- function(headers){
+    file_path <- base::file.path(path, headers$'x-redivis-filename')
+    download_paths <<- append(download_paths, file_path)
+    return(file_path)
+  }
+  perform_parallel_download(
+    purrr::map(vec, function(id){str_interp("/rawFiles/${id}")}),
+    overwrite=overwrite,
+    get_download_path_from_headers=get_download_path_from_headers,
+    on_finish=function(){pb(1)}
+  );
+  return(download_paths)
+}
 
-update_properties <- function(instance, properties){
+
+update_table_properties <- function(instance, properties){
   instance$properties = properties
   instance$qualified_reference = properties$qualifiedReference
   instance$scoped_reference = properties$scopedReference

@@ -1,7 +1,7 @@
 Package: redivis
 Type: Package
 Title: R interface for Redivis
-Version: 0.6.4
+Version: 0.6.5
 Author: Redivis Inc.
 Maintainer: Redivis <support@redivis.com>
 Description: Supports working with Redivis datasets and tables through R. 
@@ -13,6 +13,7 @@ Depends:
     R (>= 3.5.0)
 Imports:
     httr (>= 1.4.0),
+    curl (>= 5.0.0),
     jsonlite (>= 1.6.0),
     data.table (>= 1.0.0),
     dplyr (>= 1.0.0),
@@ -32,16 +33,16 @@ RoxygenNote: 7.1.2
 Suggests: 
     testthat (>= 2.1.0)
 Collate: 
-    'Organization.R'
-    'User.R'
-    'Dataset.R'
-    'File.R'
+    'api_request.R'
     'util.R'
+    'Variable.R'
+    'User.R'
     'Project.R'
     'Table.R'
+    'Organization.R'
+    'Dataset.R'
+    'File.R'
     'Notebook.R'
     'Query.R'
     'Upload.R'
-    'Variable.R'
-    'api_request.R'
     'index.R'

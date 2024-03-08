@@ -2,8 +2,7 @@
 #' @importFrom arrow write_parquet write_dataset
 #' @importFrom httr upload_file timeout
 #' @importFrom sf st_geometry st_as_text
-#' @include Table.R
-#' @include User.R
+#' @include Table.R User.R api_request.R
 Notebook <- setRefClass("Notebook",
    fields = list(current_notebook_job_id="character"),
    methods = list(

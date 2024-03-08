@@ -3,84 +3,189 @@
 #' @importFrom httr VERB headers add_headers content status_code write_memory write_disk write_stream timeout
 #' @importFrom jsonlite fromJSON
 #' @importFrom stringr str_interp str_starts
-make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, stream_callback = NULL, stop_on_error=TRUE){
-
-  handler <- write_memory()
-
-  if (!is.null(download_path)) handler <- write_disk(download_path, overwrite = download_overwrite)
-  else if (!is.null(stream_callback)) handler <- write_stream(stream_callback) # TODO
-
-  # req <- httr2::request(str_interp("${base_url}${utils::URLencode(path)}")) %>%
-  #   httr2::req_auth_bearer_token(get_auth_token()) %>%
-  #   httr2::req_method(method)
-  #
-  # if (!is.null(payload)){
-  #   req %>% httr2::req_body_json(payload)
-  # }
-  #
-  # if (!is.null(download_path)){
-  #   if (download_overwrite == FALSE && file.exists(download_path)){
-  #     stop(str_interp("File already exists at path '${download_path}'. To overwrite existing files, set parameter overwrite=TRUE."))
-  #   }
-  #   conn = base::file(download_path, 'w+b')
-  #   httr2::req_stream(req, function(buff) {
-  #     writeBin(buff, conn, append=TRUE)
-  #     print('chunk')
-  #     TRUE
-  #   })
-  #   close(conn)
-  # } else if (as_stream){
-  #   return(httr2::req_stream(req))
-  # } else {
-  #   resp <- httr2::req_perform(req)
-  #   if (parse_response){
-  #     httr2::resp_body_json(resp)
-  #   } else {
-  #     httr2::resp_body_raw(resp)
-  #   }
-  # }
-  res <- VERB(
-    method,
-    handler,
-    url = generate_api_url(path),
-    add_headers(get_authorization_header()),
-    query = query,
-    body = payload,
-    encode="json",
-    httr::timeout(3600)
-  )
-
-  if (!parse_response && status_code(res) < 400){
-    return(res)
-  }
-
-  is_json <- FALSE
-  response_content <- NULL
-
-  if (method == "HEAD"){
-    if (status_code(res) >= 400){
-      response_content <- fromJSON(URLdecode(headers(res)$'x-redivis-error-payload'))
+#' @import curl
+make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE){
+  if (!is.null(stream_callback) || !is.null(get_download_path_callback)){
+    h <- curl::new_handle()
+    auth = get_authorization_header()
+    curl::handle_setheaders(h, "Authorization"=auth[[1]])
+    url <- generate_api_url(path)
+    con <- curl::curl(url, handle=h)
+    open(con, "rb", blocking = FALSE)
+    on.exit(close(con))
+    res_data <- curl::handle_data(h)
+    if (res_data$status_code >= 400){
+      if (stop_on_error){
+        stop(str_interp("Received HTTP status ${status_code} for path ${path}"))
+      } else {
+        return(NULL)
+      }
     }
-  } else {
-    response_content <- content(res, as="text", encoding='UTF-8')
-
-    if (!is.null(headers(res)$'content-type') && str_starts(headers(res)$'content-type', 'application/json') && (status_code(res) >= 400 || parse_response)){
-      is_json <- TRUE
-      response_content <- fromJSON(response_content, simplifyVector = FALSE)
-    }
-  }
-
-
-  if (status_code(res) >= 400 && stop_on_error){
-    if (is_json){
-      stop(response_content$error$message)
+    if (is.null(get_download_path_callback)){
+      while(isIncomplete(con)){
+        buf <- readBin(con, raw(), 16384)
+        cb_res <- stream_callback(buf)
+        if (!is.null(cb_res) && stream_callback(cb_res) == FALSE){
+          break;
+        }
+      }
     } else {
-      stop(response_content)
+      headers <- parse_curl_headers(res_data)
+
+      download_path <- get_download_path_callback(headers)
+      file_con <- base::file(download_path, "w+b")
+      on.exit(close(file_con), add=TRUE)
+      while(isIncomplete(con)){
+        writeBin(readBin(con, raw(), 16384), file_con)
+      }
+      return(download_path)
     }
+
   } else {
-    response_content
+    handler <- write_memory()
+
+    if (!is.null(download_path)) handler <- write_disk(download_path, overwrite = download_overwrite)
+    else if (!is.null(stream_callback)) handler <- write_stream(stream_callback)
+    # req <- httr2::request(str_interp("${base_url}${utils::URLencode(path)}")) %>%
+    #   httr2::req_auth_bearer_token(get_auth_token()) %>%
+    #   httr2::req_method(method)
+    #
+    # if (!is.null(payload)){
+    #   req %>% httr2::req_body_json(payload)
+    # }
+    #
+    # if (!is.null(download_path)){
+    #   if (download_overwrite == FALSE && file.exists(download_path)){
+    #     stop(str_interp("File already exists at path '${download_path}'. To overwrite existing files, set parameter overwrite=TRUE."))
+    #   }
+    #   conn = base::file(download_path, 'w+b')
+    #   httr2::req_stream(req, function(buff) {
+    #     writeBin(buff, conn, append=TRUE)
+    #     print('chunk')
+    #     TRUE
+    #   })
+    #   close(conn)
+    # } else if (as_stream){
+    #   return(httr2::req_stream(req))
+    # } else {
+    #   resp <- httr2::req_perform(req)
+    #   if (parse_response){
+    #     httr2::resp_body_json(resp)
+    #   } else {
+    #     httr2::resp_body_raw(resp)
+    #   }
+    # }
+    res <- VERB(
+      method,
+      handler,
+      url = generate_api_url(path),
+      add_headers(get_authorization_header()),
+      query = query,
+      body = payload,
+      encode="json",
+      httr::timeout(3600)
+    )
+
+    if (!parse_response && status_code(res) < 400){
+      return(res)
+    }
+
+    is_json <- FALSE
+    response_content <- NULL
+
+    if (method == "HEAD"){
+      if (status_code(res) >= 400){
+        response_content <- fromJSON(URLdecode(headers(res)$'x-redivis-error-payload'))
+      }
+    } else {
+      response_content <- content(res, as="text", encoding='UTF-8')
+
+      if (!is.null(headers(res)$'content-type') && str_starts(headers(res)$'content-type', 'application/json') && (status_code(res) >= 400 || parse_response)){
+        is_json <- TRUE
+        response_content <- fromJSON(response_content, simplifyVector = FALSE)
+      }
+    }
+
+
+    if (status_code(res) >= 400 && stop_on_error){
+      if (is_json){
+        stop(response_content$error$message)
+      } else {
+        stop(response_content)
+      }
+    } else {
+      response_content
+    }
   }
 }
+
+parse_curl_headers <- function(res_data){
+  vec <- curl::parse_headers(res_data$headers)
+
+  header_names <- purrr::map(vec, function(header) {
+    strsplit(header, ':')[[1]][[1]]
+  })
+  headers <- purrr::map(vec, function(header) {
+    split = strsplit(header, ':\\s+')[[1]]
+    paste0(tail(split, -1), collapse=':')
+  }) %>% purrr::set_names(header_names)
+}
+
+#' @import curl
+perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, stop_on_error=TRUE){
+  pool <- curl::new_pool(total_con = 100, host_con = 20, multiplex = TRUE)
+  handles = list()
+  for (path in paths){
+    h <- curl::new_handle()
+    url <- generate_api_url(path)
+    auth = get_authorization_header()
+    curl::handle_setheaders(h, "Authorization"=auth[[1]])
+    curl::handle_setopt(h, "url"=url)
+
+    make_data_fn <- function(h, url, get_download_path_from_headers, overwrite, on_finish){
+      file_con <- NULL
+      handle <- h
+      path <- url
+      return(function(chunk, final){
+        if (is.null(file_con)){
+          res_data <- curl::handle_data(handle)
+          status_code <- res_data$status_code
+          if (status_code >= 400){
+            if (stop_on_error){
+              stop(str_interp("Received HTTP status ${status_code} for path ${path}"))
+            } else {
+              return(NULL)
+            }
+          }
+
+          headers <- parse_curl_headers(res_data)
+
+          download_path <- get_download_path_from_headers(headers)
+          if (!overwrite && base::file.exists(download_path)){
+            stop(str_interp("File already exists at '${download_path}'. Set parameter overwrite=TRUE to overwrite existing files."))
+          }
+          file_con <<- base::file(download_path, "w+b")
+        }
+        if (length(chunk)){
+          writeBin(chunk, file_con)
+        }
+        if (final){
+          on_finish()
+          close(file_con)
+        }
+      })
+    }
+
+    fail_fn <- function(e){
+      print(e)
+      stop(e)
+    }
+    curl::multi_add(h, fail = fail_fn, data = make_data_fn(h, url, get_download_path_from_headers, overwrite, on_finish), pool = pool)
+  }
+  curl::multi_run(pool=pool)
+}
+
+
 
 make_paginated_request <- function(path, query=list(), page_size=100, max_results=NULL){
   page = 0
@@ -218,7 +323,6 @@ RedivisBatchReader <- setRefClass(
 #' @importFrom arrow open_dataset Scanner
 #' @importFrom uuid UUIDgenerate
 #' @importFrom progressr progress with_progress
-#' @importFrom parallelly availableCores supportsMulticore
 make_rows_request <- function(uri, max_results=NULL, selected_variables = NULL, type = 'tibble', schema = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL){
   read_session <- make_request(
     method="post",
@@ -299,7 +403,8 @@ get_authorization_header <- function(){
 }
 
 #' @importFrom furrr future_map
-#' @importFrom future plan multicore multisession
+#' @importFrom future plan multicore multisession sequential
+#' @importFrom parallelly availableCores supportsMulticore
 #' @importFrom progressr progressor
 #' @importFrom stringr str_c
 #' @import arrow
@@ -314,9 +419,8 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
   if (parallelly::supportsMulticore()){
     oplan <- future::plan(future::multicore, workers = worker_count)
   } else {
-    oplan <- future::plan(future::sequential)
-    # This is currently throwing NULL pointer errors (?)
-    # oplan <- future::plan(future::multisession, workers = length(streams))
+    # oplan <- future::plan(future::sequential)
+    oplan <- future::plan(future::multisession, workers = worker_count)
   }
 
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit

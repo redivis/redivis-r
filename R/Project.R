@@ -1,4 +1,4 @@
-#' @include User.R
+#' @include User.R api_request.R
 #' @importFrom purrr map
 Project <- setRefClass("Project",
    fields = list(name="character",
@@ -29,7 +29,7 @@ Project <- setRefClass("Project",
 
      get = function(){
        res <- make_request(path=.self$uri)
-       update_properties(.self, res)
+       update_project_properties(.self, res)
        .self
      },
 
@@ -67,7 +67,7 @@ Project <- setRefClass("Project",
    )
 )
 
-update_properties <- function(instance, properties){
+update_project_properties <- function(instance, properties){
   instance$properties = properties
   instance$qualified_reference = properties$qualifiedReference
   instance$scoped_reference = properties$scopedReference

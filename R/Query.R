@@ -1,4 +1,4 @@
-#' @include Dataset.R Project.R
+#' @include Dataset.R Project.R api_request.R
 Query <- setRefClass("Query",
   fields = list(query="character", default_dataset="character", default_project="character", properties="list"),
   methods = list(

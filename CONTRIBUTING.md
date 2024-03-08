@@ -11,7 +11,7 @@ Sys.setenv(REDIVIS_API_TOKEN="<TOKEN>")
 Sys.setenv(REDIVIS_API_ENDPOINT="https://localhost:8443/api/v1")
 devtools::test()
 
-
-
+## Building
+- Run `devtools::document()` to run roxygen
 
 https://r-pkgs.org/tests.html

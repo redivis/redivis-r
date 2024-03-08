@@ -1,6 +1,5 @@
 
-#' @include User.R
-#' @include Organization.R
+#' @include Organization.R User.R Table.R api_request.R
 Dataset <- setRefClass("Dataset",
    fields = list(
     name="character",
@@ -55,7 +54,7 @@ Dataset <- setRefClass("Dataset",
           "description"= description
         )
       )
-      update_properties(.self, res)
+      update_dataset_properties(.self, res)
       .self
     },
 
@@ -78,7 +77,7 @@ Dataset <- setRefClass("Dataset",
 
   get = function(){
     res <- make_request(path=.self$uri)
-    update_properties(.self, res)
+    update_dataset_properties(.self, res)
     .self
   },
 
@@ -137,13 +136,13 @@ Dataset <- setRefClass("Dataset",
       path=.self$uri,
       payload=payload,
     )
-    update_properties(.self, res)
+    update_dataset_properties(.self, res)
     .self
   }
   )
 )
 
-update_properties <- function(instance, properties){
+update_dataset_properties <- function(instance, properties){
   instance$properties = properties
   instance$qualified_reference = properties$qualifiedReference
   instance$scoped_reference = properties$scopedReference

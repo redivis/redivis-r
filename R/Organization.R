@@ -1,3 +1,4 @@
+#' @include Dataset.R api_request.R
 Organization <- setRefClass("Organization",
   fields = list(name="character"),
   methods = list(

@@ -1,4 +1,4 @@
-#' @include Table.R Upload.R
+#' @include Table.R api_request.R
 Variable <- setRefClass("Variable",
   fields = list(name="character", table="ANY", upload="ANY", properties="list", uri="character"),
   methods = list(
