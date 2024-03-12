@@ -123,7 +123,7 @@ parse_curl_headers <- function(res_data){
   vec <- curl::parse_headers(res_data$headers)
 
   header_names <- purrr::map(vec, function(header) {
-    strsplit(header, ':')[[1]][[1]]
+    tolower(strsplit(header, ':')[[1]][[1]])
   })
   headers <- purrr::map(vec, function(header) {
     split = strsplit(header, ':\\s+')[[1]]
