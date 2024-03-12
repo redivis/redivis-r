@@ -123,7 +123,7 @@ parse_curl_headers <- function(res_data){
   vec <- curl::parse_headers(res_data$headers)
 
   header_names <- purrr::map(vec, function(header) {
-    strsplit(header, ':')[[1]][[1]]
+    tolower(strsplit(header, ':')[[1]][[1]])
   })
   headers <- purrr::map(vec, function(header) {
     split = strsplit(header, ':\\s+')[[1]]
@@ -142,49 +142,47 @@ perform_parallel_download <- function(paths, overwrite, get_download_path_from_h
     curl::handle_setheaders(h, "Authorization"=auth[[1]])
     curl::handle_setopt(h, "url"=url)
 
-    make_data_fn <- function(h, url, get_download_path_from_headers, overwrite, on_finish){
-      file_con <- NULL
-      handle <- h
-      path <- url
-      return(function(chunk, final){
-        if (is.null(file_con)){
-          res_data <- curl::handle_data(handle)
-          status_code <- res_data$status_code
-          if (status_code >= 400){
-            if (stop_on_error){
-              stop(str_interp("Received HTTP status ${status_code} for path ${path}"))
-            } else {
-              return(NULL)
-            }
-          }
-
-          headers <- parse_curl_headers(res_data)
-
-          download_path <- get_download_path_from_headers(headers)
-          if (!overwrite && base::file.exists(download_path)){
-            stop(str_interp("File already exists at '${download_path}'. Set parameter overwrite=TRUE to overwrite existing files."))
-          }
-          file_con <<- base::file(download_path, "w+b")
-        }
-        if (length(chunk)){
-          writeBin(chunk, file_con)
-        }
-        if (final){
-          on_finish()
-          close(file_con)
-        }
-      })
-    }
-
     fail_fn <- function(e){
       print(e)
       stop(e)
     }
-    curl::multi_add(h, fail = fail_fn, data = make_data_fn(h, url, get_download_path_from_headers, overwrite, on_finish), pool = pool)
+    curl::multi_add(h, fail = fail_fn, data = parallel_download_data_cb_factory(h, url, get_download_path_from_headers, overwrite, on_finish), pool = pool)
   }
   curl::multi_run(pool=pool)
 }
 
+parallel_download_data_cb_factory <- function(h, url, get_download_path_from_headers, overwrite, on_finish){
+  file_con <- NULL
+  handle <- h
+  path <- url
+  return(function(chunk, final){
+    if (is.null(file_con)){
+      res_data <- curl::handle_data(handle)
+      status_code <- res_data$status_code
+      if (status_code >= 400){
+        if (stop_on_error){
+          stop(str_interp("Received HTTP status ${status_code} for path ${path}"))
+        } else {
+          return(NULL)
+        }
+      }
+
+      headers <- parse_curl_headers(res_data)
+      download_path <- get_download_path_from_headers(headers)
+      if (!overwrite && base::file.exists(download_path)){
+        stop(str_interp("File already exists at '${download_path}'. Set parameter overwrite=TRUE to overwrite existing files."))
+      }
+      file_con <<- base::file(download_path, "w+b")
+    }
+    if (length(chunk)){
+      writeBin(chunk, file_con)
+    }
+    if (final){
+      on_finish()
+      close(file_con)
+    }
+  })
+}
 
 
 make_paginated_request <- function(path, query=list(), page_size=100, max_results=NULL){
