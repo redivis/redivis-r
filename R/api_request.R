@@ -140,18 +140,18 @@ perform_parallel_download <- function(paths, overwrite, get_download_path_from_h
     url <- generate_api_url(path)
     auth = get_authorization_header()
     curl::handle_setheaders(h, "Authorization"=auth[[1]])
-    curl::handle_setopt(h, "url"=url)
+    curl::handle_setopt(h, "url"=url, buffersize=1048576) # 1MB buffer
 
     fail_fn <- function(e){
       print(e)
       stop(e)
     }
-    curl::multi_add(h, fail = fail_fn, data = parallel_download_data_cb_factory(h, url, get_download_path_from_headers, overwrite, on_finish), pool = pool)
+    curl::multi_add(h, fail = fail_fn, data = parallel_download_data_cb_factory(h, url, get_download_path_from_headers, overwrite, on_finish, stop_on_error), pool = pool)
   }
   curl::multi_run(pool=pool)
 }
 
-parallel_download_data_cb_factory <- function(h, url, get_download_path_from_headers, overwrite, on_finish){
+parallel_download_data_cb_factory <- function(h, url, get_download_path_from_headers, overwrite, on_finish, stop_on_error){
   file_con <- NULL
   handle <- h
   path <- url
