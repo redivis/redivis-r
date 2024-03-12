@@ -169,6 +169,7 @@ parallel_download_data_cb_factory <- function(h, url, get_download_path_from_hea
 
       headers <- parse_curl_headers(res_data)
       download_path <- get_download_path_from_headers(headers)
+      print(headers)
       print(download_path)
       if (!overwrite && base::file.exists(download_path)){
         stop(str_interp("File already exists at '${download_path}'. Set parameter overwrite=TRUE to overwrite existing files."))
