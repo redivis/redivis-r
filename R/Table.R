@@ -265,8 +265,8 @@ Table <- setRefClass("Table",
      },
 
      download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE){
-        if (!endsWith(path, '/')) {
-          path = str_interp("${path}/")
+        if (endsWith(path, '/')) {
+          path <- str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
         }
 
         if (is.null(file_id_variable)){

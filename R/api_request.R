@@ -146,12 +146,12 @@ perform_parallel_download <- function(paths, overwrite, get_download_path_from_h
       print(e)
       stop(e)
     }
-    curl::multi_add(h, fail = fail_fn, data = make_data_fn(h, url, get_download_path_from_headers, overwrite, on_finish), pool = pool)
+    curl::multi_add(h, fail = fail_fn, data = parallel_download_data_cb_factory(h, url, get_download_path_from_headers, overwrite, on_finish), pool = pool)
   }
   curl::multi_run(pool=pool)
 }
 
-make_data_fn <- function(h, url, get_download_path_from_headers, overwrite, on_finish){
+parallel_download_data_cb_factory <- function(h, url, get_download_path_from_headers, overwrite, on_finish){
   file_con <- NULL
   handle <- h
   path <- url
@@ -166,11 +166,8 @@ make_data_fn <- function(h, url, get_download_path_from_headers, overwrite, on_f
           return(NULL)
         }
       }
-      print(res_data)
-      print(handle)
 
       headers <- parse_curl_headers(res_data)
-      print(headers)
       download_path <- get_download_path_from_headers(headers)
       if (!overwrite && base::file.exists(download_path)){
         stop(str_interp("File already exists at '${download_path}'. Set parameter overwrite=TRUE to overwrite existing files."))
