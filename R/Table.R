@@ -2,6 +2,7 @@
 #' @importFrom stringr str_interp
 #' @importFrom pbapply pblapply
 #' @importFrom purrr map
+#' @importFrom sf st_as_sf
 Table <- setRefClass("Table",
    fields = list(name="character", dataset="ANY", project="ANY", properties="list", qualified_reference="character", scoped_reference="character", uri="character"),
 

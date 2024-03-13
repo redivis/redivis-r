@@ -1,4 +1,5 @@
 #' @include Dataset.R Project.R api_request.R
+#' @importFrom sf st_as_sf
 Query <- setRefClass("Query",
   fields = list(query="character", default_dataset="character", default_project="character", properties="list"),
   methods = list(
@@ -82,7 +83,7 @@ Query <- setRefClass("Query",
       )
 
       if (!is.null(params$geography_variable)){
-        st_as_sf(df, wkt=params$geography_variable, crs=4326)
+        sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
       } else {
         df
       }
@@ -106,7 +107,7 @@ Query <- setRefClass("Query",
         batch_preprocessor = batch_preprocessor
       )
 
-      st_as_sf(df, wkt=params$geography_variable, crs=4326)
+      sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
     },
 
     to_data_frame = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
