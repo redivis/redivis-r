@@ -321,14 +321,14 @@ RedivisBatchReader <- setRefClass(
 #' @importFrom arrow open_dataset Scanner
 #' @importFrom uuid UUIDgenerate
 #' @importFrom progressr progress with_progress
-make_rows_request <- function(uri, max_results=NULL, selected_variables = NULL, type = 'tibble', schema = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL){
+make_rows_request <- function(uri, max_results=NULL, selected_variable_names = NULL, type = 'tibble', variables = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL){
   read_session <- make_request(
     method="post",
     path=str_interp("${uri}/readSessions"),
     parse_response=TRUE,
     payload=list(
         "maxResults"=max_results,
-        "selectedVariables"=selected_variables,
+        "selectedVariables"=selected_variable_names,
         "format"="arrow",
         "requestedStreamCount"=if (type == 'arrow_stream') 1 else parallelly::availableCores()
     )
@@ -347,7 +347,7 @@ make_rows_request <- function(uri, max_results=NULL, selected_variables = NULL, 
       current_stream_index=1,
       date_variables=list(),
       time_variables=list(),
-      custom_classes=list(schema=schema, progressor=p),
+      custom_classes=list(schema=get_arrow_schema(variables), progressor=p),
       last_progressed_time=Sys.time(),
       current_progress_rows=0
     )
@@ -363,12 +363,12 @@ make_rows_request <- function(uri, max_results=NULL, selected_variables = NULL, 
   }
 
   if (progress){
-    progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, schema, coerce_schema, batch_preprocessor))
+    progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor))
   } else {
-    parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, schema, coerce_schema, batch_preprocessor)
+    parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor)
   }
 
-  arrow_dataset <- arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) schema else NULL)
+  arrow_dataset <- arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) get_arrow_schema(variables) else NULL)
 
   # TODO: remove head() once BE is sorted
   if (type == 'arrow_dataset'){
@@ -407,17 +407,17 @@ get_authorization_header <- function(){
 #' @importFrom stringr str_c
 #' @import arrow
 #' @import dplyr
-parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_schema, batch_preprocessor){
+parallel_stream_arrow <- function(folder, streams, max_results, variables, coerce_schema, batch_preprocessor){
   pb <- progressr::progressor(steps = max_results)
-  # pb <- txtProgressBar(0, max_results, style = 3)
   headers <- get_authorization_header()
   worker_count <- length(streams)
 
+  is_multisession <- FALSE
 
   if (parallelly::supportsMulticore()){
     oplan <- future::plan(future::multicore, workers = worker_count)
   } else {
-    # oplan <- future::plan(future::sequential)
+    is_multisession <- TRUE
     oplan <- future::plan(future::multisession, workers = worker_count)
   }
 
@@ -425,9 +425,19 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
   on.exit(plan(oplan), add = TRUE)
   base_url = generate_api_url('/readStreams')
 
+  schema <- NULL
+
+  # IMPORTANT: we can't serialize an arrow schema across processes under multisession, so need to generate in each worker instead
+  if (is_multisession == FALSE){
+    schema <- get_arrow_schema(variables)
+  }
+
   furrr::future_map(streams, function(stream){
-    # for (stream in streams){
     output_file_path <- str_interp('${folder}/${stream$id}')
+
+    if (is_multisession){
+      schema <- get_arrow_schema(variables)
+    }
 
     # This ensures the url method doesn't time out after 60s. Only applies to this function, doesn't set globally
     options(timeout=3600)
@@ -506,10 +516,8 @@ parallel_stream_arrow <- function(folder, streams, max_results, schema, coerce_s
     }
 
     pb(amount = current_progress_rows)
-    # setTxtProgressBar(pb, current_progress_rows)
 
     stream_writer$close()
     output_file$close()
-    # }
   })
 }

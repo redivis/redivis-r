@@ -123,9 +123,9 @@ Table <- setRefClass("Table",
        make_rows_request(
          uri=params$uri,
          max_results=params$max_results,
-         selected_variables = params$selected_variables,
+         selected_variable_names = params$selected_variable_names,
          type = 'arrow_dataset',
-         schema = params$schema,
+         variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
@@ -139,10 +139,10 @@ Table <- setRefClass("Table",
        make_rows_request(
          uri=params$uri,
          max_results=params$max_results,
-         selected_variables = params$selected_variables,
+         selected_variable_names = params$selected_variable_names,
          type = 'arrow_table',
          progress=progress,
-         schema = params$schema,
+         variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
@@ -155,9 +155,9 @@ Table <- setRefClass("Table",
        make_rows_request(
          uri=params$uri,
          max_results=params$max_results,
-         selected_variables = params$selected_variables,
+         selected_variable_names = params$selected_variable_names,
          type = 'arrow_stream',
-         schema = params$schema,
+         variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema
        )
@@ -173,9 +173,9 @@ Table <- setRefClass("Table",
        df <- make_rows_request(
          uri=params$uri,
          max_results=params$max_results,
-         selected_variables = params$selected_variables,
+         selected_variable_names = params$selected_variable_names,
          type = 'tibble',
-         schema = params$schema,
+         variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
@@ -198,9 +198,9 @@ Table <- setRefClass("Table",
        df <- make_rows_request(
          uri=params$uri,
          max_results=params$max_results,
-         selected_variables = params$selected_variables,
+         selected_variable_names = params$selected_variable_names,
          type = 'tibble',
-         schema = params$schema,
+         variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
@@ -215,9 +215,9 @@ Table <- setRefClass("Table",
        make_rows_request(
          uri=params$uri,
          max_results=params$max_results,
-         selected_variables = params$selected_variables,
+         selected_variable_names = params$selected_variable_names,
          type = 'data_frame',
-         schema = params$schema,
+         variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
@@ -230,9 +230,9 @@ Table <- setRefClass("Table",
        make_rows_request(
          uri=params$uri,
          max_results=params$max_results,
-         selected_variables = params$selected_variables,
+         selected_variable_names = params$selected_variable_names,
          type = 'data_table',
-         schema = params$schema,
+         variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
@@ -254,9 +254,9 @@ Table <- setRefClass("Table",
        df <- make_rows_request(
          uri=.self$uri,
          max_results=max_results,
-         selected_variables = list(file_id_variable),
+         selected_variable_names = list(file_id_variable),
          type='data_table',
-         schema=arrow::schema(arrow::field(file_id_variable, string())),
+         variables=list(list(name=file_id_variable, type="string")),
          progress=FALSE
        )
        purrr::map(df[[file_id_variable]], function(id) {
@@ -283,9 +283,9 @@ Table <- setRefClass("Table",
         df <- make_rows_request(
           uri=.self$uri,
           max_results=max_results,
-          selected_variables = list(file_id_variable),
+          selected_variable_names = list(file_id_variable),
           type='data_table',
-          schema=arrow::schema(arrow::field(file_id_variable, string())),
+          variables=list(list(name=file_id_variable, type="string")),
           progress=FALSE
         )
 
@@ -352,8 +352,7 @@ get_table_request_params = function(self, max_results, variables, geography_vari
     self$get()
   }
 
-  selected_variables <- if (is.null(variables)) NULL else Map(function(variable_name) variable_name, variables)
-  schema <- get_arrow_schema(variables_list)
+  selected_variable_names <- if (is.null(variables)) NULL else Map(function(variable_name) variable_name, variables)
 
   if (!is.null(geography_variable) && geography_variable == ''){
     geography_variable = NULL
@@ -368,9 +367,8 @@ get_table_request_params = function(self, max_results, variables, geography_vari
   list(
     "max_results" = max_results,
     "uri" = self$uri,
-    "selected_variables" = selected_variables,
-    "variables_list" = variables_list,
-    "schema"=schema,
+    "selected_variable_names" = selected_variable_names,
+    "variables"=variables_list,
     "geography_variable"=geography_variable,
     "coerce_schema"=self$properties$container$kind == 'dataset'
   )
