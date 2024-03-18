@@ -295,7 +295,7 @@ Table <- setRefClass("Table",
         if (progress){
           progressr::with_progress(perform_table_parallel_file_download(df[[file_id_variable]], path, overwrite))
         } else {
-          perform_parallel_file_download(df[[file_id_variable]], path, overwrite)
+          perform_table_parallel_file_download(df[[file_id_variable]], path, overwrite)
         }
       }
    )
@@ -304,6 +304,7 @@ Table <- setRefClass("Table",
 #' @importFrom future plan multicore multisession sequential
 #' @importFrom parallelly supportsMulticore
 #' @importFrom progressr progressor
+#' @importFrom purrr map
 perform_table_parallel_file_download <- function(vec, path, overwrite){
   pb <- progressr::progressor(steps = length(vec))
   download_paths <- list()
