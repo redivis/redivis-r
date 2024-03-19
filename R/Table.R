@@ -309,12 +309,12 @@ perform_table_parallel_file_download <- function(vec, path, overwrite){
   pb <- progressr::progressor(steps = length(vec))
   download_paths <- list()
   get_download_path_from_headers <- function(headers){
-    file_path <- base::file.path(path, headers$'x-redivis-filename')
+    file_path <- base::file.path(path, name)
     download_paths <<- append(download_paths, file_path)
     return(file_path)
   }
   perform_parallel_download(
-    purrr::map(vec, function(id){str_interp("/rawFiles/${id}")}),
+    purrr::map(vec, function(id){str_interp("/rawFiles/${id}?allowRedirect=true")}),
     overwrite=overwrite,
     get_download_path_from_headers=get_download_path_from_headers,
     on_finish=function(){pb(1)}
