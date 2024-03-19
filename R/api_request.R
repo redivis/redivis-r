@@ -134,14 +134,15 @@ parse_curl_headers <- function(res_data){
 
 #' @import curl
 perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, stop_on_error=TRUE){
-  pool <- curl::new_pool(total_con = 50, host_con = 50, multiplex = FALSE) # perf is worse w/ multiplex
+  # pool <- curl::new_pool(total_con = 50, host_con = 50, multiplex = FALSE) # perf is worse w/ multiplex
+  pool <- curl::new_pool()
   handles = list()
   for (path in paths){
     h <- curl::new_handle()
     url <- generate_api_url(path)
     auth = get_authorization_header()
     curl::handle_setheaders(h, "Authorization"=auth[[1]])
-    curl::handle_setopt(h, "url"=url, buffersize=262144) # 1MB buffer
+    curl::handle_setopt(h, "url"=url) # 1MB buffer
     # curl::handle_setopt(h, "url"=url, buffersize=1048576)
 
 
