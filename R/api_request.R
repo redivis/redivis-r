@@ -135,6 +135,7 @@ parse_curl_headers <- function(res_data){
 #' @import curl
 perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, stop_on_error=TRUE){
   # pool <- curl::new_pool(total_con = 50, host_con = 50, multiplex = FALSE) # perf is worse w/ multiplex
+  print('1')
   pool <- curl::new_pool()
   handles = list()
   for (path in paths){
