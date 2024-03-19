@@ -119,6 +119,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
   }
 }
 
+#' @importFrom purrr map set_names
 parse_curl_headers <- function(res_data){
   vec <- curl::parse_headers(res_data$headers)
 
@@ -133,14 +134,14 @@ parse_curl_headers <- function(res_data){
 
 #' @import curl
 perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, stop_on_error=TRUE){
-  pool <- curl::new_pool(total_con = 100, host_con = 20, multiplex = TRUE)
+  pool <- curl::new_pool()
   handles = list()
   for (path in paths){
     h <- curl::new_handle()
     url <- generate_api_url(path)
     auth = get_authorization_header()
     curl::handle_setheaders(h, "Authorization"=auth[[1]])
-    curl::handle_setopt(h, "url"=url, buffersize=1048576) # 1MB buffer
+    curl::handle_setopt(h, "url"=url)
 
     fail_fn <- function(e){
       print(e)

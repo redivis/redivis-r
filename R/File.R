@@ -36,7 +36,7 @@ File <- setRefClass(
       stream_callback <- NULL
       if (is_dir){
         get_download_path_callback <- function(headers){
-          name <- headers$'x-redivis-filename'
+          name <- sub(".*filename=", "", headers$'content-disposition')
           file_name <- file.path(path, name)
           if (!overwrite && base::file.exists(file_name)){
             stop(str_interp("File already exists at '${file_name}'. Set parameter overwrite=TRUE to overwrite existing files."))
@@ -54,7 +54,7 @@ File <- setRefClass(
         on.exit(close(con))
       }
 
-      res <- make_request(method="GET", path=str_interp("/rawFiles/${id}"), parse_response=FALSE, get_download_path_callback=get_download_path_callback, stream_callback=stream_callback)
+      res <- make_request(method="GET", path=str_interp("/rawFiles/${id}"), query=list(allowRedirect="true"), parse_response=FALSE, get_download_path_callback=get_download_path_callback, stream_callback=stream_callback)
       if (is_dir){
         return(res)
       } else {
