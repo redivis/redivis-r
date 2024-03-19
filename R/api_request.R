@@ -141,8 +141,8 @@ perform_parallel_download <- function(paths, overwrite, get_download_path_from_h
     url <- generate_api_url(path)
     auth = get_authorization_header()
     curl::handle_setheaders(h, "Authorization"=auth[[1]])
-    # curl::handle_setopt(h, "url"=url, buffersize=1048576) # 1MB buffer
-    curl::handle_setopt(h, "url"=url)
+    curl::handle_setopt(h, "url"=url, buffersize=262144) # 1MB buffer
+    # curl::handle_setopt(h, "url"=url, buffersize=1048576)
 
 
     fail_fn <- function(e){
