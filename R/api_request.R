@@ -409,6 +409,9 @@ get_authorization_header <- function(){
 #' @import arrow
 #' @import dplyr
 parallel_stream_arrow <- function(folder, streams, max_results, variables, coerce_schema, batch_preprocessor){
+  if (!length(streams)){
+    return();
+  }
   pb <- progressr::progressor(steps = max_results)
   headers <- get_authorization_header()
   worker_count <- length(streams)
