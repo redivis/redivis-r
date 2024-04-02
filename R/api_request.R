@@ -357,7 +357,7 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
     return(reader)
   }
 
-  folder <- str_interp('/${tempdir()}/redivis/tables/${uuid::UUIDgenerate()}')
+  folder <- str_interp('${tempdir()}/redivis/tables/${uuid::UUIDgenerate()}')
   dir.create(folder, recursive = TRUE)
   if (type != 'arrow_dataset'){
     on.exit(unlink(folder))
