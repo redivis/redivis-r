@@ -240,9 +240,20 @@ RedivisBatchReader <- setRefClass(
 
   methods = list(
     get_next_reader__ = function(){
+      base_url = generate_api_url('/readStreams')
+
+      # h <- curl::new_handle()
+      # auth = get_authorization_header()
+      # curl::handle_setheaders(h, "Authorization"=auth[[1]])
+      # if (Sys.getenv("REDIVIS_API_ENDPOINT") == "https://localhost:8443/api/v1"){
+      #   curl::handle_setopt(h, "ssl_verifypeer"=0L)
+      # }
+      # url <- str_interp('${base_url}/${streams[[.self$current_stream_index]]$id}')
+      # con <- curl::curl(url, handle=h)
+      # open(con, "rb")
+
       options(timeout=3600)
       headers <- get_authorization_header()
-      base_url = generate_api_url('/readStreams')
       con <- url(str_interp('${base_url}/${streams[[.self$current_stream_index]]$id}'), open = "rb", headers = headers, blocking=FALSE)
       stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
       writer_schema_fields <- list()
@@ -357,25 +368,24 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
     return(reader)
   }
 
-  folder <- str_interp('${tempdir()}/redivis/tables/${uuid::UUIDgenerate()}')
-  dir.create(folder, recursive = TRUE)
-  if (type != 'arrow_dataset'){
-    on.exit(unlink(folder))
+  folder <- NULL
+  if (type == 'arrow_dataset'){
+    folder <- str_interp('${tempdir()}/redivis/tables/${uuid::UUIDgenerate()}')
+    dir.create(folder, recursive = TRUE)
   }
 
   if (progress){
-    progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor))
+    tables <- progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor))
   } else {
-    parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor)
+    tables <- parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor)
   }
-
-  arrow_dataset <- arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) get_arrow_schema(variables) else NULL)
 
   # TODO: remove head() once BE is sorted
   if (type == 'arrow_dataset'){
-    arrow_dataset
+    arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) get_arrow_schema(variables) else NULL)
   } else {
-    arrow_table = if (is.null(max_results)) arrow::Scanner$create(arrow_dataset)$ToTable() else head(arrow_dataset, max_results)
+    combined_tables <- do.call(arrow::concat_tables, c(tables, list(unify_schemas=coerce_schema)))
+    arrow_table = if (is.null(max_results)) combined_tables else head(combined_tables, max_results)
     if (type == 'arrow_table'){
       arrow_table
     }else if (type == 'tibble'){
@@ -412,6 +422,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
   if (!length(streams)){
     return();
   }
+
   pb <- progressr::progressor(steps = max_results)
   headers <- get_authorization_header()
   worker_count <- length(streams)
@@ -423,6 +434,9 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
   } else {
     is_multisession <- TRUE
     oplan <- future::plan(future::multisession, workers = worker_count)
+    # Helpful for testing in dev
+    # oplan <- future::plan(future::sequential)
+
   }
 
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
@@ -436,26 +450,52 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     schema <- get_arrow_schema(variables)
   }
 
-  furrr::future_map(streams, function(stream){
-    output_file_path <- str_interp('${folder}/${stream$id}')
-
+  results <- furrr::future_map(streams, function(stream){
     if (is_multisession){
       schema <- get_arrow_schema(variables)
     }
 
+    schema_field_uncased_name_map <- sapply(schema$names, tolower)
+    schema_field_uncased_name_map <- setNames(names(schema_field_uncased_name_map), schema_field_uncased_name_map)
+
+    # h <- curl::new_handle()
+    # auth = get_authorization_header()
+    # curl::handle_setheaders(h, "Authorization"=auth[[1]])
+    # if (Sys.getenv("REDIVIS_API_ENDPOINT") == "https://localhost:8443/api/v1"){
+    #   curl::handle_setopt(h, "ssl_verifypeer"=0L)
+    # }
+    # url <- str_interp('${base_url}/${stream$id}')
+    # con <- curl::curl(url, handle=h)
+    # open(con, "rb")
+
     # This ensures the url method doesn't time out after 60s. Only applies to this function, doesn't set globally
     options(timeout=3600)
     con <- url(str_interp('${base_url}/${stream$id}'), open = "rb", headers = headers, blocking=FALSE)
+
     on.exit(close(con))
     stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
 
-    output_file <- arrow::FileOutputStream$create(output_file_path)
+    output_file <- NULL
+    in_memory_batches <- NULL
+    if (is.null(folder)){
+      in_memory_batches <- list()
+    } else {
+      output_file <- arrow::FileOutputStream$create(str_interp('${folder}/${stream$id}'))
+    }
 
     writer_schema_fields <- list()
+    fields_to_rename = list()
 
+    i <- 0
     # Make sure to only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
     for (field_name in stream_reader$schema$names){
-      writer_schema_fields <- append(writer_schema_fields, schema$GetFieldByName(field_name))
+      i <- i+1
+      final_schema_field_name <- schema_field_uncased_name_map[[tolower(field_name)]]
+      writer_schema_fields <- append(writer_schema_fields, schema$GetFieldByName(final_schema_field_name))
+      if (final_schema_field_name != field_name){
+        stream_reader_schema <- stream_reader$schema
+        fields_to_rename <- append(fields_to_rename, list(list(new_name=final_schema_field_name, index=i)))
+      }
     }
 
     if (coerce_schema){
@@ -495,8 +535,11 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
           for (time_variable in time_variables){
             batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
           }
+          for (rename_args in fields_to_rename){
+            names(batch)[[rename_args$index]] <- rename_args$new_name
+          }
 
-          batch <- (as_record_batch(batch, schema=writer_schema))
+          batch <- arrow::as_record_batch(batch, schema=writer_schema)
         }
 
         if (!is.null(batch_preprocessor)){
@@ -504,10 +547,14 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
         }
 
         if (!is.null(batch)){
-          if (is.null(stream_writer)){
-            stream_writer <- arrow::RecordBatchFileWriter$create(output_file, schema=if (is.null(batch_preprocessor)) writer_schema else batch$schema)
+          if (!is.null(output_file)){
+            if (is.null(stream_writer)){
+              stream_writer <- arrow::RecordBatchFileWriter$create(output_file, schema=if (is.null(batch_preprocessor)) writer_schema else batch$schema)
+            }
+            stream_writer$write_batch(batch)
+          } else {
+            in_memory_batches <- append(in_memory_batches, arrow::as_arrow_table(batch, schema=if (is.null(batch_preprocessor)) writer_schema else batch$schema))
           }
-          stream_writer$write_batch(batch)
         }
 
         if (Sys.time() - last_measured_time > 0.2){
@@ -521,7 +568,20 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
 
     pb(amount = current_progress_rows)
 
-    stream_writer$close()
-    output_file$close()
+    if (is.null(output_file)){
+      table <- do.call(arrow::concat_tables, in_memory_batches)
+      return(arrow::write_to_raw(table, format="file"))
+    } else {
+      if (!is.null(stream_writer)){
+        stream_writer$close()
+      }
+      output_file$close()
+    }
   })
+  if (is.null(folder)){
+    purrr::map(results, function(vec){
+      read_feather(vec, as_data_frame=FALSE)
+    })
+  }
+
 }

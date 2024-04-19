@@ -144,7 +144,6 @@ Table <- setRefClass("Table",
          type = 'arrow_table',
          progress=progress,
          variables = params$variables,
-         progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor
        )
