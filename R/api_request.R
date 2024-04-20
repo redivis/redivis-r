@@ -577,7 +577,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
       if (is_multisession){
         return(arrow::write_to_raw(table, format="file"))
       } else {
-        tables <- append(tables, table)
+        tables <- append(tables, 1)
         return(table)
       }
 
