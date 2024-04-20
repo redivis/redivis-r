@@ -570,7 +570,14 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
 
     if (is.null(output_file)){
       table <- do.call(arrow::concat_tables, in_memory_batches)
-      return(arrow::write_to_raw(table, format="file"))
+
+      # If multisession, need to serialize the table to pass between threads
+      if (is_multisession){
+        return(arrow::write_to_raw(table, format="file"))
+      } else {
+        return(table)
+      }
+
     } else {
       if (!is.null(stream_writer)){
         stream_writer$close()
@@ -579,9 +586,13 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     }
   })
   if (is.null(folder)){
-    purrr::map(results, function(vec){
-      read_feather(vec, as_data_frame=FALSE)
-    })
+    if (is_multisession){
+      purrr::map(results, function(vec){
+        read_feather(vec, as_data_frame=FALSE)
+      })
+    } else {
+      results
+    }
   }
 
 }
