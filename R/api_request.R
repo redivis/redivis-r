@@ -594,6 +594,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
         read_feather(vec, as_data_frame=FALSE)
       })
     } else {
+      print(tables)
       tables
     }
   }
