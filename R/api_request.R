@@ -450,6 +450,8 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     schema <- get_arrow_schema(variables)
   }
 
+  tables = list()
+
   results <- furrr::future_map(streams, function(stream){
     if (is_multisession){
       schema <- get_arrow_schema(variables)
@@ -575,6 +577,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
       if (is_multisession){
         return(arrow::write_to_raw(table, format="file"))
       } else {
+        tables <- append(tables, table)
         return(table)
       }
 
@@ -591,7 +594,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
         read_feather(vec, as_data_frame=FALSE)
       })
     } else {
-      results
+      tables
     }
   }
 
