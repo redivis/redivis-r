@@ -586,7 +586,14 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
   })
 
   if (is.null(folder)){
-    do.call(arrow::arrow_table, sapply(unlist(results, recursive=FALSE), function(x) arrow::record_batch(x, schema=schema)))
+    t = Sys.time()
+    print("got records")
+    tables <- sapply(results, function(batches) {
+      do.call(arrow::arrow_table, sapply(batches, function(x) arrow::record_batch(x, schema=schema)))
+    })
+    # do.call(arrow::arrow_table, sapply(unlist(results, recursive=FALSE), function(x) arrow::record_batch(x, schema=schema)))
+    do.call(arrow::concat_tables, tables)
+    print(Sys.time() - t)
   }
 
 }
