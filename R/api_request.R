@@ -185,7 +185,6 @@ parallel_download_data_cb_factory <- function(h, url, get_download_path_from_hea
   })
 }
 
-
 make_paginated_request <- function(path, query=list(), page_size=100, max_results=NULL){
   page = 0
   results = list()
@@ -221,36 +220,21 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
   results
 }
 
-#' @importFrom progressr progressor progress
 #' @import arrow
 RedivisBatchReader <- setRefClass(
   "RedivisBatchReader",
   fields = list(
     streams = "list",
-    progress="logical",
     coerce_schema="logical",
-    current_progress_rows="numeric",
     # Can't figure out how to pass non-built-in classes here, so just pass as list
     custom_classes="list",
     current_stream_index="numeric",
-    date_variables="list",
-    time_variables="list",
-    last_progressed_time="POSIXct"
+    time_variables="list"
   ),
 
   methods = list(
     get_next_reader__ = function(){
       base_url = generate_api_url('/readStreams')
-
-      # h <- curl::new_handle()
-      # auth = get_authorization_header()
-      # curl::handle_setheaders(h, "Authorization"=auth[[1]])
-      # if (Sys.getenv("REDIVIS_API_ENDPOINT") == "https://localhost:8443/api/v1"){
-      #   curl::handle_setopt(h, "ssl_verifypeer"=0L)
-      # }
-      # url <- str_interp('${base_url}/${streams[[.self$current_stream_index]]$id}')
-      # con <- curl::curl(url, handle=h)
-      # open(con, "rb")
 
       options(timeout=3600)
       headers <- get_authorization_header()
@@ -264,33 +248,25 @@ RedivisBatchReader <- setRefClass(
       }
 
       if (coerce_schema){
-        cast = getNamespace("arrow")$cast
-        .self$date_variables = list()
-        .self$time_variables = list()
-
         for (field in writer_schema_fields){
-          if (is(field$type, "Date32")){
-            .self$date_variables <- append(.self$date_variables, field$name)
-          } else if (is(field$type, "Time64")){
+          if (is(field$type, "Time64")){
             .self$time_variables <- append(.self$time_variables, field$name)
           }
         }
       }
+
       .self$custom_classes = list(
         current_record_batch_reader=stream_reader,
         writer_schema=arrow::schema(writer_schema_fields),
         schema=.self$custom_classes$schema,
-        progressor=.self$custom_classes$progressor,
         current_connection=con
       )
     },
     read_next_batch = function() {
       batch <- .self$custom_classes$current_record_batch_reader$read_next_batch()
+
       if (is.null(batch)){
         if (.self$current_stream_index == length(.self$streams)){
-          # if (.self$current_progress_rows > 0 && .self.progress){
-          #   .self$custom_classes$progressor(amount = .self$current_progress_rows)
-          # }
           return(NULL)
         } else {
           .self$current_stream_index = .self$current_stream_index + 1
@@ -300,30 +276,19 @@ RedivisBatchReader <- setRefClass(
       } else {
         if (.self$coerce_schema){
           # Note: this approach is much more performant than using %>% mutate(across())
-          # TODO: in the future, Arrow may support native conversion from date / time string to their type
-          for (date_variable in .self$date_variables){
-            batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
-          }
-          for (time_variable in time_variables){
+          # TODO: in the future, Arrow may support native conversion from time string to their type
+          for (time_variable in .self$time_variables){
             batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
           }
 
           batch <- (as_record_batch(batch, schema=.self$custom_classes$writer_schema))
         }
-        # if (.self$progress){
-        #   .self$current_progress_rows = .self$current_progress_rows + batch$num_rows
-        #   if (Sys.time() - .self$last_progressed_time > 0.2){
-        #     .self$custom_classes$progressor(amount = .self$current_progress_rows)
-        #     .self$current_progress_rows <- 0
-        #     .self$last_progressed_time = Sys.time()
-        #   }
-        # }
+
         return (batch)
       }
     },
     close = function(){
       base::close(.self$custom_classes$current_connection)
-      # progressr::handlers(global=FALSE)
     }
   )
 )
@@ -347,21 +312,12 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
   )
 
   if (type == 'arrow_stream'){
-    p <- NULL
-    # if (progress){
-    #   progressr::handlers(global = TRUE)
-    #   p <- progressr::progressor(steps = read_session$numRows)
-    # }
     reader = RedivisBatchReader$new(
       streams=read_session$streams,
-      progress=FALSE,
       coerce_schema=coerce_schema,
       current_stream_index=1,
-      date_variables=list(),
-      time_variables=list(),
-      custom_classes=list(schema=get_arrow_schema(variables), progressor=p),
-      last_progressed_time=Sys.time(),
-      current_progress_rows=0
+      custom_classes=list(schema=get_arrow_schema(variables)),
+      time_variables=list()
     )
     reader$get_next_reader__()
 
@@ -375,25 +331,24 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
   }
 
   if (progress){
-    tables <- progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor))
+    arrow_table <- progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor))
   } else {
-    tables <- parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor)
+    arrow_table <- parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor)
   }
 
   # TODO: remove head() once BE is sorted
   if (type == 'arrow_dataset'){
     arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) get_arrow_schema(variables) else NULL)
   } else {
-    combined_tables <- do.call(arrow::concat_tables, c(tables, list(unify_schemas=coerce_schema)))
-    arrow_table = if (is.null(max_results)) combined_tables else head(combined_tables, max_results)
+    final_table = if (is.null(max_results)) arrow_table else head(arrow_table, max_results)
     if (type == 'arrow_table'){
-      arrow_table
+      final_table
     }else if (type == 'tibble'){
-      as_tibble(arrow_table)
+      as_tibble(final_table)
     }else if (type == 'data_frame'){
-      as.data.frame(arrow_table)
+      as.data.frame(final_table)
     } else if (type == 'data_table'){
-      as.data.table(arrow_table)
+      as.data.table(final_table)
     }
   }
 
@@ -436,21 +391,16 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     oplan <- future::plan(future::multisession, workers = worker_count)
     # Helpful for testing in dev
     # oplan <- future::plan(future::sequential)
-
   }
 
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
   on.exit(plan(oplan), add = TRUE)
   base_url = generate_api_url('/readStreams')
 
-  schema <- NULL
-
-  # IMPORTANT: we can't serialize an arrow schema across processes under multisession, so need to generate in each worker instead
-  if (is_multisession == FALSE){
-    schema <- get_arrow_schema(variables)
-  }
+  schema <- get_arrow_schema(variables)
 
   results <- furrr::future_map(streams, function(stream){
+    # IMPORTANT: we can't serialize an arrow schema across processes under multisession, so need to generate in each worker instead
     if (is_multisession){
       schema <- get_arrow_schema(variables)
     }
@@ -458,6 +408,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     schema_field_uncased_name_map <- sapply(schema$names, tolower)
     schema_field_uncased_name_map <- setNames(names(schema_field_uncased_name_map), schema_field_uncased_name_map)
 
+    # Workaround for self-signed certs in dev
     # h <- curl::new_handle()
     # auth = get_authorization_header()
     # curl::handle_setheaders(h, "Authorization"=auth[[1]])
@@ -484,7 +435,19 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     }
 
     writer_schema_fields <- list()
-    fields_to_rename = list()
+    fields_to_rename <- list()
+    fields_to_add <- list()
+    should_reorder_fields <- FALSE
+
+    if (coerce_schema){
+      time_variables = c()
+
+      for (field in writer_schema_fields){
+        if (is(field$type, "Time64")){
+          time_variables <- append(time_variables, field$name)
+        }
+      }
+    }
 
     i <- 0
     # Make sure to only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
@@ -494,22 +457,22 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
       writer_schema_fields <- append(writer_schema_fields, schema$GetFieldByName(final_schema_field_name))
       if (final_schema_field_name != field_name){
         stream_reader_schema <- stream_reader$schema
-        fields_to_rename <- append(fields_to_rename, list(list(new_name=final_schema_field_name, index=i)))
+        rename_config <- setNames(list(list(new_name=final_schema_field_name, index=i)), c(final_schema_field_name))
+        fields_to_rename <- append(fields_to_rename, rename_config)
+      }
+      if (!should_reorder_fields && i != match(final_schema_field_name, names(schema))){
+        should_reorder_fields <- TRUE
       }
     }
 
-    if (coerce_schema){
-      cast = getNamespace("arrow")$cast
-      date_variables = c()
-      time_variables = c()
-
-      for (field in writer_schema_fields){
-        if (is(field$type, "Date32")){
-          date_variables <- append(date_variables, field$name)
-        } else if (is(field$type, "Time64")){
-          time_variables <- append(time_variables, field$name)
-        }
+    for (field_name in schema$names){
+      if (is.null(stream_reader$schema$GetFieldByName(field_name)) && is.null(fields_to_rename[[field_name]])){
+        fields_to_add <- append(fields_to_add, schema$GetFieldByName(field_name))
       }
+    }
+
+    if (should_reorder_fields && length(fields_to_add)){
+      should_reorder_fields <- TRUE
     }
 
     stream_writer <- NULL
@@ -528,18 +491,41 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
         # We need to coerce_schema for all dataset tables, since their underlying storage type is always a string
         if (coerce_schema){
           # Note: this approach is much more performant than using %>% mutate(across())
-          # TODO: in the future, Arrow may support native coversion from date / time string to their type
-          for (date_variable in date_variables){
-            batch[[date_variable]] <- batch[[date_variable]]$cast(arrow::timestamp())
-          }
+          # TODO: in the future, Arrow may support native coversion from time string to their type
+          # To test if supported: arrow::arrow_array(rep('10:30:04.123', 2))$cast(arrow::time64(unit="us"))
           for (time_variable in time_variables){
             batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
           }
           for (rename_args in fields_to_rename){
             names(batch)[[rename_args$index]] <- rename_args$new_name
           }
+          # TODO: this is a significant bottleneck. Can we make it faster, maybe call all at once?
+          for (field in fields_to_add){
+            if (is(field$type, "Date32")){
+              batch <- batch$AddColumn(0, field, arrow::arrow_array(rep(NA_integer_, batch$num_rows))$cast(arrow::date32()))
+            } else if (is(field$type, "Time64")){
+              batch <- batch$AddColumn(0, field, arrow::arrow_array(rep(NA_integer_, batch$num_rows))$cast(arrow::int64())$cast(arrow::time64()))
+            } else if (is(field$type, "Float64")){
+              batch <- batch$AddColumn(0, field, arrow::arrow_array(rep(NA_real_, batch$num_rows)))
+            } else if (is(field$type, "Boolean")){
+              batch <- batch$AddColumn(0, field, arrow::arrow_array(rep(NA, batch$num_rows)))
+            } else if (is(field$type, "Int64")){
+              batch <- batch$AddColumn(0, field, arrow::arrow_array(rep(NA_integer_, batch$num_rows))$cast(arrow::int64()))
+            } else if (is(field$type, "Timestamp")){
+              batch <- batch$AddColumn(0, field, arrow::arrow_array(rep(NA_integer_, batch$num_rows))$cast(arrow::int64())$cast(arrow::timestamp(unit="us", timezone="")))
+            } else {
+              batch <- batch$AddColumn(0, field, arrow::arrow_array(rep(NA_character_, batch$num_rows)))
+            }
+          }
 
-          batch <- arrow::as_record_batch(batch, schema=writer_schema)
+          if (should_reorder_fields){
+            batch <- batch[, names(schema)] # reorder fields
+          }
+
+          batch <- arrow::as_record_batch(batch, schema=schema)
+        } else if (should_reorder_fields){
+          batch <- batch[, names(schema)] # reorder fields
+          batch <- arrow::as_record_batch(batch, schema=schema)
         }
 
         if (!is.null(batch_preprocessor)){
@@ -549,16 +535,16 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
         if (!is.null(batch)){
           if (!is.null(output_file)){
             if (is.null(stream_writer)){
-              stream_writer <- arrow::RecordBatchFileWriter$create(output_file, schema=if (is.null(batch_preprocessor)) writer_schema else batch$schema)
+              stream_writer <- arrow::RecordBatchFileWriter$create(output_file, schema=if (is.null(batch_preprocessor)) schema else batch$schema)
             }
             stream_writer$write_batch(batch)
           } else {
-            in_memory_batches <- append(in_memory_batches, arrow::as_arrow_table(batch, schema=if (is.null(batch_preprocessor)) writer_schema else batch$schema))
+            in_memory_batches <- append(in_memory_batches, batch)
+            # in_memory_batches <- append(in_memory_batches, list(batch$serialize()))
           }
         }
 
         if (Sys.time() - last_measured_time > 0.2){
-          # setTxtProgressBar(pb, current_progress_rows)
           pb(amount = current_progress_rows)
           current_progress_rows <- 0
           last_measured_time = Sys.time()
@@ -569,15 +555,21 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     pb(amount = current_progress_rows)
 
     if (is.null(output_file)){
-      table <- do.call(arrow::concat_tables, in_memory_batches)
+      # Need to serialize the table to pass between threads
+      # t = Sys.time()
+      # print("serializing")
 
-      # If multisession, need to serialize the table to pass between threads
-      if (is_multisession){
-        return(arrow::write_to_raw(table, format="file"))
-      } else {
-        return(table)
-      }
+      # TODO: it would be better to call batch$serialize() on all the individual batches,
+      #     but can't figure out a performant way to repeatedly increment a large raw vector, and also to deserialize these batches on the other
+      #     This would spread the overhead of serialization across each read operation, where the bottleneck is network throughput anyway.
+      # serialized <- unlist(in_memory_batches, FALSE, FALSE)
 
+      table <- do.call(arrow::arrow_table, in_memory_batches)
+      serialized <- arrow::write_to_raw(table, format="stream") # stream is much faster to read
+
+      # print(Sys.time() - t)
+
+      return(serialized)
     } else {
       if (!is.null(stream_writer)){
         stream_writer$close()
@@ -585,14 +577,14 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
       output_file$close()
     }
   })
+
   if (is.null(folder)){
-    if (is_multisession){
-      purrr::map(results, function(vec){
-        read_feather(vec, as_data_frame=FALSE)
-      })
-    } else {
-      results
-    }
+      # t = Sys.time()
+      # print("got records")
+      # table <- do.call(arrow::arrow_table, sapply(results, function(x) arrow::record_batch(x, schema=schema)))
+      table <- do.call(arrow::concat_tables, sapply(results, function(x) read_ipc_stream(x, as_data_frame = FALSE)))
+      # print(Sys.time() - t)
+      return(table)
   }
 
 }
