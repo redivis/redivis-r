@@ -556,17 +556,19 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
 
     if (is.null(output_file)){
       # Need to serialize the table to pass between threads
-      t = Sys.time()
-      print("serializing")
+      # t = Sys.time()
+      # print("serializing")
 
       # TODO: it would be better to call batch$serialize() on all the individual batches,
-      #     but can't figure out a performant way to repeatedly increment a large raw vector.
+      #     but can't figure out a performant way to repeatedly increment a large raw vector, and also to deserialize these batches on the other
       #     This would spread the overhead of serialization across each read operation, where the bottleneck is network throughput anyway.
       # serialized <- unlist(in_memory_batches, FALSE, FALSE)
 
       table <- do.call(arrow::arrow_table, in_memory_batches)
       serialized <- arrow::write_to_raw(table, format="stream") # stream is much faster to read
-      print(Sys.time() - t)
+
+      # print(Sys.time() - t)
+
       return(serialized)
     } else {
       if (!is.null(stream_writer)){
@@ -577,13 +579,12 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
   })
 
   if (is.null(folder)){
-      t = Sys.time()
-      print("got records")
+      # t = Sys.time()
+      # print("got records")
       # table <- do.call(arrow::arrow_table, sapply(results, function(x) arrow::record_batch(x, schema=schema)))
-      x <- integer(1000)
-      table <- do.call(arrow::concat_tables, sapply(results, function(x) read_ipc_stream(x, as_data_frame = FALSE, mmap=FALSE)))
-      print(Sys.time() - t)
-      table
+      table <- do.call(arrow::concat_tables, sapply(results, function(x) read_ipc_stream(x, as_data_frame = FALSE)))
+      # print(Sys.time() - t)
+      return(table)
   }
 
 }
