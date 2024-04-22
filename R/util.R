@@ -15,7 +15,6 @@ get_arrow_schema <- function(variables){
       arrow::timestamp(unit="us", timezone="")
     }
     else if (variable$type == 'time'){
-      #arrow::string()
       arrow::time64(unit="us")
     }
     else {
