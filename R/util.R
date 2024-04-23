@@ -1,6 +1,6 @@
 
 #' @importFrom arrow schema
-#' @importFrom purrr map set_names
+#' @importFrom purrr map
 get_arrow_schema <- function(variables){
   schema <- map(variables, function(variable) {
     if (variable$type == 'integer'){

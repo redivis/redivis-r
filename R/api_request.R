@@ -397,16 +397,16 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
   on.exit(plan(oplan), add = TRUE)
   base_url = generate_api_url('/readStreams')
 
-  schema <- get_arrow_schema(variables)
+  # schema <- get_arrow_schema(variables)
 
   results <- furrr::future_map(streams, function(stream){
     # IMPORTANT: we can't serialize an arrow schema across processes under multisession, so need to generate in each worker instead
-    if (is_multisession){
-      schema <- get_arrow_schema(variables)
-    }
+    # if (is_multisession){
+    schema <- get_arrow_schema(variables)
+    # }
 
     schema_field_uncased_name_map <- sapply(schema$names, tolower)
-    schema_field_uncased_name_map <- setNames(names(schema_field_uncased_name_map), schema_field_uncased_name_map)
+    schema_field_uncased_name_map <- set_names(names(schema_field_uncased_name_map), schema_field_uncased_name_map)
 
     # Workaround for self-signed certs in dev
     # h <- curl::new_handle()
@@ -429,36 +429,29 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     output_file <- NULL
     in_memory_batches <- NULL
     if (is.null(folder)){
-      in_memory_batches <- list()
+      in_memory_batches <- c()
     } else {
       output_file <- arrow::FileOutputStream$create(str_interp('${folder}/${stream$id}'))
     }
 
-    writer_schema_fields <- list()
     fields_to_rename <- list()
     fields_to_add <- list()
     should_reorder_fields <- FALSE
-
-    if (coerce_schema){
-      time_variables = c()
-
-      for (field in writer_schema_fields){
-        if (is(field$type, "Time64")){
-          time_variables <- append(time_variables, field$name)
-        }
-      }
-    }
+    time_variables_to_coerce = c()
 
     i <- 0
-    # Make sure to only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
-    for (field_name in stream_reader$schema$names){
+    # Make sure to first only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
+    for (field in stream_reader$schema$fields){
       i <- i+1
-      final_schema_field_name <- schema_field_uncased_name_map[[tolower(field_name)]]
-      writer_schema_fields <- append(writer_schema_fields, schema$GetFieldByName(final_schema_field_name))
-      if (final_schema_field_name != field_name){
+      final_schema_field_name <- schema_field_uncased_name_map[[tolower(field$name)]]
+
+      if (final_schema_field_name != field$name){
         stream_reader_schema <- stream_reader$schema
-        rename_config <- setNames(list(list(new_name=final_schema_field_name, index=i)), c(final_schema_field_name))
+        rename_config <- set_names(list(list(new_name=final_schema_field_name, index=i)), c(final_schema_field_name))
         fields_to_rename <- append(fields_to_rename, rename_config)
+      }
+      if (coerce_schema && is(field$type, "Time64")){
+        time_variables_to_coerce <- append(time_variables_to_coerce, field$name)
       }
       if (!should_reorder_fields && i != match(final_schema_field_name, names(schema))){
         should_reorder_fields <- TRUE
@@ -476,7 +469,6 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     }
 
     stream_writer <- NULL
-    writer_schema <- arrow::schema(writer_schema_fields)
 
     current_progress_rows <- 0
     last_measured_time <- Sys.time()
@@ -493,7 +485,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
           # Note: this approach is much more performant than using %>% mutate(across())
           # TODO: in the future, Arrow may support native coversion from time string to their type
           # To test if supported: arrow::arrow_array(rep('10:30:04.123', 2))$cast(arrow::time64(unit="us"))
-          for (time_variable in time_variables){
+          for (time_variable in time_variables_to_coerce){
             batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
           }
           for (rename_args in fields_to_rename){
@@ -539,7 +531,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
             }
             stream_writer$write_batch(batch)
           } else {
-            in_memory_batches <- append(in_memory_batches, batch)
+            in_memory_batches <- c(in_memory_batches, batch)
             # in_memory_batches <- append(in_memory_batches, list(batch$serialize()))
           }
         }
