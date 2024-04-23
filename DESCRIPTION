@@ -1,7 +1,7 @@
 Package: redivis
 Type: Package
 Title: R interface for Redivis
-Version: 0.6.15
+Version: 0.6.16
 Author: Redivis Inc.
 Maintainer: Redivis <support@redivis.com>
 Description: Supports working with Redivis datasets and tables through R. 
@@ -20,7 +20,6 @@ Imports:
     stringr (>= 1.4.0),
     tibble (>= 3.0.0),
     arrow (>= 13.0.0),
-    arrow (< 15.0.0),
     bit64 (>= 4.0.5),
     pbapply (>= 1.5-0),
     sf (>= 1.0),
