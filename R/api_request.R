@@ -307,7 +307,7 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
         "maxResults"=max_results,
         "selectedVariables"=selected_variable_names,
         "format"="arrow",
-        "requestedStreamCount"=if (type == 'arrow_stream') 1 else parallelly::availableCores()
+        "requestedStreamCount"=if (type == 'arrow_stream') 1 else min(16, parallelly::availableCores())
     )
   )
 
@@ -331,24 +331,24 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
   }
 
   if (progress){
-    arrow_table <- progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor))
+    result <- progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor))
   } else {
-    arrow_table <- parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor)
+    result <- parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor)
   }
 
   # TODO: remove head() once BE is sorted
   if (type == 'arrow_dataset'){
     arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) get_arrow_schema(variables) else NULL)
   } else {
-    final_table = if (is.null(max_results)) arrow_table else head(arrow_table, max_results)
+    final_table = if (is.null(max_results)) result else head(result, max_results)
     if (type == 'arrow_table'){
       final_table
     }else if (type == 'tibble'){
-      as_tibble(final_table)
+      result %>% collect()
     }else if (type == 'data_frame'){
-      as.data.frame(final_table)
+      as.data.frame(result)
     } else if (type == 'data_table'){
-      as.data.table(final_table)
+      data.table::setDT(as.data.frame(result))
     }
   }
 
@@ -380,7 +380,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
 
   pb <- progressr::progressor(steps = max_results)
   headers <- get_authorization_header()
-  worker_count <- length(streams)
+  worker_count <- min(16, length(streams))
 
   if (parallelly::supportsMulticore()){
     oplan <- future::plan(future::multicore, workers = worker_count)
@@ -562,7 +562,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
   })
 
   if (is.null(folder)){
-      return(do.call(arrow::concat_tables, sapply(results, function(x) read_ipc_stream(x, as_data_frame = FALSE))))
+      return(do.call(arrow::concat_tables, sapply(results, function(x) arrow::read_ipc_stream(x, as_data_frame = FALSE))))
   }
 
 }
