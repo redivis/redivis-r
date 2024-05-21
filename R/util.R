@@ -26,3 +26,115 @@ get_arrow_schema <- function(variables){
 
   arrow::schema(set_names(schema, names))
 }
+
+#' @importFrom httr PUT stop_for_status
+#' @importFrom curl curl_upload new_handle handle_setheaders
+perform_resumable_upload <- function(file_path, temp_upload_url=NULL) {
+  retry_count <- 0
+  start_byte <- 0
+  file_size <- base::file.info(file_path)$size
+  chunk_size <- file_size
+
+  resumable_url <- initiate_resumable_upload(file_size, temp_upload_url)
+
+  con <- base::file(file_path, "rb")
+  on.exit(close(con))
+
+  while(
+    start_byte < file_size
+    || start_byte == 0  # handle empty upload for start_byte == 0
+  ) {
+    end_byte <- min(start_byte + chunk_size - 1, file_size - 1)
+    seek(con, where=start_byte, origin="start")
+
+    tryCatch({
+      h <- curl::new_handle()
+      curl::handle_setheaders(
+        h,
+        `Content-Length`=toString(end_byte - start_byte + 1),
+        `Content-Range`=sprintf("bytes %s-%s/%s", start_byte, end_byte, file_size)
+      )
+      curl::curl_upload(file=con, url=resumable_url, verbose=FALSE, handle=h)
+
+      start_byte <- start_byte + chunk_size
+      retry_count <- 0
+    }, error=function(e) {
+      if(retry_count > 20) {
+        stop("A network error occurred. Upload failed after too many retries.")
+      }
+      retry_count <- retry_count + 1
+      Sys.sleep(retry_count / 2)
+      cat("A network error occurred. Retrying last chunk of resumable upload.\n")
+      start_byte <- retry_partial_upload(file_size=file_size, resumable_url=resumable_url)
+    })
+  }
+}
+
+#' @importFrom httr POST stop_for_status
+initiate_resumable_upload <- function(size, temp_upload_url, retry_count=0) {
+  tryCatch({
+    res <- httr::POST(temp_upload_url,
+                add_headers(`x-upload-content-length`=as.character(size),
+                            `x-goog-resumable`="start"))
+    httr::stop_for_status(res)
+    res$headers$location
+  }, error=function(e) {
+    if(retry_count > 20) {
+      stop("A network error occurred. Upload failed after too many retries.")
+    }
+    Sys.sleep(retry_count / 2)
+    initiate_resumable_upload(size, temp_upload_url, retry_count=retry_count+1)
+  })
+}
+
+#' @importFrom httr PUT stop_for_status
+#' @importFrom stringr str_extract
+retry_partial_upload <- function(retry_count=0, file_size, resumable_url) {
+  tryCatch({
+    res <- httr::PUT(url=resumable_url,
+               body="",
+               add_headers(`Content-Length`="0", `Content-Range`=sprintf("bytes */%s", file_size)))
+    if(res$status_code == 404) {
+      return(0)
+    }
+    httr::stop_for_status(res)
+    if(res$status_code %in% c(200, 201)) {
+      return(file_size)
+    } else if(res$status_code == 308) {
+      range_header <- res$headers$Range
+      if(!is.null(range_header)) {
+        match <- stringr::str_extract(range_header, "bytes=0-(\\d+)", group=1)
+        as.numeric(match) + 1
+      } else {
+        stop("An unknown error occurred. Please try again.")
+      }
+    } else {  # If GCS hasn't received any bytes, the header will be missing
+      return(0)
+    }
+  }, error=function(e) {
+    if(retry_count > 10) {
+      stop(e)
+    }
+    Sys.sleep(retry_count / 10)
+    retry_partial_upload(retry_count=retry_count + 1, file_size=file_size, resumable_url=resumable_url)
+  })
+}
+
+#' @importFrom httr PUT upload_file stop_for_status
+perform_standard_upload <- function(file_path, temp_upload_url=NULL, retry_count=0, progressbar=NULL) {
+  tryCatch({
+    prepared_upload <- httr::upload_file(file_path, type = NULL)
+
+    # Perform the HTTP PUT request
+    res <- httr::PUT(url = temp_upload_url, body = prepared_upload)
+    httr::stop_for_status(res)
+  }, error = function(e) {
+    if (retry_count > 20) {
+      cat("A network error occurred. Upload failed after too many retries.\n")
+      stop(e)
+    }
+    Sys.sleep(retry_count / 2)
+    # Recursively call the function with incremented retry count
+    perform_standard_upload(data, temp_upload_url, retry_count + 1, progressbar)
+  })
+}

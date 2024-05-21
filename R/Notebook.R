@@ -1,28 +1,27 @@
 #' @importFrom uuid UUIDgenerate
 #' @importFrom arrow write_parquet write_dataset
-#' @importFrom httr upload_file timeout
 #' @importFrom sf st_geometry st_as_text
 #' @include Table.R User.R api_request.R
 Notebook <- setRefClass("Notebook",
    fields = list(current_notebook_job_id="character"),
    methods = list(
      create_output_table = function(df, name = NULL, geography_variables = NULL, append = FALSE){
-       query = list()
+       payload = list()
        if (!is.null(name)){
-         query=base::append(
-           query,
+         payload=base::append(
+           payload,
            list("name"= name)
          )
        }
        if (!is.null(geography_variables)){
-         query=base::append(
-           query,
+         payload=base::append(
+           payload,
            list("geographyVariables" = geography_variables)
          )
        }
        if (append){
-         query=base::append(
-           query,
+         payload=base::append(
+           payload,
            list("append" = "TRUE")
          )
        }
@@ -36,8 +35,8 @@ Notebook <- setRefClass("Notebook",
        if (is(df,"sf")){
          sf_column_name <- attr(df, "sf_column")
          if (is.null(geography_variables)){
-           query=base::append(
-             query,
+           payload=base::append(
+             payload,
              list("geographyVariables" = list(sf_column_name))
            )
          }
@@ -46,10 +45,7 @@ Notebook <- setRefClass("Notebook",
          df[sf_column_name] <- wkt_geopoint
        }
 
-       if(is.character(df)){
-         file_path = df
-         temp_file_path = NULL
-       } else if (is(df, "Dataset")){
+       if (is(df, "Dataset")){
          dir.create(temp_file_path)
          arrow::write_dataset(df, temp_file_path, format='parquet', max_partitions=1, basename_template="part-{i}.parquet")
          temp_file_path <- str_interp('${temp_file_path}/part-0.parquet')
@@ -59,11 +55,27 @@ Notebook <- setRefClass("Notebook",
           file_path = temp_file_path
        }
 
-       res <- make_request(method='PUT', path=str_interp("/notebookJobs/${current_notebook_job_id}/outputTable"), query = query, payload = upload_file(file_path))
+       file_size <- base::file.info(summary(con))$size
 
-       if (!is.null(temp_file_path)){
-         file.remove(temp_file_path)
+       res <- make_request(
+         method="POST",
+         path=str_interp("/notebookJobs/${current_notebook_job_id}/tempUploads"),
+         payload=list(tempUploads=list(list(size=file_size, resumable=file_size > 1e5))) #TODO: set to 1e8 after testing
+       )
+
+       temp_upload = res$results[[1]]
+
+       if (temp_upload$resumable) {
+         perform_resumable_upload(file_path=temp_file_path, temp_upload_url=temp_upload$url)
+       } else {
+         perform_standard_upload(file_path=temp_file_path, temp_upload_url=temp_upload$url)
        }
+
+       payload <- base::append(payload, list(tempUploadId=temp_upload$id))
+
+       res <- make_request(method='PUT', path=str_interp("/notebookJobs/${current_notebook_job_id}/outputTable"), payload = payload)
+
+       base::file.remove(temp_file_path)
 
        user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[1]
        project_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[2]

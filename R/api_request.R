@@ -120,6 +120,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
 }
 
 #' @importFrom purrr map set_names
+#' @importFrom curl parse_headers
 parse_curl_headers <- function(res_data){
   vec <- curl::parse_headers(res_data$headers)
 
