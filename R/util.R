@@ -54,11 +54,14 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL) {
         `Content-Length`=toString(end_byte - start_byte + 1),
         `Content-Range`=sprintf("bytes %s-%s/%s", start_byte, end_byte, file_size)
       )
+      curl::handle_setopt(h, followlocation = TRUE)
       curl::curl_upload(file=con, url=resumable_url, verbose=FALSE, handle=h)
 
       start_byte <- start_byte + chunk_size
       retry_count <- 0
     }, error=function(e) {
+      print('the error is')
+      print(e)
       if(retry_count > 20) {
         stop("A network error occurred. Upload failed after too many retries.")
       }
