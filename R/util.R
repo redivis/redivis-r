@@ -80,7 +80,12 @@ initiate_resumable_upload <- function(size, temp_upload_url, retry_count=0) {
     res <- httr::POST(temp_upload_url,
                 add_headers(`x-upload-content-length`=as.character(size),
                             `x-goog-resumable`="start"))
-    httr::stop_for_status(res)
+
+    if (status_code(res) >= 400){
+      # stop_for_status also fails for redirects
+      httr::stop_for_status(res)
+    }
+
     res$headers$location
   }, error=function(e) {
     if(retry_count > 20) {
@@ -101,7 +106,7 @@ retry_partial_upload <- function(retry_count=0, file_size, resumable_url) {
     if(res$status_code == 404) {
       return(0)
     }
-    httr::stop_for_status(res)
+
     if(res$status_code %in% c(200, 201)) {
       return(file_size)
     } else if(res$status_code == 308) {
@@ -133,7 +138,10 @@ perform_standard_upload <- function(file_path, temp_upload_url=NULL, retry_count
 
     # Perform the HTTP PUT request
     res <- httr::PUT(url = temp_upload_url, body = prepared_upload)
-    httr::stop_for_status(res)
+    if (status_code(res) >= 400){
+      # stop_for_status also fails for redirects
+      httr::stop_for_status(res)
+    }
   }, error = function(e) {
     if (retry_count > 20) {
       cat("A network error occurred. Upload failed after too many retries.\n")
