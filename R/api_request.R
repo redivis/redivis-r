@@ -326,9 +326,14 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
   }
 
   folder <- NULL
-  if (type == 'arrow_dataset'){
+  # Always write to disk for now to improve memory efficiency
+  if (type == 'arrow_dataset' || TRUE ){
     folder <- str_interp('${tempdir()}/redivis/tables/${uuid::UUIDgenerate()}')
     dir.create(folder, recursive = TRUE)
+
+    if (type != 'arrow_dataset'){
+      on.exit(unlink(folder, recursive=TRUE))
+    }
   }
 
   if (progress){
@@ -341,15 +346,15 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
   if (type == 'arrow_dataset'){
     arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) get_arrow_schema(variables) else NULL)
   } else {
-    final_table = if (is.null(max_results)) result else head(result, max_results)
+    ds <- arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) get_arrow_schema(variables) else NULL)
     if (type == 'arrow_table'){
-      final_table
+      arrow::as_arrow_table(ds)
     }else if (type == 'tibble'){
-      result %>% collect()
+      ds %>% collect()
     }else if (type == 'data_frame'){
-      as.data.frame(result)
+      as.data.frame(ds)
     } else if (type == 'data_table'){
-      data.table::setDT(as.data.frame(result))
+      as.data.table(ds)
     }
   }
 
@@ -458,14 +463,20 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
 
       last_measured_time <- Sys.time()
       current_progress_rows <- 0
+      overread_stream_rows <- 0
 
       while (TRUE){
         batch <- stream_reader$read_next_batch()
-        if (is.null(batch)){
+        if (is.null(batch) || overread_stream_rows > 0){
           break
         } else {
-          current_progress_rows = current_progress_rows + batch$num_rows
-          stream_rows_read = stream_rows_read + batch$num_rows
+          current_progress_rows <- current_progress_rows + batch$num_rows
+          stream_rows_read <- stream_rows_read + batch$num_rows
+
+          if (!is.null(stream$maxResults) && stream_rows_read > stream$maxResults){
+            overread_stream_rows <- stream_rows_read - stream$maxResults
+            current_progress_rows <- current_progress_rows - overread_stream_rows
+          }
 
           # We need to coerce_schema for all dataset tables, since their underlying storage type is always a string
           if (coerce_schema){
@@ -512,6 +523,9 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
           }
 
           if (!is.null(batch)){
+            if (overread_stream_rows > 0){
+              batch <- head(batch, batch$num_rows - overread_stream_rows)
+            }
             if (!is.null(output_file)){
               if (is.null(stream_writer)){
                 stream_writer <- arrow::RecordBatchFileWriter$create(output_file, schema=if (is.null(batch_preprocessor)) schema else batch$schema)
