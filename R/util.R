@@ -38,7 +38,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL) {
   resumable_url <- initiate_resumable_upload(file_size, temp_upload_url)
 
   con <- base::file(file_path, "rb")
-  on.exit(close(con))
+  # on.exit(close(con))
 
   while(
     start_byte < file_size
@@ -62,6 +62,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL) {
     }, error=function(e) {
       print('the error is')
       print(e)
+
       if(retry_count > 20) {
         stop("A network error occurred. Upload failed after too many retries.")
       }
@@ -115,6 +116,8 @@ retry_partial_upload <- function(retry_count=0, file_size, resumable_url) {
       return(0)
     }
   }, error=function(e) {
+    print('retry error')
+    print(e)
     if(retry_count > 10) {
       stop(e)
     }
