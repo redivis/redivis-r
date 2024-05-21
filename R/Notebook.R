@@ -55,7 +55,7 @@ Notebook <- setRefClass("Notebook",
           file_path = temp_file_path
        }
 
-       file_size <- base::file.info(summary(con))$size
+       file_size <- base::file.info(temp_file_path)$size
 
        res <- make_request(
          method="POST",
