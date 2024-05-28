@@ -3,6 +3,7 @@ devtools::install()
 
 - if devtools not installed, run install.packages("devtools")
 - If you get SSL errors, run httr::set_config(httr::config(ssl_verifypeer = 0L))
+- To install updates, run `devtools::install()`
 
 Reload with Cmd + Shift + L or devtools::load_all(), experiment in console
 
