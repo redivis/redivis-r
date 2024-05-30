@@ -44,7 +44,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
   resumable_url <- initiate_resumable_upload(file_size, temp_upload_url, headers)
 
   con <- base::file(file_path, "rb")
-  # on.exit(close(con))
+  on.exit(close(con))
 
   while(
     start_byte < file_size
@@ -54,18 +54,31 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
     seek(con, where=start_byte, origin="start")
 
     tryCatch({
-      res <- curl::curl_upload(
-        file=con,
-        verbose=FALSE,
-        reuse=TRUE,
-        url=resumable_url,
-        httpheader=format_request_headers(c(
-          headers,
-          `Content-Length`=toString(end_byte - start_byte + 1),
-          `Content-Range`=sprintf("bytes %s-%s/%s", start_byte, end_byte, file_size)
-        )),
+      # See curl::curl_upload https://github.com/jeroen/curl/blob/master/R/upload.R#L17
+      h <- new_handle(
+        upload = TRUE,
+        filetime = FALSE,
+        readfunction = function(n) {
+          buf <- readBin(con, raw(), n = n)
+          total_bytes <<- total_bytes + length(buf)
+          return(buf)
+        },
+        seekfunction = function(offset){
+          seek(con, where = offset)
+        },
+        forbid_reuse = FALSE,
+        verbose = FALSE,
+        infilesize_large = file_size,
         followlocation=TRUE
       )
+      handle_setheaders(h,
+                        `Content-Length`=toString(end_byte - start_byte + 1),
+                        `Content-Range`=sprintf("bytes %s-%s/%s", start_byte, end_byte, file_size),
+                        headers
+                        )
+
+      res <- curl_fetch_memory(url, handle = h)
+
 
       if (res$status_code >= 300){
         stop(str_interp('Received status code ${res$status_code}'))
@@ -88,13 +101,6 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
   }
 }
 
-# see https://github.com/jeroen/curl/blob/master/R/handle.R#L81
-format_request_headers <- function(x){
-  names <- names(x)
-  values <- as.character(unlist(x))
-  postfix <- ifelse(grepl("^\\s+$", values), ";", paste(":", values))
-  paste0(names, postfix)
-}
 
 #' @importFrom httr POST stop_for_status
 initiate_resumable_upload <- function(size, temp_upload_url, headers, retry_count=0) {
