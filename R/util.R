@@ -77,7 +77,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
                         headers
                         )
 
-      res <- curl_fetch_memory(url, handle = h)
+      res <- curl_fetch_memory(resumable_url, handle = h)
 
 
       if (res$status_code >= 300){
