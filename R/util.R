@@ -145,7 +145,7 @@ perform_standard_upload <- function(file_path, temp_upload_url=NULL, proxy_url=N
     }
 
     # Perform the HTTP PUT request
-    res <- httr::PUT(url = temp_upload_url, body = prepared_upload, headers=headers)
+    res <- httr::PUT(url = temp_upload_url, body = prepared_upload, add_headers(headers))
     if (status_code(res) >= 400){
       # stop_for_status also fails for redirects
       httr::stop_for_status(res)
@@ -155,8 +155,8 @@ perform_standard_upload <- function(file_path, temp_upload_url=NULL, proxy_url=N
       cat("A network error occurred. Upload failed after too many retries.\n")
       stop(e)
     }
-    Sys.sleep(retry_count / 2)
+    Sys.sleep((retry_count + 1) / 2)
     # Recursively call the function with incremented retry count
-    perform_standard_upload(data, temp_upload_url, proxy_url, retry_count + 1, progressbar)
+    perform_standard_upload(data, original_url, proxy_url, retry_count + 1, progressbar)
   })
 }
