@@ -29,7 +29,7 @@ get_arrow_schema <- function(variables){
 
 #' @importFrom httr PUT stop_for_status
 #' @importFrom curl curl_upload new_handle handle_setheaders
-perform_resumable_upload <- function(file_path, temp_upload_url=NULL) {
+perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=NULL) {
   retry_count <- 0
   start_byte <- 0
   file_size <- base::file.info(file_path)$size
@@ -132,12 +132,20 @@ retry_partial_upload <- function(retry_count=0, file_size, resumable_url) {
 }
 
 #' @importFrom httr PUT upload_file stop_for_status
-perform_standard_upload <- function(file_path, temp_upload_url=NULL, retry_count=0, progressbar=NULL) {
+perform_standard_upload <- function(file_path, temp_upload_url=NULL, proxy_url=NULL, retry_count=0, progressbar=NULL) {
+  original_url=temp_upload_url
   tryCatch({
     prepared_upload <- httr::upload_file(file_path, type = NULL)
 
+    headers = c()
+
+    if (!is.null(proxy_url)){
+      headers <- get_authorization_header()
+      temp_upload_url = str_interp("${proxy_url}?url=${utils::URLencode(temp_upload_url, reserved=TRUE, repeated=TRUE)}")
+    }
+
     # Perform the HTTP PUT request
-    res <- httr::PUT(url = temp_upload_url, body = prepared_upload)
+    res <- httr::PUT(url = temp_upload_url, body = prepared_upload, add_headers(headers))
     if (status_code(res) >= 400){
       # stop_for_status also fails for redirects
       httr::stop_for_status(res)
@@ -147,8 +155,8 @@ perform_standard_upload <- function(file_path, temp_upload_url=NULL, retry_count
       cat("A network error occurred. Upload failed after too many retries.\n")
       stop(e)
     }
-    Sys.sleep(retry_count / 2)
+    Sys.sleep((retry_count + 1) / 2)
     # Recursively call the function with incremented retry count
-    perform_standard_upload(data, temp_upload_url, retry_count + 1, progressbar)
+    perform_standard_upload(file_path, original_url, proxy_url, retry_count + 1, progressbar)
   })
 }

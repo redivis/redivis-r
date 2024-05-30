@@ -60,7 +60,7 @@ Notebook <- setRefClass("Notebook",
        res <- make_request(
          method="POST",
          path=str_interp("/notebookJobs/${current_notebook_job_id}/tempUploads"),
-         payload=list(tempUploads=list(list(size=file_size, resumable=FALSE))) #TODO: set to file_size>1e8 after fixed
+         payload=list(tempUploads=list(list(size=file_size, resumable=FALSE))) #TODO: set to file_size>5e7 after fixed
        )
 
        temp_upload = res$results[[1]]
@@ -68,7 +68,11 @@ Notebook <- setRefClass("Notebook",
        if (temp_upload$resumable) {
          perform_resumable_upload(file_path=temp_file_path, temp_upload_url=temp_upload$url)
        } else {
-         perform_standard_upload(file_path=temp_file_path, temp_upload_url=temp_upload$url)
+         perform_standard_upload(
+           file_path=temp_file_path,
+           temp_upload_url=temp_upload$url,
+           proxy_url=str_interp("${Sys.getenv('REDIVIS_API_ENDPOINT')}/notebookJobs/${current_notebook_job_id}/tempUploadProxy")
+           )
        }
 
        payload <- base::append(payload, list(tempUploadId=temp_upload$id))
