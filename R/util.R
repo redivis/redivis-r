@@ -54,7 +54,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
     seek(con, where=start_byte, origin="start")
 
     tryCatch({
-      curl::curl_upload(
+      res <- curl::curl_upload(
         file=con,
         verbose=FALSE,
         reuse=TRUE,
@@ -66,6 +66,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
         ),
         followlocation=TRUE
       )
+      print(res)
 
       start_byte <- start_byte + chunk_size
       retry_count <- 0
