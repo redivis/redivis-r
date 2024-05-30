@@ -66,7 +66,11 @@ Notebook <- setRefClass("Notebook",
        temp_upload = res$results[[1]]
 
        if (temp_upload$resumable) {
-         perform_resumable_upload(file_path=temp_file_path, temp_upload_url=temp_upload$url)
+         perform_resumable_upload(
+           file_path=temp_file_path,
+           temp_upload_url=temp_upload$url,
+           proxy_url=str_interp("${Sys.getenv('REDIVIS_API_ENDPOINT')}/notebookJobs/${current_notebook_job_id}/tempUploadProxy")
+         )
        } else {
          perform_standard_upload(
            file_path=temp_file_path,
