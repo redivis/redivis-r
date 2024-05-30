@@ -141,7 +141,7 @@ perform_standard_upload <- function(file_path, temp_upload_url=NULL, proxy_url=N
 
     if (!is.null(proxy_url)){
       headers <- get_authorization_header()
-      temp_upload_url = str_interp("${proxy_url}?url=${utils::URLencode(temp_upload_url)}")
+      temp_upload_url = str_interp("${proxy_url}?url=${utils::URLencode(temp_upload_url, reserved=TRUE, repeated=TRUE)}")
     }
 
     # Perform the HTTP PUT request
