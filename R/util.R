@@ -157,6 +157,6 @@ perform_standard_upload <- function(file_path, temp_upload_url=NULL, proxy_url=N
     }
     Sys.sleep((retry_count + 1) / 2)
     # Recursively call the function with incremented retry count
-    perform_standard_upload(data, original_url, proxy_url, retry_count + 1, progressbar)
+    perform_standard_upload(file_path, original_url, proxy_url, retry_count + 1, progressbar)
   })
 }
