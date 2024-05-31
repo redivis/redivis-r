@@ -28,58 +28,94 @@ get_arrow_schema <- function(variables){
 }
 
 #' @importFrom httr PUT stop_for_status
-#' @importFrom curl curl_upload new_handle handle_setheaders
+#' @importFrom curl curl_fetch_memory new_handle handle_setheaders handle_setopt
 perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=NULL) {
   retry_count <- 0
   start_byte <- 0
   file_size <- base::file.info(file_path)$size
-  chunk_size <- file_size
+  chunk_size <- file_size # 2^26 # ~67MB, must be less than 100MB
+  headers <- c()
 
-  resumable_url <- initiate_resumable_upload(file_size, temp_upload_url)
+  if (!is.null(proxy_url)){
+    headers <- get_authorization_header()
+    temp_upload_url = str_interp("${proxy_url}?url=${utils::URLencode(temp_upload_url, reserved=TRUE, repeated=TRUE)}")
+  }
+
+  resumable_url <- initiate_resumable_upload(file_size, temp_upload_url, headers)
 
   con <- base::file(file_path, "rb")
-  # on.exit(close(con))
+  on.exit(close(con))
 
   while(
     start_byte < file_size
     || start_byte == 0  # handle empty upload for start_byte == 0
   ) {
+    chunk_size <<- min(file_size - start_byte, chunk_size)
     end_byte <- min(start_byte + chunk_size - 1, file_size - 1)
-    seek(con, where=start_byte, origin="start")
 
     tryCatch({
-      h <- curl::new_handle()
-      curl::handle_setheaders(
-        h,
-        `Content-Length`=toString(end_byte - start_byte + 1),
-        `Content-Range`=sprintf("bytes %s-%s/%s", start_byte, end_byte, file_size)
+      # See curl::curl_upload https://github.com/jeroen/curl/blob/master/R/upload.R#L17
+      bytes_read <- 0
+      h <- new_handle(
+        upload = TRUE,
+        filetime = FALSE,
+        readfunction = function(n) {
+          if (bytes_read + n > chunk_size){
+            n <- chunk_size - bytes_read
+          }
+          bytes_read <<- bytes_read + n
+          readBin(con, raw(), n = n)
+        },
+        seekfunction = function(offset){
+          bytes_read <<- offset
+          seek(con, where = start_byte + offset)
+        },
+        forbid_reuse = FALSE,
+        verbose = FALSE,
+        infilesize_large = chunk_size,
+        followlocation=TRUE,
+        ssl_verifypeer=0L
       )
-      curl::handle_setopt(h, followlocation = TRUE)
-      curl::curl_upload(file=con, url=resumable_url, verbose=FALSE, handle=h)
+
+      handle_setheaders(h,
+                        `Content-Length`=toString(end_byte - start_byte + 1),
+                        `Content-Range`=sprintf("bytes %s-%s/%s", start_byte, end_byte, file_size),
+                        Authorization=headers[["Authorization"]]
+                        )
+
+      res <- curl_fetch_memory(resumable_url, handle = h)
+
+      if (res$status_code >= 400){
+        stop(str_interp('Received status code ${res$status_code}: ${rawToChar(res$content)}'))
+      }
 
       start_byte <- start_byte + chunk_size
       retry_count <- 0
     }, error=function(e) {
-      print('the error is')
-      print(e)
-
-      if(retry_count > 20) {
-        stop("A network error occurred. Upload failed after too many retries.")
+      if(retry_count > -1) {
+        stop(str_interp("A network error occurred. Upload failed after too many retries. Error: ${e}"))
       }
-      retry_count <- retry_count + 1
+
+      retry_count <<- retry_count + 1
       Sys.sleep(retry_count / 2)
-      cat("A network error occurred. Retrying last chunk of resumable upload.\n")
-      start_byte <- retry_partial_upload(file_size=file_size, resumable_url=resumable_url)
+      cat("A network error occurred. Retrying resumable upload.\n")
+      start_byte <<- retry_partial_upload(file_size=file_size, resumable_url=resumable_url, headers=headers)
+      seek(con, where=start_byte, origin="start")
     })
   }
 }
 
+
 #' @importFrom httr POST stop_for_status
-initiate_resumable_upload <- function(size, temp_upload_url, retry_count=0) {
+initiate_resumable_upload <- function(size, temp_upload_url, headers, retry_count=0) {
   tryCatch({
     res <- httr::POST(temp_upload_url,
-                add_headers(`x-upload-content-length`=as.character(size),
-                            `x-goog-resumable`="start"))
+                add_headers(
+                  `x-upload-content-length`=as.character(size),
+                  `x-goog-resumable`="start",
+                  headers
+                )
+    )
 
     if (status_code(res) >= 400){
       # stop_for_status also fails for redirects
@@ -88,21 +124,21 @@ initiate_resumable_upload <- function(size, temp_upload_url, retry_count=0) {
 
     res$headers$location
   }, error=function(e) {
-    if(retry_count > 20) {
+    if(retry_count > 10) {
       stop("A network error occurred. Upload failed after too many retries.")
     }
     Sys.sleep(retry_count / 2)
-    initiate_resumable_upload(size, temp_upload_url, retry_count=retry_count+1)
+    initiate_resumable_upload(size, temp_upload_url, headers, retry_count=retry_count+1)
   })
 }
 
 #' @importFrom httr PUT stop_for_status
 #' @importFrom stringr str_extract
-retry_partial_upload <- function(retry_count=0, file_size, resumable_url) {
+retry_partial_upload <- function(retry_count=0, file_size, resumable_url, headers) {
   tryCatch({
     res <- httr::PUT(url=resumable_url,
                body="",
-               add_headers(`Content-Length`="0", `Content-Range`=sprintf("bytes */%s", file_size)))
+               add_headers(headers, c(`Content-Length`="0", `Content-Range`=sprintf("bytes */%s", file_size))))
     if(res$status_code == 404) {
       return(0)
     }
@@ -115,19 +151,19 @@ retry_partial_upload <- function(retry_count=0, file_size, resumable_url) {
         match <- stringr::str_extract(range_header, "bytes=0-(\\d+)", group=1)
         as.numeric(match) + 1
       } else {
-        stop("An unknown error occurred. Please try again.")
+        # If GCS hasn't received any bytes, the header will be missing
+        return(0)
       }
-    } else {  # If GCS hasn't received any bytes, the header will be missing
+    } else {
       return(0)
     }
   }, error=function(e) {
-    print('retry error')
-    print(e)
+    cat("A network error occurred when trying to resume an upload.\n")
     if(retry_count > 10) {
       stop(e)
     }
     Sys.sleep(retry_count / 10)
-    retry_partial_upload(retry_count=retry_count + 1, file_size=file_size, resumable_url=resumable_url)
+    retry_partial_upload(retry_count=retry_count + 1, file_size=file_size, resumable_url=resumable_url, headers=headers)
   })
 }
 
