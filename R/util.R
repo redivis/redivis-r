@@ -53,7 +53,6 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
   ) {
     print('uploading')
     end_byte <- min(start_byte + chunk_size - 1, file_size - 1)
-    bytes <- readBin(con, raw(), n = chunk_size)
 
     tryCatch({
       # See curl::curl_upload https://github.com/jeroen/curl/blob/master/R/upload.R#L17
@@ -63,15 +62,18 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
         filetime = FALSE,
         readfunction = function(n) {
           print(bytes_read)
+          if (bytes_read + n > chunk_size){
+            n <- chunk_size - bytes_read
+          }
           bytes_read <<- bytes_read + n
-          bytes[bytes_read - n:bytes_read]
+          readBin(con, raw(), n = n)
         },
         # seekfunction = function(offset){
         #   seek(con, where = offset)
         # },
         forbid_reuse = FALSE,
         verbose = FALSE,
-        infilesize_large = file_size,
+        infilesize_large = chunk_size,
         followlocation=TRUE,
         ssl_verifypeer=0L
       )
