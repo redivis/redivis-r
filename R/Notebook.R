@@ -60,7 +60,7 @@ Notebook <- setRefClass("Notebook",
        res <- make_request(
          method="POST",
          path=str_interp("/notebookJobs/${current_notebook_job_id}/tempUploads"),
-         payload=list(tempUploads=list(list(size=file_size, resumable=TRUE))) # file_size>5e7
+         payload=list(tempUploads=list(list(size=file_size, resumable=file_size>5e7)))
        )
 
        temp_upload = res$results[[1]]
