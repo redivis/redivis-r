@@ -99,7 +99,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
       retry_count <<- retry_count + 1
       Sys.sleep(retry_count / 2)
       cat("A network error occurred. Retrying resumable upload.\n")
-      start_byte <- retry_partial_upload(file_size=file_size, resumable_url=resumable_url, headers=headers)
+      start_byte <<- retry_partial_upload(file_size=file_size, resumable_url=resumable_url, headers=headers)
       seek(con, where=start_byte, origin="start")
     })
   }
