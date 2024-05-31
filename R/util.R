@@ -64,8 +64,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
         readfunction = function(n) {
           print(bytes_read)
           bytes_read <<- bytes_read + n
-          print(bytes[seq(bytes_read - n, bytes_read)])
-          bytes[seq(bytes_read - n, bytes_read)]
+          bytes[bytes_read - n:bytes_read]
         },
         # seekfunction = function(offset){
         #   seek(con, where = offset)
@@ -92,7 +91,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
       start_byte <- start_byte + chunk_size
       retry_count <- 0
     }, error=function(e) {
-      if(retry_count > 1) {
+      if(retry_count > -1) {
         stop(str_interp("A network error occurred. Upload failed after too many retries. Error: ${e}"))
       }
 
