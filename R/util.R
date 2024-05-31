@@ -62,6 +62,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
         upload = TRUE,
         filetime = FALSE,
         readfunction = function(n) {
+          print(bytes_read)
           bytes_read <<- bytes_read + n
           bytes[seq(bytes_read - n, bytes_read)]
         },
