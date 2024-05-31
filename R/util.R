@@ -34,7 +34,6 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
   start_byte <- 0
   file_size <- base::file.info(file_path)$size
   chunk_size <- 2^26 # ~67MB, must be less than 100MB
-  chunk_size <- 262144
   headers <- c()
 
   if (!is.null(proxy_url)){
@@ -61,7 +60,6 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
         upload = TRUE,
         filetime = FALSE,
         readfunction = function(n) {
-          print(bytes_read)
           if (bytes_read + n > chunk_size){
             n <- chunk_size - bytes_read
           }
