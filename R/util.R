@@ -33,7 +33,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
   retry_count <- 0
   start_byte <- 0
   file_size <- base::file.info(file_path)$size
-  chunk_size <- 2^26 # ~67MB, must be less than 100MB
+  chunk_size <- file_size # 2^26 # ~67MB, must be less than 100MB
   headers <- c()
 
   if (!is.null(proxy_url)){
@@ -50,7 +50,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
     start_byte < file_size
     || start_byte == 0  # handle empty upload for start_byte == 0
   ) {
-    print('uploading')
+    chunk_size <<- min(file_size - start_byte, chunk_size)
     end_byte <- min(start_byte + chunk_size - 1, file_size - 1)
 
     tryCatch({
@@ -66,9 +66,10 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
           bytes_read <<- bytes_read + n
           readBin(con, raw(), n = n)
         },
-        # seekfunction = function(offset){
-        #   seek(con, where = offset)
-        # },
+        seekfunction = function(offset){
+          bytes_read <<- offset
+          seek(con, where = start_byte + offset)
+        },
         forbid_reuse = FALSE,
         verbose = FALSE,
         infilesize_large = chunk_size,
