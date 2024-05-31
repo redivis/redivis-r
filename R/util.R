@@ -64,6 +64,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
         readfunction = function(n) {
           print(bytes_read)
           bytes_read <<- bytes_read + n
+          print(bytes[seq(bytes_read - n, bytes_read)])
           bytes[seq(bytes_read - n, bytes_read)]
         },
         # seekfunction = function(offset){
