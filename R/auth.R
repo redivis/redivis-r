@@ -162,7 +162,7 @@ get_pkce <- function() {
 }
 
 # Helper function to handle base64 url encoding without padding
-#' @importFrom jsonlite base64url_encode
+#' @importFrom jsonlite base64url_enc
 safe_encode_base64_url <- function(x) {
   sub("\\=", "", jsonlite::base64url_enc(x))
 }

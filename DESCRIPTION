@@ -14,7 +14,7 @@ Depends:
 Imports:
     httr (>= 1.4.0),
     curl (>= 5.0.0),
-    jsonlite (>= 1.6.0),
+    jsonlite (>= 1.8.0),
     data.table (>= 1.0.0),
     dplyr (>= 1.0.0),
     stringr (>= 1.4.0),
