@@ -76,6 +76,7 @@ perform_oauth_login <- function() {
 
   browse_url_response <- browseURL(parsed_response$verification_uri_complete)
 
+  print('testing')
   # If successful, will be NULL. Otherwise will return 0.
   if (is.null(browse_url_response)) {
     print('Please authenticate with your Redivis account. Opening browser to:\n')
