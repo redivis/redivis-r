@@ -4,7 +4,10 @@
 #' @importFrom jsonlite fromJSON
 #' @importFrom stringr str_interp str_starts
 #' @import curl
+#' @include auth.R
 make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE){
+  # IMPORTANT: if updating the function signature, make sure to also pass to the two scenarios where we retry on 401 status
+
   if (!is.null(stream_callback) || !is.null(get_download_path_callback)){
     h <- curl::new_handle()
     auth = get_authorization_header()
@@ -15,6 +18,10 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
     on.exit(close(con))
     res_data <- curl::handle_data(h)
     if (res_data$status_code >= 400){
+      if (res_data$status_code == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
+        refresh_credentials()
+        return(make_request(method, query, payload, parse_response, path, download_path, download_overwrite, as_stream, get_download_path_callback, stream_callback, stop_on_error))
+      }
       if (stop_on_error){
         stop(str_interp("Received HTTP status ${status_code} for path ${path}"))
       } else {
@@ -43,7 +50,6 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
 
   } else {
     handler <- write_memory()
-
     if (!is.null(download_path)) handler <- write_disk(download_path, overwrite = download_overwrite)
     else if (!is.null(stream_callback)) handler <- write_stream(stream_callback)
     # req <- httr2::request(str_interp("${base_url}${utils::URLencode(path)}")) %>%
@@ -85,6 +91,11 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
       encode="json",
       httr::timeout(3600)
     )
+
+    if (status_code(res) == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
+      refresh_credentials()
+      return(make_request(method, query, payload, parse_response, path, download_path, download_overwrite, as_stream, get_download_path_callback, stream_callback, stop_on_error))
+    }
 
     if (!parse_response && status_code(res) < 400){
       return(res)
@@ -187,9 +198,9 @@ parallel_download_data_cb_factory <- function(h, url, get_download_path_from_hea
 }
 
 make_paginated_request <- function(path, query=list(), page_size=100, max_results=NULL){
-  page = 0
-  results = list()
-  next_page_token = NULL
+  page <- 0
+  results <- list()
+  next_page_token <- NULL
 
   while (TRUE){
     if (!is.null(max_results) && length(results) >= max_results){
@@ -209,9 +220,9 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
       )
     )
 
-    page = page + 1
-    results = append(results, response$results)
-    next_page_token = response$nextPageToken
+    page <- page + 1
+    results <- append(results, response$results)
+    next_page_token <- response$nextPageToken
     if (is.null(next_page_token)){
       break
     }
@@ -365,11 +376,8 @@ generate_api_url <- function(path){
 }
 
 get_authorization_header <- function(){
-  if (Sys.getenv("REDIVIS_API_TOKEN") == ""){
-    stop("The environment variable REDIVIS_API_TOKEN must be set.")
-  }
-
-  c("Authorization"=str_interp("Bearer ${Sys.getenv('REDIVIS_API_TOKEN')}"))
+  auth_token <- get_auth_token()
+  c("Authorization"=str_interp("Bearer ${auth_token}"))
 }
 
 #' @importFrom furrr future_map

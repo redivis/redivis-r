@@ -1,7 +1,7 @@
 Package: redivis
 Type: Package
 Title: R interface for Redivis
-Version: 0.6.24
+Version: 0.7.0
 Author: Redivis Inc.
 Maintainer: Redivis <support@redivis.com>
 Description: Supports working with Redivis datasets and tables through R. 
@@ -23,6 +23,7 @@ Imports:
     bit64 (>= 4.0.5),
     pbapply (>= 1.5-0),
     sf (>= 1.0),
+    openssl (>= 2.0.0),
     purrr (>= 0.3.0),
     progressr (>= 0.9.0),
     furrr (>= 0.2.0),
@@ -33,6 +34,7 @@ RoxygenNote: 7.1.2
 Suggests: 
     testthat (>= 2.1.0)
 Collate: 
+    'auth.R'
     'api_request.R'
     'util.R'
     'Variable.R'

@@ -108,6 +108,20 @@ current_notebook <- function() {
   }
 }
 
+#' @title authenticate
+#'
+#' @description Manually authenticate the current session with your Redivis credentials. Authentication normally happens automatically, and this method does not need to be called directly in most use cases.
+#'
+#' @return void
+#' @examples
+#' redivis::authenticate(force_reauthentication=FALSE)
+authenticate <- function(force_reauthentication=FALSE) {
+  if (force_reauthentication){
+    clear_cached_credentials()
+  }
+  get_auth_token()
+  return()
+}
 
 
 
