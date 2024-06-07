@@ -84,6 +84,7 @@ perform_oauth_login <- function() {
     cat('Please visit the URL below to authenticate with your Redivis account:\n')
     cat(parsed_response$verification_uri_complete, '\n')
   }
+  flush.console()
 
   started_polling_at <- Sys.time()
   while (TRUE) {

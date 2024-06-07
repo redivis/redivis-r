@@ -547,6 +547,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
           if (Sys.time() - last_measured_time > 0.2){
             pb(amount = current_progress_rows)
             current_progress_rows <- 0
+            flush.console()
             last_measured_time = Sys.time()
           }
         }
