@@ -4,8 +4,8 @@ Title: R interface for Redivis
 Version: 0.7.0
 Author: Redivis Inc.
 Maintainer: Redivis <support@redivis.com>
-Description: Supports working with Redivis datasets and tables through R. 
-    Execute queries and load tables into an R data frame.
+Description: Supports working with Redivis API through R. 
+    Parse metadata, execute queries, and load data into R.
 License: MIT
 URL: https://github.com/redivis/redivis-r
 BugReports: https://github.com/redivis/redivis-r/issues
@@ -19,9 +19,7 @@ Imports:
     dplyr (>= 1.0.0),
     stringr (>= 1.4.0),
     tibble (>= 3.0.0),
-    arrow (>= 16.0.0),
-    bit64 (>= 4.0.5),
-    pbapply (>= 1.5-0),
+    arrow (>= 16.1.0),
     sf (>= 1.0),
     openssl (>= 2.0.0),
     purrr (>= 0.3.0),
@@ -37,6 +35,7 @@ Collate:
     'auth.R'
     'api_request.R'
     'util.R'
+    'Export.R'
     'Variable.R'
     'User.R'
     'Project.R'

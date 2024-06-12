@@ -1,4 +1,3 @@
-library(jsonlite)
 library(httr)
 
 auth_vars <- list(
@@ -12,7 +11,6 @@ auth_vars <- list(
 )
 
 
-#' @importFrom jsonlite fromJSON toJSON
 get_auth_token <- function() {
   if (!is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA))) {
     if (is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA)) && interactive()) {
@@ -42,7 +40,7 @@ This environment variable should only ever be set in a non-interactive environme
     }
 
     auth_vars$cached_credentials <- perform_oauth_login()
-    write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE), auth_vars$credentials_file)
+    write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
     return(auth_vars$cached_credentials$access_token)
   }
 }
@@ -54,7 +52,6 @@ clear_cached_credentials <- function() {
   }
 }
 
-#' @importFrom httr POST config add_headers stop_for_status content
 perform_oauth_login <- function() {
   pkce <- get_pkce()
   challenge <- pkce$challenge
@@ -95,7 +92,6 @@ perform_oauth_login <- function() {
       stop('Timed out waiting for device authorization')
     }
 
-
     Sys.sleep(ifelse(is.null(parsed_response$interval), 5, parsed_response$interval))
 
     res <- POST(
@@ -127,11 +123,9 @@ perform_oauth_login <- function() {
   return(content(res, "parsed"))
 }
 
-#' @importFrom httr POST config content
-#' @importFrom jsonlite toJSON
 refresh_credentials <- function() {
   if (!is.null(auth_vars$cached_credentials$refresh_token)) {
-    res <- POST(
+    res <- httr::POST(
       url = paste0(auth_vars$base_url, "/oauth/token"),
       body = list(
         client_id = auth_vars$client_id,
@@ -139,7 +133,7 @@ refresh_credentials <- function() {
         refresh_token = auth_vars$cached_credentials$refresh_token
       ),
       encode = "form",
-      config = if (auth_vars$verify_ssl) config() else config(ssl_verifypeer = FALSE)
+      config = if (auth_vars$verify_ssl) httr::config() else httr::config(ssl_verifypeer = FALSE)
     )
 
     if (status_code(res) >= 400) {
@@ -149,7 +143,7 @@ refresh_credentials <- function() {
       auth_vars$cached_credentials$access_token <- refresh_response$access_token
       auth_vars$cached_credentials$expires_at <- refresh_response$expires_at
       auth_vars$cached_credentials$expires_in <- refresh_response$expires_in
-      write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE), auth_vars$credentials_file)
+      write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
     }
   } else {
     clear_cached_credentials()
@@ -158,7 +152,6 @@ refresh_credentials <- function() {
   return(get_auth_token())
 }
 
-#' @importFrom openssl sha256
 get_pkce <- function() {
   verifier <- safe_encode_base64_url(charToRaw(paste(sample(c(0:9, letters, LETTERS), 64, replace = TRUE), collapse = "")))
   challenge <- safe_encode_base64_url(openssl::sha256(charToRaw(verifier)))
@@ -166,7 +159,6 @@ get_pkce <- function() {
 }
 
 # Helper function to handle base64 url encoding without padding
-#' @importFrom jsonlite base64url_enc
 safe_encode_base64_url <- function(x) {
   sub("\\=", "", jsonlite::base64url_enc(x))
 }

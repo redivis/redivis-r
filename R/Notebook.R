@@ -1,6 +1,3 @@
-#' @importFrom uuid UUIDgenerate
-#' @importFrom arrow write_parquet write_dataset
-#' @importFrom sf st_geometry st_as_text
 #' @include Table.R User.R api_request.R
 Notebook <- setRefClass("Notebook",
    fields = list(current_notebook_job_id="character"),
@@ -51,7 +48,7 @@ Notebook <- setRefClass("Notebook",
          temp_file_path <- str_interp('${temp_file_path}/part-0.parquet')
          file_path = temp_file_path
        } else {
-          write_parquet(df, sink=temp_file_path)
+          arrow::write_parquet(df, sink=temp_file_path)
           file_path = temp_file_path
        }
 

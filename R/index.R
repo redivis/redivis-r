@@ -1,3 +1,5 @@
+#' @importFrom stringr str_interp
+
 #' @title query
 #'
 #' @description Create a Redivis SQL query

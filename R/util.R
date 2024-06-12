@@ -1,8 +1,6 @@
 
-#' @importFrom arrow schema
-#' @importFrom purrr map
 get_arrow_schema <- function(variables){
-  schema <- map(variables, function(variable) {
+  schema <- purrr::map(variables, function(variable) {
     if (variable$type == 'integer'){
       arrow::int64()
     } else if (variable$type == 'float'){
@@ -22,13 +20,11 @@ get_arrow_schema <- function(variables){
     }
   })
 
-  names <- map(variables, function(variable) variable$name)
+  names <- purrr::map(variables, function(variable) variable$name)
 
   arrow::schema(set_names(schema, names))
 }
 
-#' @importFrom httr PUT stop_for_status
-#' @importFrom curl curl_fetch_memory new_handle handle_setheaders handle_setopt
 perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=NULL) {
   retry_count <- 0
   start_byte <- 0
@@ -56,7 +52,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
     tryCatch({
       # See curl::curl_upload https://github.com/jeroen/curl/blob/master/R/upload.R#L17
       bytes_read <- 0
-      h <- new_handle(
+      h <- curl::new_handle(
         upload = TRUE,
         filetime = FALSE,
         readfunction = function(n) {
@@ -77,13 +73,13 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
         ssl_verifypeer=0L
       )
 
-      handle_setheaders(h,
+      curl::handle_setheaders(h,
                         `Content-Length`=toString(end_byte - start_byte + 1),
                         `Content-Range`=sprintf("bytes %s-%s/%s", start_byte, end_byte, file_size),
                         Authorization=headers[["Authorization"]]
                         )
 
-      res <- curl_fetch_memory(resumable_url, handle = h)
+      res <- curl::curl_fetch_memory(resumable_url, handle = h)
 
       if (res$status_code >= 400){
         stop(str_interp('Received status code ${res$status_code}: ${rawToChar(res$content)}'))
@@ -106,7 +102,6 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
 }
 
 
-#' @importFrom httr POST stop_for_status
 initiate_resumable_upload <- function(size, temp_upload_url, headers, retry_count=0) {
   tryCatch({
     res <- httr::POST(temp_upload_url,
@@ -132,8 +127,6 @@ initiate_resumable_upload <- function(size, temp_upload_url, headers, retry_coun
   })
 }
 
-#' @importFrom httr PUT stop_for_status
-#' @importFrom stringr str_extract
 retry_partial_upload <- function(retry_count=0, file_size, resumable_url, headers) {
   tryCatch({
     res <- httr::PUT(url=resumable_url,
@@ -167,7 +160,6 @@ retry_partial_upload <- function(retry_count=0, file_size, resumable_url, header
   })
 }
 
-#' @importFrom httr PUT upload_file stop_for_status
 perform_standard_upload <- function(file_path, temp_upload_url=NULL, proxy_url=NULL, retry_count=0, progressbar=NULL) {
   original_url=temp_upload_url
   tryCatch({

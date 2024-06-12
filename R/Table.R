@@ -1,8 +1,4 @@
-#' @include Dataset.R Project.R Variable.R util.R api_request.R
-#' @importFrom stringr str_interp
-#' @importFrom pbapply pblapply
-#' @importFrom purrr map
-#' @importFrom sf st_as_sf
+#' @include Dataset.R Project.R Variable.R Export.R util.R api_request.R
 Table <- setRefClass("Table",
    fields = list(name="character", dataset="ANY", project="ANY", properties="list", qualified_reference="character", scoped_reference="character", uri="character"),
 
@@ -182,7 +178,7 @@ Table <- setRefClass("Table",
        )
 
        if (!is.null(params$geography_variable)){
-         st_as_sf(df, wkt=params$geography_variable, crs=4326)
+         sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
        } else {
          df
        }
@@ -206,7 +202,7 @@ Table <- setRefClass("Table",
          batch_preprocessor = batch_preprocessor
        )
 
-       st_as_sf(df, wkt=params$geography_variable, crs=4326)
+       sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
      },
 
      to_data_frame = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
@@ -264,9 +260,24 @@ Table <- setRefClass("Table",
        })
      },
 
+     download = function(path = NULL, format = 'csv', overwrite = FALSE, progress = TRUE) {
+       res <- make_request(
+         method = "POST",
+         path = paste0(.self$uri, "/exports"),
+         payload = list(format = format)
+       )
+       export_job <- Export$new(table = .self, properties = res)
+       if (progress && FALSE){
+         res <- progressr::with_progress(export_job$download_files(path = path, overwrite = overwrite))
+       } else {
+         res <- export_job$download_files(path = path, overwrite = overwrite)
+       }
+       return(res)
+     },
+
      download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE){
         if (endsWith(path, '/')) {
-          path <- str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
+          path <- stringr::str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
         }
 
         if (is.null(file_id_variable)){
@@ -300,10 +311,6 @@ Table <- setRefClass("Table",
    )
 )
 
-#' @importFrom future plan multicore multisession sequential
-#' @importFrom parallelly supportsMulticore
-#' @importFrom progressr progressor
-#' @importFrom purrr map
 perform_table_parallel_file_download <- function(vec, path, overwrite){
   pb <- progressr::progressor(steps = length(vec))
   download_paths <- list()

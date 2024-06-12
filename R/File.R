@@ -1,6 +1,4 @@
 
-#' @importFrom stringr str_interp str_sub
-#' @importFrom httr headers content
 #' @include api_request.R
 File <- setRefClass(
   "File",
@@ -18,7 +16,7 @@ File <- setRefClass(
         is_dir <- TRUE
       } else if (endsWith(path, '/')) {
         is_dir <- TRUE
-        path <- str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
+        path <- stringr::str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
       } else if (dir.exists(path)) {
         is_dir <- TRUE
       }
@@ -64,7 +62,7 @@ File <- setRefClass(
 
     read = function(as_text = FALSE) {
       res <- make_request(method="GET", path=str_interp("/rawFiles/${id}"), parse_response = FALSE)
-      content(res, as = if(as_text) 'text' else 'raw')
+      httr::content(res, as = if(as_text) 'text' else 'raw')
     },
 
     stream = function(callback) {

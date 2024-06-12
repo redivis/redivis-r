@@ -1,33 +1,52 @@
 
-
-#' @importFrom httr VERB headers add_headers content status_code write_memory write_disk write_stream timeout
-#' @importFrom jsonlite fromJSON
-#' @importFrom stringr str_interp str_starts
-#' @import curl
 #' @include auth.R
-make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE){
+make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, headers_callback=NULL, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE, on_progress=NULL){
   # IMPORTANT: if updating the function signature, make sure to also pass to the two scenarios where we retry on 401 status
 
   if (!is.null(stream_callback) || !is.null(get_download_path_callback)){
     h <- curl::new_handle()
     auth = get_authorization_header()
     curl::handle_setheaders(h, "Authorization"=auth[[1]])
+    curl::handle_setopt(h, failonerror = 0)
     url <- generate_api_url(path)
-    con <- curl::curl(url, handle=h)
-    open(con, "rb", blocking = FALSE)
-    on.exit(close(con))
-    res_data <- curl::handle_data(h)
-    if (res_data$status_code >= 400){
-      if (res_data$status_code == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
-        refresh_credentials()
-        return(make_request(method, query, payload, parse_response, path, download_path, download_overwrite, as_stream, get_download_path_callback, stream_callback, stop_on_error))
-      }
-      if (stop_on_error){
-        stop(str_interp("Received HTTP status ${status_code} for path ${path}"))
-      } else {
-        return(NULL)
-      }
+    if (length(query) > 0){
+      query_string <- paste(
+        names(query),
+        sapply(query, function(x){ URLencode(as.character(x), reserved = TRUE) }),
+        sep = "=",
+        collapse = "&"
+      )
+      url <- str_interp("${url}?${query_string}")
     }
+    con <- curl::curl(url, handle=h)
+    on.exit(close(con))
+
+    tryCatch({
+      open(con, "rb", blocking = FALSE)
+      res_data <- curl::handle_data(h)
+    }, error = function(e){
+      res_data <- curl::handle_data(h)
+      if (res_data$status_code >= 400){
+        if (res_data$status_code == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
+          refresh_credentials()
+          return(make_request(method, query, payload, parse_response, path, download_path, download_overwrite, as_stream, get_download_path_callback, stream_callback, stop_on_error))
+        }
+        if (stop_on_error){
+          stop(str_interp("Received HTTP status ${res_data$status_code} for path ${url}"))
+        } else {
+          return(NULL)
+        }
+      }
+    })
+
+
+    res_data <- curl::handle_data(h)
+
+    headers <- parse_curl_headers(res_data)
+    if (!is.null(headers_callback)){
+      headers_callback(headers)
+    }
+
     if (is.null(get_download_path_callback)){
       while(isIncomplete(con)){
         buf <- readBin(con, raw(), 16384)
@@ -37,8 +56,6 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
         }
       }
     } else {
-      headers <- parse_curl_headers(res_data)
-
       download_path <- get_download_path_callback(headers)
       file_con <- base::file(download_path, "w+b")
       on.exit(close(file_con), add=TRUE)
@@ -49,50 +66,22 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
     }
 
   } else {
-    handler <- write_memory()
-    if (!is.null(download_path)) handler <- write_disk(download_path, overwrite = download_overwrite)
-    else if (!is.null(stream_callback)) handler <- write_stream(stream_callback)
-    # req <- httr2::request(str_interp("${base_url}${utils::URLencode(path)}")) %>%
-    #   httr2::req_auth_bearer_token(get_auth_token()) %>%
-    #   httr2::req_method(method)
-    #
-    # if (!is.null(payload)){
-    #   req %>% httr2::req_body_json(payload)
-    # }
-    #
-    # if (!is.null(download_path)){
-    #   if (download_overwrite == FALSE && file.exists(download_path)){
-    #     stop(str_interp("File already exists at path '${download_path}'. To overwrite existing files, set parameter overwrite=TRUE."))
-    #   }
-    #   conn = base::file(download_path, 'w+b')
-    #   httr2::req_stream(req, function(buff) {
-    #     writeBin(buff, conn, append=TRUE)
-    #     print('chunk')
-    #     TRUE
-    #   })
-    #   close(conn)
-    # } else if (as_stream){
-    #   return(httr2::req_stream(req))
-    # } else {
-    #   resp <- httr2::req_perform(req)
-    #   if (parse_response){
-    #     httr2::resp_body_json(resp)
-    #   } else {
-    #     httr2::resp_body_raw(resp)
-    #   }
-    # }
-    res <- VERB(
+    handler <- httr::write_memory()
+    if (!is.null(download_path)) handler <- httr::write_disk(download_path, overwrite = download_overwrite)
+    else if (!is.null(stream_callback)) handler <- httr::write_stream(stream_callback)
+
+    res <- httr::VERB(
       method,
       handler,
       url = generate_api_url(path),
-      add_headers(get_authorization_header()),
+      httr::add_headers(get_authorization_header()),
       query = query,
       body = payload,
       encode="json",
       httr::timeout(3600)
     )
 
-    if (status_code(res) == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
+    if (httr::status_code(res) == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
       refresh_credentials()
       return(make_request(method, query, payload, parse_response, path, download_path, download_overwrite, as_stream, get_download_path_callback, stream_callback, stop_on_error))
     }
@@ -105,20 +94,19 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
     response_content <- NULL
 
     if (method == "HEAD"){
-      if (status_code(res) >= 400){
-        response_content <- fromJSON(URLdecode(headers(res)$'x-redivis-error-payload'))
+      if (httr::status_code(res) >= 400){
+        response_content <- jsonlite::fromJSON(URLdecode(httr::headers(res)$'x-redivis-error-payload'))
       }
     } else {
-      response_content <- content(res, as="text", encoding='UTF-8')
+      response_content <- httr::content(res, as="text", encoding='UTF-8')
 
-      if (!is.null(headers(res)$'content-type') && str_starts(headers(res)$'content-type', 'application/json') && (status_code(res) >= 400 || parse_response)){
+      if (!is.null(httr::headers(res)$'content-type') && stringr::str_starts(httr::headers(res)$'content-type', 'application/json') && (httr::status_code(res) >= 400 || parse_response)){
         is_json <- TRUE
-        response_content <- fromJSON(response_content, simplifyVector = FALSE)
+        response_content <- jsonlite::fromJSON(response_content, simplifyVector = FALSE)
       }
     }
 
-
-    if (status_code(res) >= 400 && stop_on_error){
+    if (httr::status_code(res) >= 400 && stop_on_error){
       if (is_json){
         stop(response_content$error$message)
       } else {
@@ -130,8 +118,6 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
   }
 }
 
-#' @importFrom purrr map set_names
-#' @importFrom curl parse_headers
 parse_curl_headers <- function(res_data){
   vec <- curl::parse_headers(res_data$headers)
 
@@ -141,10 +127,9 @@ parse_curl_headers <- function(res_data){
   headers <- purrr::map(vec, function(header) {
     split = strsplit(header, ':\\s+')[[1]]
     paste0(tail(split, -1), collapse=':')
-  }) %>% purrr::set_names(header_names)
+  }) %>% set_names(header_names)
 }
 
-#' @import curl
 perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, stop_on_error=TRUE){
   pool <- curl::new_pool()
   handles = list()
@@ -232,7 +217,6 @@ make_paginated_request <- function(path, query=list(), page_size=100, max_result
   results
 }
 
-#' @import arrow
 RedivisBatchReader <- setRefClass(
   "RedivisBatchReader",
   fields = list(
@@ -293,7 +277,7 @@ RedivisBatchReader <- setRefClass(
             batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
           }
 
-          batch <- (as_record_batch(batch, schema=.self$custom_classes$writer_schema))
+          batch <- (arrow::as_record_batch(batch, schema=.self$custom_classes$writer_schema))
         }
 
         return (batch)
@@ -305,11 +289,7 @@ RedivisBatchReader <- setRefClass(
   )
 )
 
-#' @importFrom tibble as_tibble
-#' @importFrom data.table as.data.table
-#' @importFrom arrow open_dataset Scanner
-#' @importFrom uuid UUIDgenerate
-#' @importFrom progressr progress with_progress
+
 make_rows_request <- function(uri, max_results=NULL, selected_variable_names = NULL, type = 'tibble', variables = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL){
   read_session <- make_request(
     method="post",
@@ -319,7 +299,7 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
         "maxResults"=max_results,
         "selectedVariables"=selected_variable_names,
         "format"="arrow",
-        "requestedStreamCount"=if (type == 'arrow_stream') 1 else min(16, parallelly::availableCores())
+        "requestedStreamCount"=if (type == 'arrow_stream') 1 else min(8, parallelly::availableCores())
     )
   )
 
@@ -361,11 +341,11 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
     if (type == 'arrow_table'){
       arrow::as_arrow_table(ds)
     }else if (type == 'tibble'){
-      ds %>% collect()
+      tibble::as_tibble(ds)
     }else if (type == 'data_frame'){
       as.data.frame(ds)
     } else if (type == 'data_table'){
-      as.data.table(ds)
+      data.table::as.data.table(ds)
     }
   }
 
@@ -380,21 +360,16 @@ get_authorization_header <- function(){
   c("Authorization"=str_interp("Bearer ${auth_token}"))
 }
 
-#' @importFrom furrr future_map
-#' @importFrom future plan multicore multisession sequential
-#' @importFrom parallelly availableCores supportsMulticore
-#' @importFrom progressr progressor
-#' @importFrom stringr str_c
-#' @import arrow
-#' @import dplyr
+
 parallel_stream_arrow <- function(folder, streams, max_results, variables, coerce_schema, batch_preprocessor){
   if (!length(streams)){
     return();
   }
 
   pb <- progressr::progressor(steps = max_results)
+
   headers <- get_authorization_header()
-  worker_count <- min(16, length(streams))
+  worker_count <- min(8, length(streams), parallelly::availableCores())
 
   if (parallelly::supportsMulticore()){
     oplan <- future::plan(future::multicore, workers = worker_count)
@@ -405,7 +380,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
   }
 
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
-  on.exit(plan(oplan), add = TRUE)
+  on.exit(future::plan(oplan), add = TRUE)
   base_url = generate_api_url('/readStreams')
 
   process_arrow_stream <- function(stream, in_memory_batches=c(), stream_writer=NULL, output_file=NULL, stream_rows_read=0, retry_count=0){
@@ -424,8 +399,8 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     # con <- curl::curl(url, handle=h)
     # open(con, "rb")
 
-    # This ensures the url method doesn't time out after 60s. Only applies to this function, doesn't set globally
     tryCatch({
+      # This ensures the url method doesn't time out after 60s. Only applies to this function, doesn't set globally
       options(timeout=3600)
       con <- url(str_interp('${base_url}/${stream$id}?offset=${stream_rows_read}'), open = "rb", headers = headers, blocking=FALSE)
       on.exit(close(con))
@@ -547,7 +522,6 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
           if (Sys.time() - last_measured_time > 0.2){
             pb(amount = current_progress_rows)
             current_progress_rows <- 0
-            flush.console()
             last_measured_time = Sys.time()
           }
         }
@@ -568,7 +542,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
       }
     }, error = function(cond){
       if (grepl("cannot read from connection", conditionMessage(cond))){
-        if (retry_count > 20){
+        if (retry_count > 10){
           message("Download connection failed after too many retries, giving up.")
           stop(conditionMessage(cond))
         }

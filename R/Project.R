@@ -1,5 +1,4 @@
 #' @include User.R api_request.R
-#' @importFrom purrr map
 Project <- setRefClass("Project",
    fields = list(name="character",
                  user="ANY",
