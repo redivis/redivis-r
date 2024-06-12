@@ -109,7 +109,7 @@ perform_parallel_export_download <- function(uri, file_count, download_path, is_
     # oplan <- future::plan(future::sequential)
   }
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
-  on.exit(plan(oplan), add = TRUE)
+  on.exit(future::plan(oplan), add = TRUE)
 
   output_file_paths <- furrr::future_map(1:file_count, function(file_number){
     headers_callback <- NULL
