@@ -128,7 +128,7 @@ parse_curl_headers <- function(res_data){
     split = strsplit(header, ':\\s+')[[1]]
     paste0(tail(split, -1), collapse=':')
   })
-  headers <- set_names(header_contents, header_names)
+  headers <- purrr::set_names(header_contents, header_names)
 }
 
 perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, stop_on_error=TRUE){
@@ -391,7 +391,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
   process_arrow_stream <- function(stream, in_memory_batches=c(), stream_writer=NULL, output_file=NULL, stream_rows_read=0, retry_count=0){
     schema <- get_arrow_schema(variables)
     schema_field_uncased_name_map <- sapply(schema$names, tolower)
-    schema_field_uncased_name_map <- set_names(names(schema_field_uncased_name_map), schema_field_uncased_name_map)
+    schema_field_uncased_name_map <- purrr::set_names(names(schema_field_uncased_name_map), schema_field_uncased_name_map)
 
     # Workaround for self-signed certs in dev
     # h <- curl::new_handle()
@@ -428,7 +428,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
 
         if (final_schema_field_name != field$name){
           stream_reader_schema <- stream_reader$schema
-          rename_config <- set_names(list(list(new_name=final_schema_field_name, index=i)), c(final_schema_field_name))
+          rename_config <- purrr::set_names(list(list(new_name=final_schema_field_name, index=i)), c(final_schema_field_name))
           fields_to_rename <- append(fields_to_rename, rename_config)
         }
         if (coerce_schema && is(field$type, "Time64")){

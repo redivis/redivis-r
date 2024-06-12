@@ -22,7 +22,7 @@ get_arrow_schema <- function(variables){
 
   names <- purrr::map(variables, function(variable) variable$name)
 
-  arrow::schema(set_names(schema, names))
+  arrow::schema(purrr::set_names(schema, names))
 }
 
 get_filename_from_content_disposition <- function(s) {
