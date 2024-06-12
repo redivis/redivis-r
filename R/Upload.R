@@ -1,5 +1,4 @@
 #' @include Table.R Variable.R api_request.R
-#' @importFrom purrr map
 Upload <- setRefClass("Upload",
    fields = list(name="character", table="Table", properties="list"),
    methods = list(

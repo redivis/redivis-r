@@ -1,7 +1,5 @@
 
-#' @importFrom stringr str_interp str_sub
-#' @importFrom httr headers content
-#' @include api_request.R
+#' @include api_request.R util.R
 File <- setRefClass(
   "File",
   fields = list(id = "character"),
@@ -18,7 +16,7 @@ File <- setRefClass(
         is_dir <- TRUE
       } else if (endsWith(path, '/')) {
         is_dir <- TRUE
-        path <- str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
+        path <- stringr::str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
       } else if (dir.exists(path)) {
         is_dir <- TRUE
       }
@@ -36,7 +34,7 @@ File <- setRefClass(
       stream_callback <- NULL
       if (is_dir){
         get_download_path_callback <- function(headers){
-          name <- sub(".*filename=", "", headers$'content-disposition')
+          name <- get_filename_from_content_disposition(headers$'content-disposition')
           file_name <- file.path(path, name)
           if (!overwrite && base::file.exists(file_name)){
             stop(str_interp("File already exists at '${file_name}'. Set parameter overwrite=TRUE to overwrite existing files."))
@@ -64,7 +62,7 @@ File <- setRefClass(
 
     read = function(as_text = FALSE) {
       res <- make_request(method="GET", path=str_interp("/rawFiles/${id}"), parse_response = FALSE)
-      content(res, as = if(as_text) 'text' else 'raw')
+      httr::content(res, as = if(as_text) 'text' else 'raw')
     },
 
     stream = function(callback) {

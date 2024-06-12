@@ -1,8 +1,10 @@
-#' @include Dataset.R Project.R Variable.R util.R api_request.R
-#' @importFrom stringr str_interp
-#' @importFrom pbapply pblapply
-#' @importFrom purrr map
-#' @importFrom sf st_as_sf
+MAX_STREAMING_BYTES <- if (is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset = NA))) {
+  1e9
+} else {
+  1e11
+}
+
+#' @include Dataset.R Project.R Variable.R Export.R util.R api_request.R
 Table <- setRefClass("Table",
    fields = list(name="character", dataset="ANY", project="ANY", properties="list", qualified_reference="character", scoped_reference="character", uri="character"),
 
@@ -123,13 +125,15 @@ Table <- setRefClass("Table",
 
        make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'arrow_dataset',
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
 
      },
@@ -139,13 +143,15 @@ Table <- setRefClass("Table",
 
        make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'arrow_table',
          progress=progress,
          variables = params$variables,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
      },
 
@@ -154,12 +160,14 @@ Table <- setRefClass("Table",
 
        make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'arrow_stream',
          variables = params$variables,
          progress = progress,
-         coerce_schema = params$coerce_schema
+         coerce_schema = params$coerce_schema,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
      },
 
@@ -172,17 +180,19 @@ Table <- setRefClass("Table",
 
        df <- make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'tibble',
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
 
        if (!is.null(params$geography_variable)){
-         st_as_sf(df, wkt=params$geography_variable, crs=4326)
+         sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
        } else {
          df
        }
@@ -197,16 +207,18 @@ Table <- setRefClass("Table",
 
        df <- make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'tibble',
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
 
-       st_as_sf(df, wkt=params$geography_variable, crs=4326)
+       sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
      },
 
      to_data_frame = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
@@ -214,13 +226,15 @@ Table <- setRefClass("Table",
 
        make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'data_frame',
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
      },
 
@@ -229,13 +243,15 @@ Table <- setRefClass("Table",
 
        make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'data_table',
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
      },
 
@@ -264,9 +280,22 @@ Table <- setRefClass("Table",
        })
      },
 
+     download = function(path = NULL, format = 'csv', overwrite = FALSE, progress = TRUE) {
+       res <- make_request(
+         method = "POST",
+         path = paste0(.self$uri, "/exports"),
+         payload = list(format = format)
+       )
+       export_job <- Export$new(table = .self, properties = res)
+
+       res <- export_job$download_files(path = path, overwrite = overwrite, progress=progress)
+
+       return(res)
+     },
+
      download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE){
         if (endsWith(path, '/')) {
-          path <- str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
+          path <- stringr::str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
         }
 
         if (is.null(file_id_variable)){
@@ -300,15 +329,11 @@ Table <- setRefClass("Table",
    )
 )
 
-#' @importFrom future plan multicore multisession sequential
-#' @importFrom parallelly supportsMulticore
-#' @importFrom progressr progressor
-#' @importFrom purrr map
 perform_table_parallel_file_download <- function(vec, path, overwrite){
   pb <- progressr::progressor(steps = length(vec))
   download_paths <- list()
   get_download_path_from_headers <- function(headers){
-    name <- gsub('^"|"$', '', sub(".*filename=", "", headers$'content-disposition'))
+    name <- get_filename_from_content_disposition(headers$'content-disposition')
     file_path <- base::file.path(path, name)
     download_paths <<- append(download_paths, file_path)
     return(file_path)

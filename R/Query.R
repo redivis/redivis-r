@@ -1,5 +1,4 @@
 #' @include Dataset.R Project.R api_request.R
-#' @importFrom sf st_as_sf
 Query <- setRefClass("Query",
   fields = list(query="character", default_dataset="character", default_project="character", properties="list"),
   methods = list(
