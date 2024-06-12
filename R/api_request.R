@@ -124,10 +124,11 @@ parse_curl_headers <- function(res_data){
   header_names <- purrr::map(vec, function(header) {
     tolower(strsplit(header, ':')[[1]][[1]])
   })
-  headers <- purrr::map(vec, function(header) {
+  header_contents <- purrr::map(vec, function(header) {
     split = strsplit(header, ':\\s+')[[1]]
     paste0(tail(split, -1), collapse=':')
-  }) %>% set_names(header_names)
+  })
+  headers <- set_names(header_contents, header_names)
 }
 
 perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, stop_on_error=TRUE){
