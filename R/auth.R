@@ -1,15 +1,14 @@
 library(httr)
 
-auth_vars <- list(
-  redivis_dir = file.path(Sys.getenv("HOME"), ".redivis"),
-  cached_credentials = NULL,
-  verify_ssl = !grepl("https://localhost", Sys.getenv("REDIVIS_API_ENDPOINT", "https://redivis.com"), fixed = TRUE),
-  credentials_file = file.path(file.path(Sys.getenv("HOME"), ".redivis"), "credentials"),
-  scope = 'data.edit',
-  client_id = 'Ah850nGnQg5mFWd25nkyk9Y3',
-  base_url = sub("(https?://.*?)(/|$).*", "\\1", Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com'))
-)
+auth_vars <- new.env()
 
+auth_vars$redivis_dir = file.path(Sys.getenv("HOME"), ".redivis")
+auth_vars$cached_credentials = NULL
+auth_vars$verify_ssl = !grepl("https://localhost", Sys.getenv("REDIVIS_API_ENDPOINT", "https://redivis.com"), fixed = TRUE)
+auth_vars$credentials_file = file.path(file.path(Sys.getenv("HOME"), ".redivis"), "credentials")
+auth_vars$scope = 'data.edit'
+auth_vars$client_id = 'Ah850nGnQg5mFWd25nkyk9Y3'
+auth_vars$base_url = sub("(https?://.*?)(/|$).*", "\\1", Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com'))
 
 get_auth_token <- function() {
   if (!is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA))) {
@@ -22,7 +21,7 @@ This environment variable should only ever be set in a non-interactive environme
     return(Sys.getenv("REDIVIS_API_TOKEN"))
   } else if (is.null(auth_vars$cached_credentials) && file.exists(auth_vars$credentials_file)) {
     tryCatch({
-      auth_vars$cached_credentials <<- jsonlite::fromJSON(readLines(auth_vars$credentials_file))
+      auth_vars$cached_credentials <- jsonlite::fromJSON(readLines(auth_vars$credentials_file))
     }, error = function(e) {
       # ignore
     })
@@ -39,14 +38,14 @@ This environment variable should only ever be set in a non-interactive environme
       dir.create(auth_vars$redivis_dir)
     }
 
-    auth_vars$cached_credentials <<- perform_oauth_login()
+    auth_vars$cached_credentials <- perform_oauth_login()
     write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
     return(auth_vars$cached_credentials$access_token)
   }
 }
 
 clear_cached_credentials <- function() {
-  auth_vars$cached_credentials <<- NULL
+  auth_vars$cached_credentials <- NULL
   if (file.exists(auth_vars$credentials_file)) {
     file.remove(auth_vars$credentials_file)
   }
@@ -141,9 +140,9 @@ refresh_credentials <- function() {
       clear_cached_credentials()
     } else {
       refresh_response <- httr::content(res, "parsed")
-      auth_vars$cached_credentials$access_token <<- refresh_response$access_token
-      auth_vars$cached_credentials$expires_at <<- refresh_response$expires_at
-      auth_vars$cached_credentials$expires_in <<- refresh_response$expires_in
+      auth_vars$cached_credentials$access_token <- refresh_response$access_token
+      auth_vars$cached_credentials$expires_at <- refresh_response$expires_at
+      auth_vars$cached_credentials$expires_in <- refresh_response$expires_in
       write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
     }
   } else {
