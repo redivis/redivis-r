@@ -94,7 +94,7 @@ perform_oauth_login <- function() {
 
     Sys.sleep(ifelse(is.null(parsed_response$interval), 5, parsed_response$interval))
 
-    res <- POST(
+    res <- httr::POST(
       url = paste0(auth_vars$base_url, "/oauth/token"),
       body = list(
         client_id = auth_vars$client_id,
@@ -103,7 +103,7 @@ perform_oauth_login <- function() {
         code_verifier = verifier
       ),
       encode = "form",
-      config = if (auth_vars$verify_ssl) config() else config(ssl_verifypeer = FALSE)
+      config = if (auth_vars$verify_ssl) httr::config() else httr::config(ssl_verifypeer = FALSE)
     )
 
     if (status_code(res) == 200) {
