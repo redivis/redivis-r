@@ -18,8 +18,13 @@ Export <- setRefClass("Export",
       .self
     },
 
-    download_files = function(path = NULL, overwrite = FALSE) {
-      .self$wait_for_finish()
+    download_files = function(path = NULL, overwrite = FALSE, progress=TRUE) {
+      if (progress){
+        progressr::with_progress(.self$wait_for_finish())
+      } else {
+        .self$wait_for_finish()
+      }
+
 
       file_count <- .self$properties$fileCount
       is_dir <- FALSE
@@ -51,17 +56,22 @@ Export <- setRefClass("Export",
         dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
       }
 
-      perform_parallel_export_download(uri=.self$uri, download_path=path, file_count=file_count, is_dir=is_dir, overwrite=overwrite, total_size=.self$properties$size)
+      if (progress){
+        progressr::with_progress(perform_parallel_export_download(uri=.self$uri, download_path=path, file_count=file_count, is_dir=is_dir, overwrite=overwrite, total_size=.self$properties$size))
+      } else {
+        perform_parallel_export_download(uri=.self$uri, download_path=path, file_count=file_count, is_dir=is_dir, overwrite=overwrite, total_size=.self$properties$size)
+      }
+
     },
 
     wait_for_finish = function() {
       iter_count <- 0
-      # pb <- progressr::progressor(steps = 100, message="Preparing download...")
+      pb <- progressr::progressor(steps = 100, message="Preparing download...")
       previous_progress=0
       while (TRUE) {
         if (.self$properties$status == "completed") {
           if (previous_progress != 100){
-            # pb(amount=100 - previous_progress)
+            pb(amount=100 - previous_progress)
           }
           break
         } else if (.self$properties$status == "failed") {
@@ -71,7 +81,7 @@ Export <- setRefClass("Export",
         } else {
           iter_count <- iter_count + 1
           if (round(.self$properties$percentCompleted) > previous_progress){
-            # pb(amount=round(.self$properties$percentCompleted) - previous_progress)
+            pb(amount=round(.self$properties$percentCompleted) - previous_progress)
             previous_progress <- round(.self$properties$percentCompleted)
           }
           Sys.sleep(min(iter_count * 0.5, 2))
