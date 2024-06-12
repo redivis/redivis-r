@@ -1,4 +1,4 @@
-#' @include Table.R api_request.R
+#' @include Table.R api_request.R util.R
 Export <- setRefClass("Export",
   fields = list(table="ANY", properties="list", uri="character"),
   methods = list(
@@ -94,19 +94,6 @@ Export <- setRefClass("Export",
   )
 )
 
-get_filename <- function(s) {
-  fname <- stringr::str_match(s, "filename\\*=([^;]+)")[,2]
-  if (is.na(fname)) {
-    fname <- stringr::str_match(s, "filename=([^;]+)")[,2]
-  }
-  if (grepl("utf-8''", fname, ignore.case = TRUE)) {
-    fname <- URLdecode(sub("utf-8''", '', fname, ignore.case = TRUE))
-  }
-  fname <- stringr::str_trim(fname)
-  fname <- stringr::str_replace_all(fname, '"', '')
-  return(fname)
-}
-
 
 perform_parallel_export_download <- function(uri, file_count, download_path, is_dir, overwrite, total_size){
   pb <- progressr::progressor(steps=total_size)
@@ -130,7 +117,7 @@ perform_parallel_export_download <- function(uri, file_count, download_path, is_
 
     if (is_dir){
       headers_callback <- function(headers){
-        name <- get_filename(headers$'content-disposition')
+        name <- get_filename_from_content_disposition(headers$'content-disposition')
         final_path <<- file.path(download_path, name)
         if (!overwrite && base::file.exists(final_path)){
           stop(str_interp("File already exists at '${final_path}'. Set parameter overwrite=TRUE to overwrite existing files."))

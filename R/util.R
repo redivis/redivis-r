@@ -25,6 +25,19 @@ get_arrow_schema <- function(variables){
   arrow::schema(set_names(schema, names))
 }
 
+get_filename_from_content_disposition <- function(s) {
+  fname <- stringr::str_match(s, "filename\\*=([^;]+)")[,2]
+  if (is.na(fname)) {
+    fname <- stringr::str_match(s, "filename=([^;]+)")[,2]
+  }
+  if (grepl("utf-8''", fname, ignore.case = TRUE)) {
+    fname <- URLdecode(sub("utf-8''", '', fname, ignore.case = TRUE))
+  }
+  fname <- stringr::str_trim(fname)
+  fname <- stringr::str_replace_all(fname, '"', '')
+  return(fname)
+}
+
 perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=NULL) {
   retry_count <- 0
   start_byte <- 0

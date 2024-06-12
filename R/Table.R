@@ -333,7 +333,7 @@ perform_table_parallel_file_download <- function(vec, path, overwrite){
   pb <- progressr::progressor(steps = length(vec))
   download_paths <- list()
   get_download_path_from_headers <- function(headers){
-    name <- gsub('^"|"$', '', sub(".*filename=", "", headers$'content-disposition'))
+    name <- get_filename_from_content_disposition(headers$'content-disposition')
     file_path <- base::file.path(path, name)
     download_paths <<- append(download_paths, file_path)
     return(file_path)

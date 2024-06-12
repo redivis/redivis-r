@@ -1,5 +1,5 @@
 
-#' @include api_request.R
+#' @include api_request.R util.R
 File <- setRefClass(
   "File",
   fields = list(id = "character"),
@@ -34,7 +34,7 @@ File <- setRefClass(
       stream_callback <- NULL
       if (is_dir){
         get_download_path_callback <- function(headers){
-          name <- sub(".*filename=", "", headers$'content-disposition')
+          name <- get_filename_from_content_disposition(headers$'content-disposition')
           file_name <- file.path(path, name)
           if (!overwrite && base::file.exists(file_name)){
             stop(str_interp("File already exists at '${file_name}'. Set parameter overwrite=TRUE to overwrite existing files."))
