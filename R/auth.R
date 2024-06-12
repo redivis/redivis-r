@@ -107,6 +107,7 @@ perform_oauth_login <- function() {
     )
 
     if (httr::status_code(res) == 200) {
+      cat("Authentication was successful!")
       break
     } else if (httr::status_code(res) == 400) {
       error_response <- httr::content(res, "parsed")

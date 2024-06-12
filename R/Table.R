@@ -267,7 +267,8 @@ Table <- setRefClass("Table",
          payload = list(format = format)
        )
        export_job <- Export$new(table = .self, properties = res)
-       res <- export_job$download_files(path = path, overwrite = overwrite, progress=progress)
+
+       res <- export_job$download_files(path = path, overwrite = overwrite, progress=FALSE) # IMPORTANT: progress isn't currently working
 
        return(res)
      },
