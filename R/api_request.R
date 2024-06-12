@@ -86,7 +86,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
       return(make_request(method, query, payload, parse_response, path, download_path, download_overwrite, as_stream, get_download_path_callback, stream_callback, stop_on_error))
     }
 
-    if (!parse_response && status_code(res) < 400){
+    if (!parse_response && httr::status_code(res) < 400){
       return(res)
     }
 

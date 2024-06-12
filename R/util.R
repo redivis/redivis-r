@@ -105,14 +105,14 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
 initiate_resumable_upload <- function(size, temp_upload_url, headers, retry_count=0) {
   tryCatch({
     res <- httr::POST(temp_upload_url,
-                add_headers(
+                httr::add_headers(
                   `x-upload-content-length`=as.character(size),
                   `x-goog-resumable`="start",
                   headers
                 )
     )
 
-    if (status_code(res) >= 400){
+    if (httr::status_code(res) >= 400){
       # stop_for_status also fails for redirects
       httr::stop_for_status(res)
     }
@@ -131,7 +131,7 @@ retry_partial_upload <- function(retry_count=0, file_size, resumable_url, header
   tryCatch({
     res <- httr::PUT(url=resumable_url,
                body="",
-               add_headers(headers, c(`Content-Length`="0", `Content-Range`=sprintf("bytes */%s", file_size))))
+               httr::add_headers(headers, c(`Content-Length`="0", `Content-Range`=sprintf("bytes */%s", file_size))))
     if(res$status_code == 404) {
       return(0)
     }
@@ -173,8 +173,8 @@ perform_standard_upload <- function(file_path, temp_upload_url=NULL, proxy_url=N
     }
 
     # Perform the HTTP PUT request
-    res <- httr::PUT(url = temp_upload_url, body = prepared_upload, add_headers(headers))
-    if (status_code(res) >= 400){
+    res <- httr::PUT(url = temp_upload_url, body = prepared_upload, httr::add_headers(headers))
+    if (httr::status_code(res) >= 400){
       # stop_for_status also fails for redirects
       httr::stop_for_status(res)
     }

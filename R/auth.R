@@ -106,9 +106,9 @@ perform_oauth_login <- function() {
       config = if (auth_vars$verify_ssl) httr::config() else httr::config(ssl_verifypeer = FALSE)
     )
 
-    if (status_code(res) == 200) {
+    if (httr::status_code(res) == 200) {
       break
-    } else if (status_code(res) == 400) {
+    } else if (httr::status_code(res) == 400) {
       error_response <- content(res, "parsed")
       if (error_response$error == 'authorization_pending') {
         # authorization pending
@@ -136,7 +136,7 @@ refresh_credentials <- function() {
       config = if (auth_vars$verify_ssl) httr::config() else httr::config(ssl_verifypeer = FALSE)
     )
 
-    if (status_code(res) >= 400) {
+    if (httr::status_code(res) >= 400) {
       clear_cached_credentials()
     } else {
       refresh_response <- httr::content(res, "parsed")
