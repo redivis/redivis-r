@@ -30,23 +30,23 @@ This environment variable should only ever be set in a non-interactive environme
 
   if (!is.null(auth_vars$cached_credentials) && "expires_at" %in% names(auth_vars$cached_credentials) && "access_token" %in% names(auth_vars$cached_credentials)) {
     if (auth_vars$cached_credentials$expires_at < (as.numeric(Sys.time()) - 5 * 60)) {
-      return(refresh_credentials())
-    } else {
-      return(auth_vars$cached_credentials$access_token)
+      refresh_credentials()
     }
+
+    return(auth_vars$cached_credentials$access_token)
   } else {
     if (!dir.exists(auth_vars$redivis_dir)) {
       dir.create(auth_vars$redivis_dir)
     }
 
-    auth_vars$cached_credentials <- perform_oauth_login()
+    auth_vars$cached_credentials <<- perform_oauth_login()
     write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
     return(auth_vars$cached_credentials$access_token)
   }
 }
 
 clear_cached_credentials <- function() {
-  auth_vars$cached_credentials <- NULL
+  auth_vars$cached_credentials <<- NULL
   if (file.exists(auth_vars$credentials_file)) {
     file.remove(auth_vars$credentials_file)
   }
@@ -125,6 +125,7 @@ perform_oauth_login <- function() {
 }
 
 refresh_credentials <- function() {
+  cat('refreshing!')
   if (!is.null(auth_vars$cached_credentials$refresh_token)) {
     res <- httr::POST(
       url = paste0(auth_vars$base_url, "/oauth/token"),
@@ -141,9 +142,9 @@ refresh_credentials <- function() {
       clear_cached_credentials()
     } else {
       refresh_response <- httr::content(res, "parsed")
-      auth_vars$cached_credentials$access_token <- refresh_response$access_token
-      auth_vars$cached_credentials$expires_at <- refresh_response$expires_at
-      auth_vars$cached_credentials$expires_in <- refresh_response$expires_in
+      auth_vars$cached_credentials$access_token <<- refresh_response$access_token
+      auth_vars$cached_credentials$expires_at <<- refresh_response$expires_at
+      auth_vars$cached_credentials$expires_in <<- refresh_response$expires_in
       write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
     }
   } else {

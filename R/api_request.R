@@ -1,6 +1,6 @@
 
 #' @include auth.R
-make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, headers_callback=NULL, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE, on_progress=NULL){
+make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, headers_callback=NULL, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE){
   # IMPORTANT: if updating the function signature, make sure to also pass to the two scenarios where we retry on 401 status
 
   if (!is.null(stream_callback) || !is.null(get_download_path_callback)){
@@ -29,7 +29,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
       if (res_data$status_code >= 400){
         if (res_data$status_code == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
           refresh_credentials()
-          return(make_request(method, query, payload, parse_response, path, download_path, download_overwrite, as_stream, get_download_path_callback, stream_callback, stop_on_error))
+          return(make_request(method, query, payload, parse_response, path, download_path, download_overwrite, as_stream, headers_callback, get_download_path_callback, stream_callback, stop_on_error))
         }
         if (stop_on_error){
           stop(str_interp("Received HTTP status ${res_data$status_code} for path ${url}"))
@@ -141,7 +141,6 @@ perform_parallel_download <- function(paths, overwrite, get_download_path_from_h
     curl::handle_setopt(h, "url"=url)
 
     fail_fn <- function(e){
-      print(e)
       stop(e)
     }
     curl::multi_add(h, fail = fail_fn, data = parallel_download_data_cb_factory(h, url, get_download_path_from_headers, overwrite, on_finish, stop_on_error), pool = pool)
