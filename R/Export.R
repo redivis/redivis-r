@@ -67,12 +67,13 @@ Export <- setRefClass("Export",
 
     wait_for_finish = function() {
       iter_count <- 0
-      pb <- progressr::progressor(steps = 100, message="Preparing download...")
+      pb <- progressr::progressor(steps = 100)
+      pb(message="Preparing download...")
       previous_progress=0
       while (TRUE) {
         if (.self$properties$status == "completed") {
           if (previous_progress != 100){
-            pb(amount=100 - previous_progress)
+            pb(amount=100 - previous_progress, message="Preparing download...")
           }
           break
         } else if (.self$properties$status == "failed") {
@@ -82,7 +83,7 @@ Export <- setRefClass("Export",
         } else {
           iter_count <- iter_count + 1
           if (round(.self$properties$percentCompleted) > previous_progress){
-            pb(amount=round(.self$properties$percentCompleted) - previous_progress)
+            pb(amount=round(.self$properties$percentCompleted) - previous_progress, message="Preparing download...")
             previous_progress <- round(.self$properties$percentCompleted)
           }
           Sys.sleep(min(iter_count * 0.5, 2))

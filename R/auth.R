@@ -125,7 +125,6 @@ perform_oauth_login <- function() {
 }
 
 refresh_credentials <- function() {
-  cat('refreshing!')
   if (!is.null(auth_vars$cached_credentials$refresh_token)) {
     res <- httr::POST(
       url = paste0(auth_vars$base_url, "/oauth/token"),

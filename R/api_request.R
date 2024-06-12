@@ -289,7 +289,7 @@ RedivisBatchReader <- setRefClass(
 )
 
 
-make_rows_request <- function(uri, max_results=NULL, selected_variable_names = NULL, type = 'tibble', variables = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL){
+make_rows_request <- function(uri, max_results=NULL, selected_variable_names = NULL, type = 'tibble', variables = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL, table=NULL, use_export_api=FALSE){
   read_session <- make_request(
     method="post",
     path=str_interp("${uri}/readSessions"),
@@ -301,6 +301,8 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
         "requestedStreamCount"=if (type == 'arrow_stream') 1 else min(8, parallelly::availableCores())
     )
   )
+
+  use_export_api <- use_export_api && !is.null(table) && type != 'arrow_stream' && is.null(selected_variable_names) && is.null(batch_preprocessor) && is.null(max_results)
 
   if (type == 'arrow_stream'){
     reader = RedivisBatchReader$new(
@@ -326,17 +328,20 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
     }
   }
 
-  if (progress){
+  if (use_export_api){
+    table$download(folder, format='parquet', progress=progress)
+  } else if (progress){
     result <- progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor))
   } else {
     result <- parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor)
   }
 
+  ds <- arrow::open_dataset(folder, format = if (use_export_api) "parquet" else "feather", schema = if (is.null(batch_preprocessor) && !use_export_api) get_arrow_schema(variables) else NULL)
+
   # TODO: remove head() once BE is sorted
   if (type == 'arrow_dataset'){
-    arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) get_arrow_schema(variables) else NULL)
+    return(ds)
   } else {
-    ds <- arrow::open_dataset(folder, format = "feather", schema = if (is.null(batch_preprocessor)) get_arrow_schema(variables) else NULL)
     if (type == 'arrow_table'){
       arrow::as_arrow_table(ds)
     }else if (type == 'tibble'){

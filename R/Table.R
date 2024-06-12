@@ -1,3 +1,9 @@
+MAX_STREAMING_BYTES <- if (is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset = NA))) {
+  1e9
+} else {
+  1e11
+}
+
 #' @include Dataset.R Project.R Variable.R Export.R util.R api_request.R
 Table <- setRefClass("Table",
    fields = list(name="character", dataset="ANY", project="ANY", properties="list", qualified_reference="character", scoped_reference="character", uri="character"),
@@ -119,13 +125,15 @@ Table <- setRefClass("Table",
 
        make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'arrow_dataset',
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
 
      },
@@ -135,13 +143,15 @@ Table <- setRefClass("Table",
 
        make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'arrow_table',
          progress=progress,
          variables = params$variables,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
      },
 
@@ -150,12 +160,14 @@ Table <- setRefClass("Table",
 
        make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'arrow_stream',
          variables = params$variables,
          progress = progress,
-         coerce_schema = params$coerce_schema
+         coerce_schema = params$coerce_schema,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
      },
 
@@ -168,13 +180,15 @@ Table <- setRefClass("Table",
 
        df <- make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'tibble',
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
 
        if (!is.null(params$geography_variable)){
@@ -193,13 +207,15 @@ Table <- setRefClass("Table",
 
        df <- make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'tibble',
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
 
        sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
@@ -210,13 +226,15 @@ Table <- setRefClass("Table",
 
        make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'data_frame',
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
      },
 
@@ -225,13 +243,15 @@ Table <- setRefClass("Table",
 
        make_rows_request(
          uri=params$uri,
+         table=.self,
          max_results=params$max_results,
          selected_variable_names = params$selected_variable_names,
          type = 'data_table',
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         batch_preprocessor = batch_preprocessor
+         batch_preprocessor = batch_preprocessor,
+         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
        )
      },
 
