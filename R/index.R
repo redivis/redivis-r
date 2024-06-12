@@ -122,7 +122,7 @@ authenticate <- function(force_reauthentication=FALSE) {
     clear_cached_credentials()
   }
   get_auth_token()
-  return()
+  invisible(NULL)
 }
 
 

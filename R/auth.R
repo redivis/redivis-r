@@ -1,6 +1,6 @@
 library(httr)
 
-auth_vars <- new.env()
+auth_vars <- new.env(parent = emptyenv())
 
 auth_vars$redivis_dir = file.path(Sys.getenv("HOME"), ".redivis")
 auth_vars$cached_credentials = NULL
