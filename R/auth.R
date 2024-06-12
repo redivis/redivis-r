@@ -109,18 +109,18 @@ perform_oauth_login <- function() {
     if (httr::status_code(res) == 200) {
       break
     } else if (httr::status_code(res) == 400) {
-      error_response <- content(res, "parsed")
+      error_response <- httr::content(res, "parsed")
       if (error_response$error == 'authorization_pending') {
         # authorization pending
       } else {
         stop(error_response)
       }
     } else {
-      stop(content(res, "parsed"))
+      stop(httr::content(res, "parsed"))
     }
   }
 
-  return(content(res, "parsed"))
+  return(httr::content(res, "parsed"))
 }
 
 refresh_credentials <- function() {
