@@ -56,7 +56,8 @@ Export <- setRefClass("Export",
         dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
       }
 
-      if (progress){
+      # IMPORTANT: progress isn't currently working here
+      if (progress && FALSE){
         progressr::with_progress(perform_parallel_export_download(uri=.self$uri, download_path=path, file_count=file_count, is_dir=is_dir, overwrite=overwrite, total_size=.self$properties$size))
       } else {
         perform_parallel_export_download(uri=.self$uri, download_path=path, file_count=file_count, is_dir=is_dir, overwrite=overwrite, total_size=.self$properties$size)
