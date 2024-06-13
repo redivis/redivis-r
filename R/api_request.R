@@ -131,8 +131,8 @@ parse_curl_headers <- function(res_data){
   headers <- purrr::set_names(header_contents, header_names)
 }
 
-perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, stop_on_error=TRUE){
-  pool <- curl::new_pool()
+perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, max_parallelization=100, stop_on_error=TRUE){
+  pool <- curl::new_pool(total_con=max_parallelization)
   handles = list()
   for (path in paths){
     h <- curl::new_handle()
@@ -290,7 +290,7 @@ RedivisBatchReader <- setRefClass(
 )
 
 
-make_rows_request <- function(uri, max_results=NULL, selected_variable_names = NULL, type = 'tibble', variables = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL, table=NULL, use_export_api=FALSE){
+make_rows_request <- function(uri, max_results=NULL, selected_variable_names = NULL, type = 'tibble', variables = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL, table=NULL, use_export_api=FALSE, max_parallelization=parallelly::availableCores()){
   read_session <- make_request(
     method="post",
     path=str_interp("${uri}/readSessions"),
@@ -299,9 +299,12 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
         "maxResults"=max_results,
         "selectedVariables"=selected_variable_names,
         "format"="arrow",
-        "requestedStreamCount"=if (type == 'arrow_stream') 1 else min(8, parallelly::availableCores())
+        "requestedStreamCount"=if (type == 'arrow_stream') 1 else min(8, max_parallelization)
     )
   )
+
+  arrow::set_cpu_count(max_parallelization)
+  arrow::set_io_thread_count(max_parallelization)
 
   use_export_api <- use_export_api && !is.null(table) && type != 'arrow_stream' && is.null(selected_variable_names) && is.null(batch_preprocessor) && is.null(max_results)
 
@@ -332,9 +335,9 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
   if (use_export_api){
     table$download(folder, format='parquet', progress=progress)
   } else if (progress){
-    result <- progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor))
+    result <- progressr::with_progress(parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor, max_parallelization))
   } else {
-    result <- parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor)
+    result <- parallel_stream_arrow(folder, read_session$streams, max_results=read_session$numRows, variables, coerce_schema, batch_preprocessor, max_parallelization)
   }
 
   ds <- arrow::open_dataset(folder, format = if (use_export_api) "parquet" else "feather", schema = if (is.null(batch_preprocessor) && !use_export_api) get_arrow_schema(variables) else NULL)
@@ -366,7 +369,7 @@ get_authorization_header <- function(){
 }
 
 
-parallel_stream_arrow <- function(folder, streams, max_results, variables, coerce_schema, batch_preprocessor){
+parallel_stream_arrow <- function(folder, streams, max_results, variables, coerce_schema, batch_preprocessor, max_parallelization){
   if (!length(streams)){
     return();
   }
@@ -374,7 +377,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
   pb <- progressr::progressor(steps = max_results)
 
   headers <- get_authorization_header()
-  worker_count <- min(8, length(streams), parallelly::availableCores())
+  worker_count <- min(8, length(streams), parallelly::availableCores(), max_parallelization)
 
   if (parallelly::supportsMulticore()){
     oplan <- future::plan(future::multicore, workers = worker_count)

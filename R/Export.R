@@ -18,7 +18,7 @@ Export <- setRefClass("Export",
       .self
     },
 
-    download_files = function(path = NULL, overwrite = FALSE, progress=TRUE) {
+    download_files = function(path = NULL, overwrite = FALSE, progress=TRUE, max_parallelization) {
       if (progress){
         progressr::with_progress(.self$wait_for_finish())
       } else {
@@ -58,9 +58,9 @@ Export <- setRefClass("Export",
 
       # IMPORTANT: progress isn't currently working here
       if (progress && FALSE){
-        progressr::with_progress(perform_parallel_export_download(uri=.self$uri, download_path=path, file_count=file_count, is_dir=is_dir, overwrite=overwrite, total_size=.self$properties$size))
+        progressr::with_progress(perform_parallel_export_download(uri=.self$uri, download_path=path, file_count=file_count, is_dir=is_dir, overwrite=overwrite, total_size=.self$properties$size, max_parallelization=max_parallelization))
       } else {
-        perform_parallel_export_download(uri=.self$uri, download_path=path, file_count=file_count, is_dir=is_dir, overwrite=overwrite, total_size=.self$properties$size)
+        perform_parallel_export_download(uri=.self$uri, download_path=path, file_count=file_count, is_dir=is_dir, overwrite=overwrite, total_size=.self$properties$size, max_parallelization=max_parallelization)
       }
 
     },
@@ -95,11 +95,11 @@ Export <- setRefClass("Export",
 )
 
 
-perform_parallel_export_download <- function(uri, file_count, download_path, is_dir, overwrite, total_size){
+perform_parallel_export_download <- function(uri, file_count, download_path, is_dir, overwrite, total_size, max_parallelization){
   pb <- progressr::progressor(steps=total_size)
 
   output_file_paths <- list()
-  worker_count <- min(8, parallelly::availableCores(), file_count)
+  worker_count <- min(8, parallelly::availableCores(), file_count, max_parallelization)
   if (parallelly::supportsMulticore()){
     oplan <- future::plan(future::multicore, workers = worker_count)
   } else {

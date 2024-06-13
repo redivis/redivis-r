@@ -115,7 +115,7 @@ Table <- setRefClass("Table",
        .self
      },
 
-     to_arrow_dataset = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL){
+     to_arrow_dataset = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()){
        params <- get_table_request_params(.self, max_results, variables)
 
        make_rows_request(
@@ -128,12 +128,13 @@ Table <- setRefClass("Table",
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=params$use_export_api
+         use_export_api=params$use_export_api,
+         max_parallelization=max_parallelization
        )
 
      },
 
-     to_arrow_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
+     to_arrow_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
        params <- get_table_request_params(.self, max_results, variables)
 
        make_rows_request(
@@ -146,11 +147,12 @@ Table <- setRefClass("Table",
          variables = params$variables,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=params$use_export_api
+         use_export_api=params$use_export_api,
+         max_parallelization=max_parallelization
        )
      },
 
-     to_arrow_batch_reader = function(max_results=NULL, variables=NULL, progress=TRUE) {
+     to_arrow_batch_reader = function(max_results=NULL, variables=NULL, progress=TRUE, max_parallelization=parallelly::availableCores()) {
        params <- get_table_request_params(.self, max_results, variables)
 
        make_rows_request(
@@ -162,11 +164,12 @@ Table <- setRefClass("Table",
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         use_export_api=params$use_export_api
+         use_export_api=params$use_export_api,
+         max_parallelization=max_parallelization
        )
      },
 
-     to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL) {
+     to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
        params <- get_table_request_params(.self, max_results, variables, geography_variable)
 
        if (!is.null(params$geography_variable)){
@@ -183,7 +186,8 @@ Table <- setRefClass("Table",
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=params$use_export_api
+         use_export_api=params$use_export_api,
+         max_parallelization=max_parallelization
        )
 
        if (!is.null(params$geography_variable)){
@@ -193,7 +197,7 @@ Table <- setRefClass("Table",
        }
      },
 
-     to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL) {
+     to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
        params <- get_table_request_params(.self, max_results, variables, geography_variable)
 
        if (is.null(params$geography_variable)){
@@ -210,13 +214,14 @@ Table <- setRefClass("Table",
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=params$use_export_api
+         use_export_api=params$use_export_api,
+         max_parallelization=max_parallelization
        )
 
        sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
      },
 
-     to_data_frame = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
+     to_data_frame = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
        params <- get_table_request_params(.self, max_results, variables)
 
        make_rows_request(
@@ -229,11 +234,12 @@ Table <- setRefClass("Table",
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=params$use_export_api
+         use_export_api=params$use_export_api,
+         max_parallelization=max_parallelization
        )
      },
 
-     to_data_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
+     to_data_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
        params <- get_table_request_params(.self, max_results, variables)
 
        make_rows_request(
@@ -246,7 +252,8 @@ Table <- setRefClass("Table",
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=params$use_export_api
+         use_export_api=params$use_export_api,
+         max_parallelization=max_parallelization
        )
      },
 
@@ -275,7 +282,7 @@ Table <- setRefClass("Table",
        })
      },
 
-     download = function(path = NULL, format = 'csv', overwrite = FALSE, progress = TRUE) {
+     download = function(path = NULL, format = 'csv', overwrite = FALSE, progress = TRUE, max_parallelization=parallelly::availableCores()) {
        res <- make_request(
          method = "POST",
          path = paste0(.self$uri, "/exports"),
@@ -283,12 +290,12 @@ Table <- setRefClass("Table",
        )
        export_job <- Export$new(table = .self, properties = res)
 
-       res <- export_job$download_files(path = path, overwrite = overwrite, progress=progress)
+       res <- export_job$download_files(path = path, overwrite = overwrite, progress=progress, max_parallelization=max_parallelization)
 
        return(res)
      },
 
-     download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE){
+     download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE, max_parallelization=100){
         if (endsWith(path, '/')) {
           path <- stringr::str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
         }
@@ -316,15 +323,15 @@ Table <- setRefClass("Table",
         if (!dir.exists(path)) dir.create(path, recursive = TRUE)
 
         if (progress){
-          progressr::with_progress(perform_table_parallel_file_download(df[[file_id_variable]], path, overwrite))
+          progressr::with_progress(perform_table_parallel_file_download(df[[file_id_variable]], path, overwrite, max_parallelization))
         } else {
-          perform_table_parallel_file_download(df[[file_id_variable]], path, overwrite)
+          perform_table_parallel_file_download(df[[file_id_variable]], path, overwrite, max_parallelization)
         }
       }
    )
 )
 
-perform_table_parallel_file_download <- function(vec, path, overwrite){
+perform_table_parallel_file_download <- function(vec, path, overwrite, max_parallelization){
   pb <- progressr::progressor(steps = length(vec))
   download_paths <- list()
   get_download_path_from_headers <- function(headers){
@@ -337,7 +344,8 @@ perform_table_parallel_file_download <- function(vec, path, overwrite){
     purrr::map(vec, function(id){str_interp("/rawFiles/${id}?allowRedirect=true")}),
     overwrite=overwrite,
     get_download_path_from_headers=get_download_path_from_headers,
-    on_finish=function(){pb(1)}
+    on_finish=function(){pb(1)},
+    max_parallelization
   );
   return(download_paths)
 }
