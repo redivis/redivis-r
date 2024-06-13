@@ -4,11 +4,7 @@
 \alias{query}
 \title{query}
 \usage{
-query(
-  query = "",
-  default_project = Sys.getenv("REDIVIS_DEFAULT_PROJECT"),
-  default_dataset = Sys.getenv("REDIVIS_DEFAULT_DATASET")
-)
+query(query = "", default_project = NULL, default_dataset = NULL)
 }
 \arguments{
 \item{query}{The query string to execute}
