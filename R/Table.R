@@ -152,7 +152,7 @@ Table <- setRefClass("Table",
        )
      },
 
-     to_arrow_batch_reader = function(max_results=NULL, variables=NULL, progress=TRUE, max_parallelization=parallelly::availableCores()) {
+     to_arrow_batch_reader = function(max_results=NULL, variables=NULL, progress=TRUE) {
        params <- get_table_request_params(.self, max_results, variables)
 
        make_rows_request(
@@ -164,8 +164,7 @@ Table <- setRefClass("Table",
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         use_export_api=params$use_export_api,
-         max_parallelization=max_parallelization
+         use_export_api=params$use_export_api
        )
      },
 
@@ -282,7 +281,7 @@ Table <- setRefClass("Table",
        })
      },
 
-     download = function(path = NULL, format = 'csv', overwrite = FALSE, progress = TRUE, max_parallelization=parallelly::availableCores()) {
+     download = function(path = NULL, format = 'csv', overwrite = FALSE, progress = TRUE) {
        res <- make_request(
          method = "POST",
          path = paste0(.self$uri, "/exports"),
@@ -290,7 +289,7 @@ Table <- setRefClass("Table",
        )
        export_job <- Export$new(table = .self, properties = res)
 
-       res <- export_job$download_files(path = path, overwrite = overwrite, progress=progress, max_parallelization=max_parallelization)
+       res <- export_job$download_files(path = path, overwrite = overwrite, progress=progress)
 
        return(res)
      },

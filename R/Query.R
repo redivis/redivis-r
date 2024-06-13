@@ -50,7 +50,7 @@ Query <- setRefClass("Query",
       )
     },
 
-    to_arrow_batch_reader = function(max_results=NULL, variables=NULL, progress=TRUE, max_parallelization=parallelly::availableCores()) {
+    to_arrow_batch_reader = function(max_results=NULL, variables=NULL, progress=TRUE) {
       params <- get_query_request_params(.self, max_results, variables)
 
       make_rows_request(
@@ -61,8 +61,7 @@ Query <- setRefClass("Query",
         progress=progress,
         variables = params$variables,
         progress = progress,
-        coerce_schema = params$coerce_schema,
-        max_parallelization = max_parallelization
+        coerce_schema = params$coerce_schema
       )
     },
 
