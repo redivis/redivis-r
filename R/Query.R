@@ -18,7 +18,7 @@ Query <- setRefClass("Query",
       .self$properties <- make_request(method='POST', path="/queries", payload=payload)
     },
 
-    to_arrow_dataset = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL){
+    to_arrow_dataset = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()){
       params <- get_query_request_params(.self, max_results, variables)
 
       make_rows_request(
@@ -29,11 +29,12 @@ Query <- setRefClass("Query",
         variables = params$variables,
         progress = progress,
         coerce_schema = params$coerce_schema,
-        batch_preprocessor = batch_preprocessor
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization = max_parallelization
       )
     },
 
-    to_arrow_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
+    to_arrow_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
       params <- get_query_request_params(.self, max_results, variables)
 
       make_rows_request(
@@ -44,11 +45,12 @@ Query <- setRefClass("Query",
         variables = params$variables,
         progress=progress,
         coerce_schema = params$coerce_schema,
-        batch_preprocessor = batch_preprocessor
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization = max_parallelization
       )
     },
 
-    to_arrow_batch_reader = function(max_results=NULL, variables=NULL, progress=TRUE) {
+    to_arrow_batch_reader = function(max_results=NULL, variables=NULL, progress=TRUE, max_parallelization=parallelly::availableCores()) {
       params <- get_query_request_params(.self, max_results, variables)
 
       make_rows_request(
@@ -59,11 +61,12 @@ Query <- setRefClass("Query",
         progress=progress,
         variables = params$variables,
         progress = progress,
-        coerce_schema = params$coerce_schema
+        coerce_schema = params$coerce_schema,
+        max_parallelization = max_parallelization
       )
     },
 
-    to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL) {
+    to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
       params <- get_query_request_params(.self, max_results, variables, geography_variable)
 
       if (!is.null(params$geography_variable)){
@@ -78,7 +81,8 @@ Query <- setRefClass("Query",
         progress=progress,
         variables = params$variables,
         coerce_schema = params$coerce_schema,
-        batch_preprocessor = batch_preprocessor
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization = max_parallelization
       )
 
       if (!is.null(params$geography_variable)){
@@ -88,7 +92,7 @@ Query <- setRefClass("Query",
       }
     },
 
-    to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL) {
+    to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
       params <- get_query_request_params(.self, max_results, variables, geography_variable)
 
       if (is.null(params$geography_variable)){
@@ -103,13 +107,14 @@ Query <- setRefClass("Query",
         variables = params$variables,
         progress=progress,
         coerce_schema = params$coerce_schema,
-        batch_preprocessor = batch_preprocessor
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization = max_parallelization
       )
 
       sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
     },
 
-    to_data_frame = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
+    to_data_frame = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
       params <- get_query_request_params(.self, max_results, variables)
 
       make_rows_request(
@@ -120,11 +125,12 @@ Query <- setRefClass("Query",
         progress=progress,
         variables = params$variables,
         coerce_schema = params$coerce_schema,
-        batch_preprocessor = batch_preprocessor
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization = max_parallelization
       )
     },
 
-    to_data_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL) {
+    to_data_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
       params <- get_query_request_params(.self, max_results, variables)
 
       make_rows_request(
@@ -135,7 +141,8 @@ Query <- setRefClass("Query",
         progress=progress,
         variables = params$variables,
         coerce_schema = params$coerce_schema,
-        batch_preprocessor = batch_preprocessor
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization = max_parallelization
       )
     }
   )
