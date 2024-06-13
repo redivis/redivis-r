@@ -1,8 +1,3 @@
-MAX_STREAMING_BYTES <- if (is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset = NA))) {
-  1e9
-} else {
-  1e11
-}
 
 #' @include Dataset.R Project.R Variable.R Export.R util.R api_request.R
 Table <- setRefClass("Table",
@@ -133,7 +128,7 @@ Table <- setRefClass("Table",
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
+         use_export_api=params$use_export_api
        )
 
      },
@@ -151,7 +146,7 @@ Table <- setRefClass("Table",
          variables = params$variables,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
+         use_export_api=params$use_export_api
        )
      },
 
@@ -167,7 +162,7 @@ Table <- setRefClass("Table",
          variables = params$variables,
          progress = progress,
          coerce_schema = params$coerce_schema,
-         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
+         use_export_api=params$use_export_api
        )
      },
 
@@ -188,7 +183,7 @@ Table <- setRefClass("Table",
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
+         use_export_api=params$use_export_api
        )
 
        if (!is.null(params$geography_variable)){
@@ -215,7 +210,7 @@ Table <- setRefClass("Table",
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
+         use_export_api=params$use_export_api
        )
 
        sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
@@ -234,7 +229,7 @@ Table <- setRefClass("Table",
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
+         use_export_api=params$use_export_api
        )
      },
 
@@ -251,7 +246,7 @@ Table <- setRefClass("Table",
          progress = progress,
          coerce_schema = params$coerce_schema,
          batch_preprocessor = batch_preprocessor,
-         use_export_api=.self$properties$numBytes > MAX_STREAMING_BYTES
+         use_export_api=params$use_export_api
        )
      },
 
@@ -391,12 +386,19 @@ get_table_request_params = function(self, max_results, variables, geography_vari
     }
   }
 
+  max_streaming_bytes <- if (is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset = NA))) {
+    1e9
+  } else {
+    1e11
+  }
+
   list(
     "max_results" = max_results,
     "uri" = self$uri,
     "selected_variable_names" = selected_variable_names,
     "variables"=variables_list,
     "geography_variable"=geography_variable,
-    "coerce_schema"=self$properties$container$kind == 'dataset'
+    "coerce_schema"=self$properties$container$kind == 'dataset',
+    "use_export_api"=self$properties$numBytes > max_streaming_bytes
   )
 }
