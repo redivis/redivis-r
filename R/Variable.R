@@ -30,10 +30,10 @@ Variable <- setRefClass("Variable",
     exists = function(){
       res <- make_request(method="HEAD", path=.self$uri, stop_on_error=FALSE)
       if (length(res$error)){
-        if (res$error$status == 404){
+        if (res$status == 404){
           return(FALSE)
         } else {
-          stop(res$error$message)
+          stop(res$error)
         }
       } else {
         return(TRUE)

@@ -45,14 +45,17 @@ Dataset <- setRefClass("Dataset",
       } else {
         path <- str_interp("/organizations/${.self$organization$name}/datasets")
       }
+
+      payload = list(name=.self$name, publicAccessLevel=public_access_level)
+
+      if (!is.null(description)){
+        payload$description = description
+      }
+
       res <- make_request(
         method="POST",
         path=path,
-        payload=list(
-          "name"=.self$name,
-          "publicAccessLevel"=public_access_level,
-          "description"= description
-        )
+        payload=payload
       )
       update_dataset_properties(.self, res)
       .self
@@ -84,10 +87,10 @@ Dataset <- setRefClass("Dataset",
   exists = function(){
     res <- make_request(method="HEAD", path=.self$uri, stop_on_error=FALSE)
     if (length(res$error)){
-      if (res$error$status == 404){
+      if (res$status == 404){
         return(FALSE)
       } else {
-        stop(res$error$message)
+        stop(res$message)
       }
     } else {
       return(TRUE)

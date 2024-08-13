@@ -77,7 +77,7 @@ Export <- setRefClass("Export",
           }
           break
         } else if (.self$properties$status == "failed") {
-          stop(sprintf("Export job failed with message: %s", .self$properties$message))
+          stop(sprintf("Export job failed with message: %s", .self$properties$errorMessage))
         } else if (.self$properties$status == "cancelled") {
           stop("Export job was cancelled")
         } else {

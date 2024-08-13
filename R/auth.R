@@ -21,7 +21,12 @@ This environment variable should only ever be set in a non-interactive environme
     return(Sys.getenv("REDIVIS_API_TOKEN"))
   } else if (is.null(auth_vars$cached_credentials) && file.exists(auth_vars$credentials_file)) {
     tryCatch({
-      auth_vars$cached_credentials <- jsonlite::fromJSON(readLines(auth_vars$credentials_file))
+      auth_vars$cached_credentials <- jsonlite::fromJSON(
+        readLines(
+          auth_vars$credentials_file,
+          warn=FALSE # Otherwise will print a warning since there's not a line break at the end
+        )
+      )
     }, error = function(e) {
       # ignore
     })

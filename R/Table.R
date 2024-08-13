@@ -32,10 +32,10 @@ Table <- setRefClass("Table",
      exists = function(){
        res <- make_request(method="HEAD", path=.self$uri, stop_on_error=FALSE)
        if (length(res$error)){
-         if (res$error$status == 404){
+         if (res$status == 404){
            return(FALSE)
          } else {
-           stop(res$error$message)
+           stop(res$error)
          }
        } else {
          return(TRUE)
@@ -101,15 +101,18 @@ Table <- setRefClass("Table",
      # },
 
      create = function(description=NULL, upload_merge_strategy="append", is_file_index=FALSE){
+       payload = list(
+         "name"=.self$name,
+         "uploadMergeStrategy"=upload_merge_strategy,
+         "isFileIndex"=is_file_index
+       )
+       if (!is.null(description)){
+         payload$description <- description
+       }
        res <- make_request(
          method="POST",
          path=str_interp("${.self$dataset$uri}/tables"),
-         payload=list(
-           "name"=.self$name,
-           "description"=description,
-           "uploadMergeStrategy"=upload_merge_strategy,
-           "isFileIndex"=is_file_index
-         )
+         payload=payload
        )
        update_table_properties(.self, res)
        .self

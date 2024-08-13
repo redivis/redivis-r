@@ -108,7 +108,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
 
     if (httr::status_code(res) >= 400 && stop_on_error){
       if (is_json){
-        stop(response_content$error$message)
+        stop(response_content$error)
       } else {
         stop(response_content)
       }
@@ -291,22 +291,28 @@ RedivisBatchReader <- setRefClass(
 
 
 make_rows_request <- function(uri, max_results=NULL, selected_variable_names = NULL, type = 'tibble', variables = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL, table=NULL, use_export_api=FALSE, max_parallelization=parallelly::availableCores()){
-  read_session <- make_request(
-    method="post",
-    path=str_interp("${uri}/readSessions"),
-    parse_response=TRUE,
-    payload=list(
-        "maxResults"=max_results,
-        "selectedVariables"=selected_variable_names,
-        "format"="arrow",
-        "requestedStreamCount"=if (type == 'arrow_stream') 1 else min(8, max_parallelization)
-    )
-  )
+  payload = list("requestedStreamCount"=if (type == 'arrow_stream') 1 else min(8, max_parallelization), format="arrow")
+
+  if (!is.null(max_results)){
+    payload$maxResults = max_results
+  }
+  if (!is.null(selected_variable_names)){
+    payload$selectedVariables = selected_variable_names
+  }
 
   arrow::set_cpu_count(max_parallelization)
-  arrow::set_io_thread_count(max_parallelization)
+  arrow::set_io_thread_count(max(max_parallelization,2))
 
   use_export_api <- use_export_api && !is.null(table) && type != 'arrow_stream' && is.null(selected_variable_names) && is.null(batch_preprocessor) && is.null(max_results)
+
+  if (!use_export_api){
+    read_session <- make_request(
+      method="post",
+      path=str_interp("${uri}/readSessions"),
+      parse_response=TRUE,
+      payload=payload
+    )
+  }
 
   if (type == 'arrow_stream'){
     reader = RedivisBatchReader$new(
@@ -363,9 +369,11 @@ generate_api_url <- function(path){
   str_interp('${if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")}${utils::URLencode(path)}')
 }
 
+version_info <- R.Version()
+redivis_version <- packageVersion("redivis")
 get_authorization_header <- function(){
   auth_token <- get_auth_token()
-  c("Authorization"=str_interp("Bearer ${auth_token}"))
+  c("Authorization"=str_interp("Bearer ${auth_token}"), "User-Agent"=str_interp("redivis-r/${redivis_version} (${version_info$platform}; R/${version_info$major}.${version_info$minor})"))
 }
 
 
