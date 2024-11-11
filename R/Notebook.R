@@ -1,4 +1,4 @@
-#' @include Table.R User.R api_request.R
+#' @include Table.R User.R api_request.R util.R
 Notebook <- setRefClass("Notebook",
    fields = list(current_notebook_job_id="character"),
    methods = list(
@@ -27,7 +27,7 @@ Notebook <- setRefClass("Notebook",
 
        if (!dir.exists(folder)) dir.create(folder, recursive = TRUE)
 
-       temp_file_path <- str_interp('${folder}/${uuid::UUIDgenerate()}')
+       temp_file_path <- str_interp('${get_temp_dir()}/${uuid::UUIDgenerate()}')
 
        if (is(df,"sf")){
          sf_column_name <- attr(df, "sf_column")

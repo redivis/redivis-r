@@ -28,13 +28,13 @@ Imports:
     uuid (>= 1.0.0)
 Encoding: UTF-8
 Language: en-US
-RoxygenNote: 7.1.2
+RoxygenNote: 7.3.2
 Suggests: 
     testthat (>= 2.1.0)
 Collate: 
+    'util.R'
     'auth.R'
     'api_request.R'
-    'util.R'
     'Export.R'
     'Variable.R'
     'User.R'

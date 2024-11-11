@@ -25,6 +25,15 @@ get_arrow_schema <- function(variables){
   arrow::schema(purrr::set_names(schema, names))
 }
 
+get_temp_dir <- function(){
+  user_suffix <- Sys.info()[["user"]]
+  if (Sys.getenv("REDIVIS_TMPDIR") == ""){
+    return(str_interp('${tempdir()}/redivis_${user_suffix}'))
+  } else {
+    return(str_interp('${Sys.getenv("REDIVIS_TMPDIR")}/redivis_${user_suffix}'))
+  }
+}
+
 get_filename_from_content_disposition <- function(s) {
   fname <- stringr::str_match(s, "filename\\*=([^;]+)")[,2]
   if (is.na(fname)) {

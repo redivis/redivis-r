@@ -290,6 +290,7 @@ RedivisBatchReader <- setRefClass(
 )
 
 
+#' @include util.R
 make_rows_request <- function(uri, max_results=NULL, selected_variable_names = NULL, type = 'tibble', variables = NULL, progress = TRUE, coerce_schema=FALSE, batch_preprocessor=NULL, table=NULL, use_export_api=FALSE, max_parallelization=parallelly::availableCores()){
   payload = list("requestedStreamCount"=if (type == 'arrow_stream') 1 else min(8, max_parallelization), format="arrow")
 
@@ -330,7 +331,7 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
   folder <- NULL
   # Always write to disk for now to improve memory efficiency
   if (type == 'arrow_dataset' || TRUE ){
-    folder <- str_interp('${tempdir()}/redivis/tables/${uuid::UUIDgenerate()}')
+    folder <- str_interp('${get_temp_dir()}/tables/${uuid::UUIDgenerate()}')
     dir.create(folder, recursive = TRUE)
 
     if (type != 'arrow_dataset'){
@@ -423,7 +424,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
       stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
 
       if (!is.null(folder) && is.null(output_file)){
-        output_file <- arrow::FileOutputStream$create(str_interp('${folder}/${stream$id}'))
+        output_file <- arrow::FileOutputStream$create(str_interp('${folder}/${stream$id}.feather'))
       }
 
       fields_to_rename <- list()
