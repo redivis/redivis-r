@@ -5,9 +5,14 @@ Table <- setRefClass("Table",
 
    methods = list(
      initialize = function(..., name="", dataset=NULL, project=NULL, properties=list()){
-       parent_reference <- if (is.null(dataset)) project$qualified_reference else dataset$qualified_reference
+       parent_reference <- ""
+       if (!is.null(dataset)) {
+         parent_reference <- str_interp("${dataset$qualified_reference}.")
+       } else if (!is.null(project)){
+         parent_reference <- str_interp("${project$qualified_reference}.")
+       }
        scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else name
-       qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${parent_reference}.${name}")
+       qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${parent_reference}${name}")
        callSuper(...,
                  name=name,
                  dataset=dataset,
