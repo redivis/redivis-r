@@ -69,8 +69,7 @@ organization <- function(name){
 table <- function(name){
   if (Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != ""){
     Table$new(name=name)
-  }
-  if (Sys.getenv("REDIVIS_DEFAULT_PROJECT") != ""){
+  } else if (Sys.getenv("REDIVIS_DEFAULT_PROJECT") != ""){
     user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[1]
     project_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[2]
     User$new(name=user_name)$project(name=project_name)$table(name=name)
