@@ -26,11 +26,11 @@ get_arrow_schema <- function(variables){
 }
 
 get_temp_dir <- function(){
-  user_suffix <- Sys.info()[["user"]]
   if (Sys.getenv("REDIVIS_TMPDIR") == ""){
-    return(str_interp('${tempdir()}/redivis_${user_suffix}'))
+    return(tempdir())
   } else {
-    return(str_interp('${Sys.getenv("REDIVIS_TMPDIR")}/redivis_${user_suffix}'))
+    user_suffix <- Sys.info()[["user"]]
+    return(file.path(Sys.getenv("REDIVIS_TMPDIR"), str_interp("redivis_${user_suffix}")))
   }
 }
 
