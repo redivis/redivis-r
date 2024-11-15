@@ -23,11 +23,11 @@ Notebook <- setRefClass("Notebook",
          )
        }
 
-       folder <- str_interp('/${tempdir()}/redivis/out')
+       folder <- str_interp('/${get_temp_dir()}/out')
 
        if (!dir.exists(folder)) dir.create(folder, recursive = TRUE)
 
-       temp_file_path <- str_interp('${get_temp_dir()}/${uuid::UUIDgenerate()}')
+       temp_file_path <- str_interp('${folder}/${uuid::UUIDgenerate()}')
 
        if (is(df,"sf")){
          sf_column_name <- attr(df, "sf_column")
