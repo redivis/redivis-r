@@ -82,9 +82,9 @@ Notebook <- setRefClass("Notebook",
 
        base::file.remove(temp_file_path)
 
-       user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[1]
-       project_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[2]
-       table <- User$new(name=user_name)$project(name=project_name)$table(name=res$name)
+       user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[1]
+       workflow_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[2]
+       table <- User$new(name=user_name)$workflow(name=workflow_name)$table(name=res$name)
 
        table$properties <- res
 

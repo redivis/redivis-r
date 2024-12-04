@@ -1,4 +1,4 @@
-#' @include Dataset.R Project.R api_request.R
+#' @include Dataset.R Workflow.R api_request.R
 User <- setRefClass("User",
   fields = list(name="character"),
   methods = list(
@@ -9,8 +9,13 @@ User <- setRefClass("User",
       Dataset$new(name=name, version=version, user=.self)
     },
 
+    workflow = function(name) {
+      Workflow$new(name=name, user=.self)
+    },
+
     project = function(name) {
-      Project$new(name=name, user=.self)
+      warning("Deprecation warning: Projects have been renamed to Workflows, please update your code to: user$workflow()")
+      Workflow$new(name=name, user=.self)
     },
 
     list_datasets = function(max_results=NULL) {
@@ -20,10 +25,18 @@ User <- setRefClass("User",
       })
     },
 
+    list_workflows = function(max_results=NULL) {
+      workflows <- make_paginated_request(path=str_interp("/users/${.self$name}/workflows"), page_size=100, max_results=max_results)
+      purrr::map(workflows, function(workflow) {
+        Workflow$new(name=workflow$name, properties=workflow, user=.self)
+      })
+    },
+
     list_projects = function(max_results=NULL) {
-      projects <- make_paginated_request(path=str_interp("/users/${.self$name}/projects"), page_size=100, max_results=max_results)
-      purrr::map(projects, function(project) {
-        Project$new(name=project$name, properties=project, user=.self)
+      warning("Deprecation warning: Projects have been renamed to Workflows, please update your code to: user$list_workflows()")
+      workflows <- make_paginated_request(path=str_interp("/users/${.self$name}/workflows"), page_size=100, max_results=max_results)
+      purrr::map(workflows, function(workflow) {
+        Workflow$new(name=workflow$name, properties=workflow, user=.self)
       })
     }
   )

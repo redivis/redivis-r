@@ -1,7 +1,7 @@
 Package: redivis
 Type: Package
 Title: R interface for Redivis
-Version: 0.7.10
+Version: 0.8.0
 Author: Redivis Inc.
 Maintainer: Redivis <support@redivis.com>
 Description: Supports working with Redivis API through R. 
@@ -38,7 +38,7 @@ Collate:
     'Export.R'
     'Variable.R'
     'User.R'
-    'Project.R'
+    'Workflow.R'
     'Table.R'
     'Organization.R'
     'Dataset.R'

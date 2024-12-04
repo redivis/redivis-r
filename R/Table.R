@@ -1,22 +1,22 @@
 
-#' @include Dataset.R Project.R Variable.R Export.R util.R api_request.R
+#' @include Dataset.R Workflow.R Variable.R Export.R util.R api_request.R
 Table <- setRefClass("Table",
-   fields = list(name="character", dataset="ANY", project="ANY", properties="list", qualified_reference="character", scoped_reference="character", uri="character"),
+   fields = list(name="character", dataset="ANY", workflow="ANY", properties="list", qualified_reference="character", scoped_reference="character", uri="character"),
 
    methods = list(
-     initialize = function(..., name="", dataset=NULL, project=NULL, properties=list()){
+     initialize = function(..., name="", dataset=NULL, workflow=NULL, properties=list()){
        parent_reference <- ""
        if (!is.null(dataset)) {
          parent_reference <- str_interp("${dataset$qualified_reference}.")
-       } else if (!is.null(project)){
-         parent_reference <- str_interp("${project$qualified_reference}.")
+       } else if (!is.null(workflow)){
+         parent_reference <- str_interp("${workflow$qualified_reference}.")
        }
        scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else name
        qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${parent_reference}${name}")
        callSuper(...,
                  name=name,
                  dataset=dataset,
-                 project=project,
+                 workflow=workflow,
                  qualified_reference=qualified_reference_val,
                  scoped_reference=scoped_reference_val,
                  uri=str_interp("/tables/${URLencode(qualified_reference_val)}"),

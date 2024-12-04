@@ -1,15 +1,15 @@
-#' @include Dataset.R Project.R api_request.R
+#' @include Dataset.R Workflow.R api_request.R
 Query <- setRefClass("Query",
-  fields = list(query="character", default_dataset="character", default_project="character", properties="list"),
+  fields = list(query="character", default_dataset="character", default_workflow="character", properties="list"),
   methods = list(
     show = function(){
       print(str_interp("<Query ${.self$properties$id}>"))
     },
-    initialize = function(query, default_dataset=NULL, default_project=NULL){
+    initialize = function(query, default_dataset=NULL, default_workflow=NULL){
       payload <- list(query=query)
 
-      if (!is.null(default_project) && default_project != ""){
-        payload$defaultProject <- default_project
+      if (!is.null(default_workflow) && default_workflow != ""){
+        payload$defaultWorkflow <- default_workflow
       }
       if (!is.null(default_dataset) && default_dataset != "" ){
         payload$defaultDataset <- default_dataset

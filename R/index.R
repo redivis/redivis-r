@@ -1,5 +1,6 @@
 #' @importFrom stringr str_interp
 
+
 #' @title query
 #'
 #' @description Create a Redivis SQL query
@@ -10,12 +11,12 @@
 #' @examples
 #' output_table <- redivis::query(query = 'SELECT 1 + 1 AS two')$to_tibble()
 #' @export
-query <- function(query="", default_project=NULL, default_dataset=NULL) {
-  if (is.null(default_project) && is.null(default_dataset)){
-    default_project <- Sys.getenv("REDIVIS_DEFAULT_PROJECT")
+query <- function(query="", default_workflow=NULL, default_dataset=NULL) {
+  if (is.null(default_workflow) && is.null(default_dataset)){
+    default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
     default_dataset <- Sys.getenv("REDIVIS_DEFAULT_DATASET")
   }
-  Query$new(query=query, default_project=default_project, default_dataset=default_dataset)
+  Query$new(query=query, default_workflow=default_workflow, default_dataset=default_dataset)
 }
 
 
@@ -27,10 +28,10 @@ query <- function(query="", default_project=NULL, default_dataset=NULL) {
 #'
 #' @return class<user>
 #' @examples
-#' redivis::user('my_username')$project('my_project')$table('my_table')$to_tibble(max_results=100)
+#' redivis::user('my_username')$workflow('my_workflow')$table('my_table')$to_tibble(max_results=100)
 #'
-#' We can also construct a query scoped to a particular project, removing the need to fully qualify table names
-#' redivis::user('my_username')$project('my_project')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
+#' We can also construct a query scoped to a particular workflow, removing the need to fully qualify table names
+#' redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 #' @export
 user <- function(name){
   User$new(name=name)
@@ -48,7 +49,7 @@ user <- function(name){
 #' redivis::organization('demo_organization')$dataset('some_dataset')$table('a_table')$to_tibble(max_results=100)
 #'
 #' We can also construct a query scoped to a particular dataset, removing the need to fully qualify table names
-#' redivis::user('my_username')$project('my_project')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
+#' redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 #' @export
 organization <- function(name){
   Organization$new(name=name)
@@ -56,7 +57,7 @@ organization <- function(name){
 
 #' @title table
 #'
-#' @description Reference a specific table when the REDIVIS_DEFAULT_PROJECT or REDIVIS_DEFAULT_DATASET env variable is set
+#' @description Reference a specific table when the REDIVIS_DEFAULT_WORKFLOW or REDIVIS_DEFAULT_DATASET env variable is set
 #'
 #' @param name The table's username
 #'
@@ -69,10 +70,10 @@ organization <- function(name){
 table <- function(name){
   if (Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != ""){
     Table$new(name=name)
-  } else if (Sys.getenv("REDIVIS_DEFAULT_PROJECT") != ""){
-    user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[1]
-    project_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_PROJECT"), "[.]"))[2]
-    User$new(name=user_name)$project(name=project_name)$table(name=name)
+  } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != ""){
+    user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[1]
+    workflow_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[2]
+    User$new(name=user_name)$workflow(name=workflow_name)$table(name=name)
 
   }else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != ""){
     user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[1]
@@ -81,7 +82,7 @@ table <- function(name){
     User$new(name=user_name)$dataset(name=dataset_name)$table(name=name)
   }
   else{
-    stop("Cannot reference an unqualified table if the neither the REDIVIS_DEFAULT_PROJECT or REDIVIS_DEFAULT_DATASET environment variables are set.")
+    stop("Cannot reference an unqualified table if the neither the REDIVIS_DEFAULT_WORKFLOW or REDIVIS_DEFAULT_DATASET environment variables are set.")
   }
 }
 
@@ -131,5 +132,23 @@ authenticate <- function(force_reauthentication=FALSE) {
   invisible(NULL)
 }
 
+
+#' @title redivis
+#'
+#' @description Redivis wrapper, all primary methods accessible via $
+#'
+#' @return list
+#' @examples
+#' dataset <- redivis$user("username")$dataset("dataset_name")
+#' @export
+redivis <- list(
+  "query"=query,
+  "user"=user,
+  "organization"=organization,
+  "file"=file,
+  "table"=table,
+  "current_notebook"=current_notebook,
+  "authenticate"=authenticate
+)
 
 

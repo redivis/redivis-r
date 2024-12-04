@@ -133,7 +133,7 @@ Upload <- setRefClass("Upload",
 )
 
 get_upload_uri = function(upload){
-  str_interp("${project$user$name}.${project$name}")
+  str_interp("${upload$table$uri}.${upload$name}")
 }
 
 MAX_CHUNK_SIZE = 2 ** 23

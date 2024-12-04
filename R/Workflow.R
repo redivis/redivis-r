@@ -1,5 +1,5 @@
 #' @include User.R api_request.R
-Project <- setRefClass("Project",
+Workflow <- setRefClass("Workflow",
    fields = list(name="character",
                  user="ANY",
                  uri="character",
@@ -17,18 +17,18 @@ Project <- setRefClass("Project",
                  user=user,
                  qualified_reference=qualified_reference_val,
                  scoped_reference=scoped_reference_val,
-                 uri=str_interp("/projects/${URLencode(qualified_reference_val)}"),
+                 uri=str_interp("/workflows/${URLencode(qualified_reference_val)}"),
                  properties=properties
        )
      },
 
      show = function(){
-       print(str_interp("<Project ${.self$qualified_reference}>"))
+       print(str_interp("<Workflow ${.self$qualified_reference}>"))
      },
 
      get = function(){
        res <- make_request(path=.self$uri)
-       update_project_properties(.self, res)
+       update_workflow_properties(.self, res)
        .self
      },
 
@@ -46,11 +46,11 @@ Project <- setRefClass("Project",
      },
 
      table = function(name) {
-       Table(name=name, project=.self)
+       Table(name=name, workflow=.self)
      },
 
      query = function(query){
-       redivis::query(query, default_project = .self$qualified_reference)
+       redivis::query(query, default_workflow = .self$qualified_reference)
      },
 
      list_tables = function(max_results=NULL) {
@@ -60,13 +60,13 @@ Project <- setRefClass("Project",
          max_results=max_results,
        )
        purrr::map(tables, function(table_properties) {
-         Table$new(name=table_properties$name, project=.self, properties=table_properties)
+         Table$new(name=table_properties$name, workflow=.self, properties=table_properties)
        })
      }
    )
 )
 
-update_project_properties <- function(instance, properties){
+update_workflow_properties <- function(instance, properties){
   instance$properties = properties
   instance$qualified_reference = properties$qualifiedReference
   instance$scoped_reference = properties$scopedReference
