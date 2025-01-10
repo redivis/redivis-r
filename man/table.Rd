@@ -13,7 +13,7 @@ table(name)
 class<table>
 }
 \description{
-Reference a specific table when the REDIVIS_DEFAULT_PROJECT or REDIVIS_DEFAULT_DATASET env variable is set
+Reference a specific table when the REDIVIS_DEFAULT_WORKFLOW or REDIVIS_DEFAULT_DATASET env variable is set
 }
 \examples{
 redivis::table('a_table')$to_tibble(max_results=100)

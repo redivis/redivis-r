@@ -14,7 +14,7 @@
 # })
 #
 # test_that("scoped querying works", {
-#   Sys.setenv(REDIVIS_DEFAULT_PROJECT="imathews.ghcn precipitation")
+#   Sys.setenv(REDIVIS_DEFAULT_WORKFLOW="imathews.ghcn precipitation")
 #   # query <- redivis::user('imathews')$project('ghcn_precipitation')$query("SELECT * FROM merge_output LIMIT 100")
 #   query <- redivis::query("SELECT * FROM merge_output LIMIT 100")
 #

@@ -16,8 +16,8 @@ class<user>
 Reference user-owned resources on Redivis
 }
 \examples{
-redivis::user('my_username')$project('my_project')$table('my_table')$to_tibble(max_results=100)
+redivis::user('my_username')$workflow('my_workflow')$table('my_table')$to_tibble(max_results=100)
 
-We can also construct a query scoped to a particular project, removing the need to fully qualify table names
-redivis::user('my_username')$project('my_project')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
+We can also construct a query scoped to a particular workflow, removing the need to fully qualify table names
+redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 }
