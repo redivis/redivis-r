@@ -108,7 +108,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
 
     if (httr::status_code(res) >= 400 && stop_on_error){
       if (is_json){
-        stop(response_content$error)
+        stop(str_interp("${response_content$error}_error: ${response_content$error_description}"))
       } else {
         stop(response_content)
       }
