@@ -124,11 +124,14 @@ current_notebook <- function() {
 #' @return void
 #' @examples
 #' redivis::authenticate(force_reauthentication=FALSE)
-authenticate <- function(force_reauthentication=FALSE) {
+authenticate <- function(scope=NULL, force_reauthentication=FALSE) {
   if (force_reauthentication){
     clear_cached_credentials()
   }
-  get_auth_token()
+  if (is.character(scope)){
+    scope <- list(scope)
+  }
+  get_auth_token(scope=scope)
   invisible(NULL)
 }
 

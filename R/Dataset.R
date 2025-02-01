@@ -109,7 +109,7 @@ Dataset <- setRefClass("Dataset",
       if (res$status == 404){
         return(FALSE)
       } else {
-        stop(res$message)
+        stop(str_interp("${res$error}: ${res$error_description}"))
       }
     } else {
       return(TRUE)

@@ -40,7 +40,7 @@ Table <- setRefClass("Table",
          if (res$status == 404){
            return(FALSE)
          } else {
-           stop(res$error)
+           stop(str_interp("${res$error}: ${res$error_description}"))
          }
        } else {
          return(TRUE)

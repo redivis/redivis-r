@@ -29,7 +29,22 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
       if (res_data$status_code >= 400){
         if (res_data$status_code == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
           refresh_credentials()
-          return(make_request(method, query, payload, parse_response, path, download_path, download_overwrite, as_stream, headers_callback, get_download_path_callback, stream_callback, stop_on_error))
+          return(
+            make_request(
+              method=method,
+              query=query,
+              payload=payload,
+              parse_response=parse_response,
+              path=path,
+              download_path=download_path,
+              download_overwrite=download_overwrite,
+              as_stream=as_stream,
+              headers_callback=headers_callback,
+              get_download_path_callback=get_download_path_callback,
+              stream_callback=stream_callback,
+              stop_on_error=stop_on_error
+            )
+          )
         }
         if (stop_on_error){
           stop(str_interp("Received HTTP status ${res_data$status_code} for path ${url}"))
@@ -86,11 +101,6 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
       warning(httr::headers(res)$'x-redivis-warning')
     }
 
-    if (httr::status_code(res) == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
-      refresh_credentials()
-      return(make_request(method, query, payload, parse_response, path, download_path, download_overwrite, as_stream, get_download_path_callback, stream_callback, stop_on_error))
-    }
-
     if (!parse_response && httr::status_code(res) < 400){
       return(res)
     }
@@ -109,6 +119,40 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
         is_json <- TRUE
         response_content <- jsonlite::fromJSON(response_content, simplifyVector = FALSE)
       }
+    }
+
+    if (
+      (
+        httr::status_code(res) == 401
+        || (httr::status_code(res) == 403 && response_content$error == 'insufficient_scope')
+      )
+      && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA))
+      && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))
+    ){
+      message(
+        str_interp("\n${response_content$error}: ${response_content$error_description}\n")
+      )
+      flush.console()
+      refresh_credentials(
+        scope=if(is.null(response_content$scope)) NULL else strsplit(response_content$scope, " "),
+        amr_values=response_content$amr_values
+      )
+      return(
+        make_request(
+          method=method,
+          query=query,
+          payload=payload,
+          parse_response=parse_response,
+          path=path,
+          download_path=download_path,
+          download_overwrite=download_overwrite,
+          as_stream=as_stream,
+          headers_callback=headers_callback,
+          get_download_path_callback=get_download_path_callback,
+          stream_callback=stream_callback,
+          stop_on_error=stop_on_error
+        )
+      )
     }
 
     if (httr::status_code(res) >= 400 && stop_on_error){

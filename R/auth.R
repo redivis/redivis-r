@@ -5,12 +5,17 @@ auth_vars <- new.env(parent = emptyenv())
 auth_vars$redivis_dir = file.path(Sys.getenv("HOME"), ".redivis")
 auth_vars$cached_credentials = NULL
 auth_vars$verify_ssl = !grepl("https://localhost", Sys.getenv("REDIVIS_API_ENDPOINT", "https://redivis.com"), fixed = TRUE)
-auth_vars$credentials_file = file.path(file.path(Sys.getenv("HOME"), ".redivis"), "credentials")
-auth_vars$scope = 'data.edit'
+auth_vars$credentials_file = file.path(file.path(Sys.getenv("HOME"), ".redivis"), "r_credentials")
+auth_vars$default_scope = list('data.edit')
 auth_vars$client_id = 'Ah850nGnQg5mFWd25nkyk9Y3'
 auth_vars$base_url = sub("(https?://.*?)(/|$).*", "\\1", Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com'))
 
-get_auth_token <- function() {
+get_auth_token <- function(scope=NULL) {
+
+  if (is.null(scope)){
+    scope <- auth_vars$default_scope
+  }
+
   if (!is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA))) {
     if (is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA)) && interactive()) {
       warning("Setting the REDIVIS_API_TOKEN for interactive sessions is deprecated and highly discouraged.
@@ -32,7 +37,14 @@ This environment variable should only ever be set in a non-interactive environme
     })
   }
 
-  if (!is.null(auth_vars$cached_credentials) && "expires_at" %in% names(auth_vars$cached_credentials) && "access_token" %in% names(auth_vars$cached_credentials)) {
+  missing_scope = setdiff(scope, get_current_credential_scope())
+
+  if (
+    !is.null(auth_vars$cached_credentials)
+    && "expires_at" %in% names(auth_vars$cached_credentials)
+    && "access_token" %in% names(auth_vars$cached_credentials)
+    && length(missing_scope) == 0
+  ) {
     if (auth_vars$cached_credentials$expires_at < (as.numeric(Sys.time()) - 5 * 60)) {
       refresh_credentials()
     }
@@ -43,8 +55,7 @@ This environment variable should only ever be set in a non-interactive environme
       dir.create(auth_vars$redivis_dir)
     }
 
-    auth_vars$cached_credentials <- perform_oauth_login()
-    write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
+    perform_oauth_login(scope=if(length(missing_scope)) missing_scope else scope, upgrade_credentials=length(missing_scope) > 0)
     return(auth_vars$cached_credentials$access_token)
   }
 }
@@ -56,7 +67,7 @@ clear_cached_credentials <- function() {
   }
 }
 
-perform_oauth_login <- function() {
+perform_oauth_login <- function(scope, amr_values=NULL, upgrade_credentials=FALSE) {
   pkce <- get_pkce()
   challenge <- pkce$challenge
   verifier <- pkce$verifier
@@ -66,7 +77,8 @@ perform_oauth_login <- function() {
     httr::add_headers(`Content-Type` = "application/json"),
     body = list(
       client_id = auth_vars$client_id,
-      scope = auth_vars$scope,
+      scope = paste(scope, collapse=" "),
+      amr_values = amr_values,
       code_challenge = challenge,
       code_challenge_method = 'S256',
       access_type = 'offline'
@@ -90,6 +102,11 @@ perform_oauth_login <- function() {
   }
   flush.console()
 
+  headers <- c()
+  if (upgrade_credentials && !is.null(auth_vars$cached_credentials)){
+    headers <- c('Authorization' = str_interp("Bearer ${auth_vars$cached_credentials$access_token}"))
+  }
+
   started_polling_at <- Sys.time()
   while (TRUE) {
     if (difftime(Sys.time(), started_polling_at, units = "secs") > 60 * 10) {
@@ -100,6 +117,7 @@ perform_oauth_login <- function() {
 
     res <- httr::POST(
       url = paste0(auth_vars$base_url, "/oauth/token"),
+      httr::add_headers(headers),
       body = list(
         client_id = auth_vars$client_id,
         grant_type = 'urn:ietf:params:oauth:grant-type:device_code',
@@ -125,11 +143,20 @@ perform_oauth_login <- function() {
     }
   }
 
-  return(httr::content(res, "parsed"))
+  auth_vars$cached_credentials <- httr::content(res, "parsed")
+  write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
+
+  return(auth_vars$cached_credentials)
 }
 
-refresh_credentials <- function() {
-  if (!is.null(auth_vars$cached_credentials$refresh_token)) {
+refresh_credentials <- function(scope=NULL, amr_values=NULL) {
+  if (!is.null(scope) || !is.null(amr_values)){
+    perform_oauth_login(
+      scope=if (is.null(scope)) get_current_credential_scope() else scope,
+      amr_values=amr_values,
+      upgrade_credentials=TRUE
+    )
+  }else if (!is.null(auth_vars$cached_credentials$refresh_token)) {
     res <- httr::POST(
       url = paste0(auth_vars$base_url, "/oauth/token"),
       body = list(
@@ -155,6 +182,20 @@ refresh_credentials <- function() {
   }
 
   return(get_auth_token())
+}
+
+get_current_credential_scope <- function() {
+  tryCatch({
+    if (!is.null(auth_vars$cached_credentials)) {
+      token_payload = strsplit(auth_vars$cached_credentials$access_token, ".", fixed=TRUE)[[1]][2]
+      decoded_token <- jsonlite::fromJSON(rawToChar(base64enc::base64decode(token_payload)))
+      return(strsplit(decoded_token$scope, " ")[[1]])
+    }
+  }, error = function(e) {
+    # Ignore errors
+  })
+
+  return(auth_vars$default_scope)
 }
 
 get_pkce <- function() {
