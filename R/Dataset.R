@@ -3,7 +3,7 @@
 Dataset <- setRefClass("Dataset",
    fields = list(
     name="character",
-    version="character",
+    version="ANY",
     user="ANY",
     organization="ANY",
     uri="character",
@@ -13,18 +13,37 @@ Dataset <- setRefClass("Dataset",
   ),
    methods = list(
 
-    initialize = function(..., name="", version="current", user=NULL, organization=NULL, properties=list()){
+    initialize = function(..., name="", version=NULL, user=NULL, organization=NULL, properties=list()){
+      parsed_name <- strsplit(name, ":")[[1]][1]
       version_arg <- version
       if (!is.null(version) && version != "current" && version != "next" && !startsWith(tolower(version), "v")){
         version_arg <- str_interp("v${version}")
+      } else if (is.null(version) && !is.na(str_match(name, ":(v\\d+[._]\\d+|current|next)")[2])){
+        version_arg <- str_match(name, ":(v\\d+[._]\\d+|current|next)")[2]
+      }
+
+      version_string <- ""
+      if (!is.null(version_arg)){
+        version_string <- str_interp(":${version_arg}")
+      }
+
+      reference_id <- ""
+      reference_id_split <- stringr::str_split_fixed(stringr::str_replace_all(name, ":(v\\d+[._]\\d+|current|next|sample)", ""), ":", Inf)
+
+      if (length(reference_id_split) > 1) {
+        reference_id <- reference_id_split[2]
+      }
+
+      if (reference_id != "") {
+        reference_id <- paste0(":", reference_id)
       }
 
       owner_name <- if (is.null(user)) organization$name else user$name
-      scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else str_interp("${name}:${version_arg}")
-      qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${owner_name}.${name}:${version_arg}")
+      scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else str_interp("${parsed_name}${reference_id}${version_string}")
+      qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${owner_name}.${scoped_reference_val}")
 
       callSuper(...,
-                name=name,
+                name=parsed_name,
                 version=version_arg,
                 user=user,
                 organization=organization,

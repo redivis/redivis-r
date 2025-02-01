@@ -13,7 +13,7 @@ test_that("dataset tables list", {
 
 test_that("workflow tables list", {
   user <- redivis::user("imathews")
-  tables = user$workflow('example_project_climate_analysis')$list_tables()
+  tables = user$workflow('example_workflow_climate_analysis')$list_tables()
   expect_equal(length(tables), 2)
 })
 
@@ -25,6 +25,6 @@ test_that("dataset get", {
 
 test_that("workflow get", {
   user <- redivis::user("imathews")
-  workflow = user$workflow('example_project_climate_analysis')$get()
+  workflow = user$workflow('example_workflow_climate_analysis')$get()
   expect_true(!is.null(workflow$properties))
 })

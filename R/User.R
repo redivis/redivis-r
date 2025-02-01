@@ -5,7 +5,7 @@ User <- setRefClass("User",
     show = function(){
       print(str_interp("<User ${.self$name}>"))
     },
-    dataset = function(name, version="current") {
+    dataset = function(name, version=NULL) {
       Dataset$new(name=name, version=version, user=.self)
     },
 
@@ -21,7 +21,7 @@ User <- setRefClass("User",
     list_datasets = function(max_results=NULL) {
       datasets <- make_paginated_request(path=str_interp("/users/${.self$name}/datasets"), page_size=100, max_results=max_results)
       purrr::map(datasets, function(dataset) {
-        Dataset$new(name=dataset$name, version="current", properties=dataset, user=.self)
+        Dataset$new(name=dataset$name, properties=dataset, user=.self)
       })
     },
 
