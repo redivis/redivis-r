@@ -1,4 +1,7 @@
 
+globals <- new.env(parent = emptyenv())
+globals$printed_warnings <- list()
+
 get_arrow_schema <- function(variables){
   schema <- purrr::map(variables, function(variable) {
     if (variable$type == 'integer'){

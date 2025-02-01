@@ -18,8 +18,8 @@ Dataset <- setRefClass("Dataset",
       version_arg <- version
       if (!is.null(version) && version != "current" && version != "next" && !startsWith(tolower(version), "v")){
         version_arg <- str_interp("v${version}")
-      } else if (is.null(version) && !is.na(str_match(name, ":(v\\d+[._]\\d+|current|next)")[2])){
-        version_arg <- str_match(name, ":(v\\d+[._]\\d+|current|next)")[2]
+      } else if (is.null(version) && !is.na(stringr::str_match(name, ":(v\\d+[._]\\d+|current|next)")[2])){
+        version_arg <- stringr::str_match(name, ":(v\\d+[._]\\d+|current|next)")[2]
       }
 
       version_string <- ""

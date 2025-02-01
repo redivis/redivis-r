@@ -1,5 +1,5 @@
 
-#' @include auth.R
+#' @include auth.R util.R
 make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, headers_callback=NULL, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE){
   # IMPORTANT: if updating the function signature, make sure to also pass to the two scenarios where we retry on 401 status
 
@@ -80,6 +80,11 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
       encode="json",
       httr::timeout(3600)
     )
+
+    if (!is.null(httr::headers(res)$'x-redivis-warning') && is.null(globals$printed_warnings[[httr::headers(res)$'x-redivis-warning']])){
+      globals$printed_warnings[httr::headers(res)$'x-redivis-warning'] <- TRUE
+      warning(httr::headers(res)$'x-redivis-warning')
+    }
 
     if (httr::status_code(res) == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
       refresh_credentials()
