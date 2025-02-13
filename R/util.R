@@ -54,7 +54,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
   retry_count <- 0
   start_byte <- 0
   file_size <- base::file.info(file_path)$size
-  chunk_size <- file_size # 2^26 # ~67MB, must be less than 100MB
+  chunk_size <- file_size
   headers <- c()
 
   if (!is.null(proxy_url)){
@@ -118,7 +118,7 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
       }
 
       retry_count <<- retry_count + 1
-      Sys.sleep(retry_count / 2)
+      Sys.sleep(retry_count)
       cat("A network error occurred. Retrying resumable upload.\n")
       start_byte <<- retry_partial_upload(file_size=file_size, resumable_url=resumable_url, headers=headers)
       seek(con, where=start_byte, origin="start")
@@ -147,7 +147,7 @@ initiate_resumable_upload <- function(size, temp_upload_url, headers, retry_coun
     if(retry_count > 10) {
       stop("A network error occurred. Upload failed after too many retries.")
     }
-    Sys.sleep(retry_count / 2)
+    Sys.sleep(retry_count + 1)
     initiate_resumable_upload(size, temp_upload_url, headers, retry_count=retry_count+1)
   })
 }
@@ -180,7 +180,7 @@ retry_partial_upload <- function(retry_count=0, file_size, resumable_url, header
     if(retry_count > 10) {
       stop(e)
     }
-    Sys.sleep(retry_count / 10)
+    Sys.sleep(retry_count + 1)
     retry_partial_upload(retry_count=retry_count + 1, file_size=file_size, resumable_url=resumable_url, headers=headers)
   })
 }
@@ -208,7 +208,7 @@ perform_standard_upload <- function(file_path, temp_upload_url=NULL, proxy_url=N
       cat("A network error occurred. Upload failed after too many retries.\n")
       stop(e)
     }
-    Sys.sleep((retry_count + 1) / 2)
+    Sys.sleep(retry_count + 1)
     # Recursively call the function with incremented retry count
     perform_standard_upload(file_path, original_url, proxy_url, retry_count + 1, progressbar)
   })
