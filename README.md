@@ -7,7 +7,7 @@ tasks!
 
 ## Getting started
 
-The easiest way to get started is to [create a new R notebook on Redivis] (https://docs.redivis.com/reference/workflows/notebooks/r-notebooks).
+The easiest way to get started is to [create a new R notebook on Redivis](https://docs.redivis.com/reference/workflows/notebooks/r-notebooks).
 This package, alongside other common data science R packages, are all preinstalled.
 
 You can also install the latest version of this package in any other R environment:
