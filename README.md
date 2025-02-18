@@ -30,8 +30,9 @@ df <- table$to_tibble()
 
 ## Documentation
 
-This package contains a number of methods for processing data on Redivis and interfacing with the API through R. Comprehensive
-documentation and examples are available at https://apidocs.redivis.com/client-libraries/redivis-r
+**[View the comprehensive documentation here >](https://apidocs.redivis.com/client-libraries/redivis-r)**
+
+This package contains a number of methods for processing data on Redivis and interfacing with the API through R. Consult the documentation for a detailed list of all methods and accompanying examples.
 
 ## Issue reporting
 
