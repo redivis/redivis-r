@@ -95,6 +95,7 @@ Dataset <- setRefClass("Dataset",
 
   delete = function(){
     make_request(method="DELETE", path=.self$uri)
+    invisible(NULL)
   },
 
   get = function(){
@@ -133,6 +134,13 @@ Dataset <- setRefClass("Dataset",
 
   release = function(){
     version_res <- make_request(method="POST", path=str_interp("${.self$uri}/versions/next/release"))
+    .self$uri = version_res$datasetUri
+    .self$get()
+    .self
+  },
+
+  unrelease = function(){
+    version_res <- make_request(method="POST", path=str_interp("${.self$uri}/versions/current/release"))
     .self$uri = version_res$datasetUri
     .self$get()
     .self

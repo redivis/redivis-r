@@ -144,7 +144,7 @@ perform_oauth_login <- function(scope, amr_values=NULL, upgrade_credentials=FALS
   }
 
   auth_vars$cached_credentials <- httr::content(res, "parsed")
-  write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
+  write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE, null="null"), auth_vars$credentials_file)
 
   return(auth_vars$cached_credentials)
 }
@@ -175,7 +175,7 @@ refresh_credentials <- function(scope=NULL, amr_values=NULL) {
       auth_vars$cached_credentials$access_token <- refresh_response$access_token
       auth_vars$cached_credentials$expires_at <- refresh_response$expires_at
       auth_vars$cached_credentials$expires_in <- refresh_response$expires_in
-      write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
+      write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE, null="null"), auth_vars$credentials_file)
     }
   } else {
     clear_cached_credentials()

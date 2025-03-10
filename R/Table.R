@@ -69,6 +69,7 @@ Table <- setRefClass("Table",
 
      delete = function(){
        make_request(method="DELETE", path=.self$uri)
+       invisible(NULL)
      },
 
      list_variables = function(max_results=NULL){
@@ -82,28 +83,28 @@ Table <- setRefClass("Table",
        })
      },
 
-     # add_file = function(){
+     # add_files = function(){
      #
      # },
 
-     # list_uploads = function(max_results){
-     #   uploads <- make_paginated_request(
-     #     path=str_interp("${.self$uri}/uploads"),
-     #     page_size=100,
-     #     max_results=max_results
-     #   )
-     #   purrr::map(uploads, function(upload_properties) {
-     #     Upload$new(name=upload_properties$name, table=.self, properties=upload_properties)
-     #   })
-     # },
+     list_uploads = function(max_results){
+       uploads <- make_paginated_request(
+         path=str_interp("${.self$uri}/uploads"),
+         page_size=100,
+         max_results=max_results
+       )
+       purrr::map(uploads, function(upload_properties) {
+         Upload$new(name=upload_properties$name, table=.self, properties=upload_properties)
+       })
+     },
 
      variable = function(name){
        Variable$new(name=name, table=.self)
      },
 
-     # upload = function(name){
-     #   Upload$new(name=name, table=.self)
-     # },
+     upload = function(name){
+       Upload$new(name=name, table=.self)
+     },
 
      create = function(description=NULL, upload_merge_strategy="append", is_file_index=FALSE){
        payload = list(
@@ -285,7 +286,7 @@ Table <- setRefClass("Table",
          progress=FALSE
        )
        purrr::map(df[[file_id_variable]], function(id) {
-         File$new(id=id)
+         File$new(id=id, table=.self)
        })
      },
 

@@ -50,22 +50,27 @@ get_filename_from_content_disposition <- function(s) {
   return(fname)
 }
 
-perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=NULL) {
+perform_resumable_upload <- function(data, temp_upload_url=NULL, proxy_url=NULL, on_progress=NULL) {
   retry_count <- 0
   start_byte <- 0
-  file_size <- base::file.info(file_path)$size
-  chunk_size <- file_size
+  file_size <- 0
   headers <- c()
 
+  if (inherits(data, "connection")) {
+    file_size <- file.info(get_conn_name(data))$size
+  } else {
+    file_size <- length(data)
+    data <- rawConnection(data)
+  }
+  chunk_size <- file_size
+
   if (!is.null(proxy_url)){
-    headers <- get_authorization_header()
     temp_upload_url = str_interp("${proxy_url}?url=${utils::URLencode(temp_upload_url, reserved=TRUE, repeated=TRUE)}")
   }
 
-  resumable_url <- initiate_resumable_upload(file_size, temp_upload_url, headers)
+  headers <- get_authorization_header()
 
-  con <- base::file(file_path, "rb")
-  on.exit(close(con))
+  resumable_url <- initiate_resumable_upload(file_size, temp_upload_url, headers)
 
   while(
     start_byte < file_size
@@ -85,11 +90,17 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
             n <- chunk_size - bytes_read
           }
           bytes_read <<- bytes_read + n
-          readBin(con, raw(), n = n)
+          if (!is.null(on_progress)){
+            on_progress(bytes_read)
+          }
+          readBin(data, raw(), n = n)
         },
         seekfunction = function(offset){
           bytes_read <<- offset
-          seek(con, where = start_byte + offset)
+          if (!is.null(on_progress)){
+            on_progress(bytes_read)
+          }
+          seek(data, where = start_byte + offset)
         },
         forbid_reuse = FALSE,
         verbose = FALSE,
@@ -121,7 +132,10 @@ perform_resumable_upload <- function(file_path, temp_upload_url=NULL, proxy_url=
       Sys.sleep(retry_count)
       cat("A network error occurred. Retrying resumable upload.\n")
       start_byte <<- retry_partial_upload(file_size=file_size, resumable_url=resumable_url, headers=headers)
-      seek(con, where=start_byte, origin="start")
+      if (!is.null(on_progress)){
+        on_progress(bytes_read)
+      }
+      seek(data, where=start_byte, origin="start")
     })
   }
 }
@@ -185,31 +199,48 @@ retry_partial_upload <- function(retry_count=0, file_size, resumable_url, header
   })
 }
 
-perform_standard_upload <- function(file_path, temp_upload_url=NULL, proxy_url=NULL, retry_count=0, progressbar=NULL) {
+perform_standard_upload <- function(data, temp_upload_url=NULL, proxy_url=NULL, retry_count=0, on_progress=NULL) {
   original_url=temp_upload_url
   tryCatch({
-    prepared_upload <- httr::upload_file(file_path, type = NULL)
+    if (inherits(data, "connection") && file.exists(get_conn_name(data))){
+      data <- httr::upload_file(get_conn_name(data), type = NULL)
+    }
 
-    headers = c()
+    headers = get_authorization_header()
 
     if (!is.null(proxy_url)){
-      headers <- get_authorization_header()
       temp_upload_url = str_interp("${proxy_url}?url=${utils::URLencode(temp_upload_url, reserved=TRUE, repeated=TRUE)}")
     }
 
     # Perform the HTTP PUT request
-    res <- httr::PUT(url = temp_upload_url, body = prepared_upload, httr::add_headers(headers))
+    res <- httr::PUT(url = temp_upload_url, body = data, httr::add_headers(headers))
     if (httr::status_code(res) >= 400){
       # stop_for_status also fails for redirects
       httr::stop_for_status(res)
     }
   }, error = function(e) {
+    print(e)
     if (retry_count > 20) {
       cat("A network error occurred. Upload failed after too many retries.\n")
       stop(e)
     }
     Sys.sleep(retry_count + 1)
     # Recursively call the function with incremented retry count
-    perform_standard_upload(file_path, original_url, proxy_url, retry_count + 1, progressbar)
+    perform_standard_upload(file_path, original_url, proxy_url, retry_count + 1, on_progress)
   })
+}
+
+## Helper to extract a file path from a connection
+get_conn_name <- function(conn) {
+  nm <- attr(conn, "name")
+  if (is.null(nm)) nm <- summary(conn)$description
+  nm
+}
+
+show_namespace_warning <- function(method){
+  message <- str_interp("Deprecation warning: update `redivis::${method}()` to `redivis$${method}()`. Accessing methods directly on the Redivis namespace is deprecated and will be removed in a future version.")
+  if (is.null(globals$printed_warnings[[message]])){
+    globals$printed_warnings[message] <- TRUE
+    warning(message)
+  }
 }
