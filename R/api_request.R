@@ -448,7 +448,8 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     return();
   }
 
-  pb <- progressr::progressor(steps = max_results)
+  pb_multiplier <- 100/max_results
+  pb <- progressr::progressor(steps = 100)
 
   headers <- get_authorization_header()
   worker_count <- min(8, length(streams), parallelly::availableCores(), max_parallelization)
@@ -602,14 +603,14 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
           }
 
           if (Sys.time() - last_measured_time > 0.2){
-            pb(amount = current_progress_rows)
+            pb(amount = current_progress_rows * pb_multiplier)
             current_progress_rows <- 0
             last_measured_time = Sys.time()
           }
         }
       }
 
-      pb(amount = current_progress_rows)
+      pb(amount = current_progress_rows * pb_multiplier)
 
       if (is.null(output_file)){
         # Need to serialize the table to pass between threads

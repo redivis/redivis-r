@@ -1,16 +1,30 @@
 #' @include Table.R Variable.R api_request.R
 Upload <- setRefClass("Upload",
-   fields = list(name="character", table="Table", properties="list"),
+   fields = list(name="character", table="Table", properties="list", uri="character"),
    methods = list(
+     initialize = function(..., name="", properties=list()){
+       if (!is.null(properties$uri)){
+         computed_uri <- properties$uri
+       } else {
+         escaped_name = gsub('\\.', '_', upload$name)
+         computed_uri <- str_interp("${upload$table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}")
+       }
+       callSuper(...,
+                 name=name,
+                 properties=properties,
+                 uri=computed_uri
+       )
+     },
      show = function(){
-       print(str_interp("<Upload ${get_upload_uri(.self)}>"))
+       print(str_interp("<Upload ${.self$uri}>"))
      },
     get = function(){
-      .self$properties = make_request(path=get_upload_uri(.self))
+      .self$properties <- make_request(path=.self$uri)
+      .self$uri <- .self$properties$uri
       .self
     },
     exists = function(){
-      res <- make_request(method="HEAD", path=get_upload_uri(.self), stop_on_error=FALSE)
+      res <- make_request(method="HEAD", path=.self$uri, stop_on_error=FALSE)
       if (length(res$error)){
         if (res$status == 404){
           return(FALSE)
@@ -23,19 +37,146 @@ Upload <- setRefClass("Upload",
     },
 
     delete = function(){
-      make_request(method="DELETE", path=get_upload_uri(.self))
+      make_request(method="DELETE", path=.self$uri)
       invisible(NULL)
     },
 
     list_variables = function(max_results){
       variables <- make_paginated_request(
-        path=str_interp("${get_upload_uri(.self)}/variables"),
+        path=str_interp("${.self$uri}/variables"),
         page_size=100,
         max_results=max_results
       )
       purrr::map(variables, function(variable_properties) {
         Variable$new(name=variable_properties$name, upload=.self, properties=variable_properties)
       })
+    },
+
+    to_arrow_dataset = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()){
+      params <- get_table_request_params(.self, max_results, variables)
+
+      make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variable_names = params$selected_variable_names,
+        type = 'arrow_dataset',
+        variables = params$variables,
+        progress = progress,
+        coerce_schema = TRUE,
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization=max_parallelization
+      )
+
+    },
+
+    to_arrow_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
+      params <- get_table_request_params(.self, max_results, variables)
+
+      make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variable_names = params$selected_variable_names,
+        type = 'arrow_table',
+        progress=progress,
+        variables = params$variables,
+        coerce_schema = TRUE,
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization=max_parallelization
+      )
+    },
+
+    to_arrow_batch_reader = function(max_results=NULL, variables=NULL, progress=TRUE) {
+      params <- get_table_request_params(.self, max_results, variables)
+
+      make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variable_names = params$selected_variable_names,
+        type = 'arrow_stream',
+        variables = params$variables,
+        progress = progress,
+        coerce_schema = TRUE
+      )
+    },
+
+    to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
+      params <- get_table_request_params(.self, max_results, variables, geography_variable)
+
+      if (!is.null(params$geography_variable)){
+        warning('Returning sf tibbles via the to_tibble method is deprecated, and will be removed soon. Please use table$to_sf_tibble() instead.', immediate. = TRUE)
+      }
+
+      df <- make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variable_names = params$selected_variable_names,
+        type = 'tibble',
+        variables = params$variables,
+        progress = progress,
+        coerce_schema = TRUE,
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization=max_parallelization
+      )
+
+      if (!is.null(params$geography_variable)){
+        sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
+      } else {
+        df
+      }
+    },
+
+    to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
+      params <- get_table_request_params(.self, max_results, variables, geography_variable)
+
+      if (is.null(params$geography_variable)){
+        stop('Unable to find geography variable in table')
+      }
+
+      df <- make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variable_names = params$selected_variable_names,
+        type = 'tibble',
+        variables = params$variables,
+        progress = progress,
+        coerce_schema = TRUE,
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization=max_parallelization
+      )
+
+      sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
+    },
+
+    to_data_frame = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
+      params <- get_table_request_params(.self, max_results, variables)
+
+      make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variable_names = params$selected_variable_names,
+        type = 'data_frame',
+        variables = params$variables,
+        progress = progress,
+        coerce_schema = TRUE,
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization=max_parallelization
+      )
+    },
+
+    to_data_table = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
+      params <- get_table_request_params(.self, max_results, variables)
+
+      make_rows_request(
+        uri=params$uri,
+        max_results=params$max_results,
+        selected_variable_names = params$selected_variable_names,
+        type = 'data_table',
+        variables = params$variables,
+        progress = progress,
+        coerce_schema = TRUE,
+        batch_preprocessor = batch_preprocessor,
+        max_parallelization=max_parallelization
+      )
     },
 
     insert_rows = function(rows, update_schema=FALSE){
@@ -47,7 +188,7 @@ Upload <- setRefClass("Upload",
 
       make_request(
         method="POST",
-        path=str_interp("${get_upload_uri(.self)}/rows"),
+        path=str_interp("${.self$uri}/rows"),
         payload=list(
           "rows"=rows,
           "updateSchema"=update_schema

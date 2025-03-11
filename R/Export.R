@@ -96,7 +96,8 @@ Export <- setRefClass("Export",
 
 
 perform_parallel_export_download <- function(uri, file_count, download_path, is_dir, overwrite, total_size){
-  pb <- progressr::progressor(steps=total_size)
+  pb_multiplier <- 100 / total_size
+  pb <- progressr::progressor(steps=100)
 
   output_file_paths <- list()
   worker_count <- min(8, parallelly::availableCores(), file_count)
@@ -134,7 +135,7 @@ perform_parallel_export_download <- function(uri, file_count, download_path, is_
     stream_callback = function(chunk){
       current_progress_bytes <<- current_progress_bytes + length(chunk)
       if(Sys.time() - last_measured_progress > 0.2){
-        pb(amount=current_progress_bytes)
+        pb(amount=current_progress_bytes * pb_multiplier)
         current_progress_bytes <<- 0
         last_measured_progress <<- Sys.time()
       }

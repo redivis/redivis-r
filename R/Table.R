@@ -230,7 +230,7 @@ Table <- setRefClass("Table",
       }
      },
 
-     list_uploads = function(max_results){
+     list_uploads = function(max_results=NULL){
        uploads <- make_paginated_request(
          path=str_interp("${.self$uri}/uploads"),
          page_size=100,
@@ -562,6 +562,7 @@ update_table_properties <- function(instance, properties){
 
 
 get_table_request_params = function(self, max_results, variables, geography_variable=NULL){
+  # IMPORTANT: note that this is also called be the upload$to_* methods
   all_variables <- make_paginated_request(path=str_interp("${self$uri}/variables"), page_size=1000)
 
   if (is.null(variables)){
