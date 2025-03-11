@@ -78,7 +78,7 @@ Upload <- setRefClass("Upload",
     ) {
 
       MAX_SIMPLE_UPLOAD_SIZE=2**20 # 1MB
-      MIN_RESUMABLE_UPLOAD_SIZE=2**24 # 16MB
+      MIN_RESUMABLE_UPLOAD_SIZE=2**25 # 32MB
 
       temp_upload_id <- NULL
 
@@ -86,7 +86,7 @@ Upload <- setRefClass("Upload",
       if (is.character(content) && file.exists(content)) {
         if (base::file.exists(content)){
           f <- base::file(content, open="rb", blocking=FALSE)
-          on.exit(close(f))
+          on.exit(close(f), add = TRUE)
           content <- f
         } else {
           if (nchar(content) < 200){
@@ -134,7 +134,7 @@ Upload <- setRefClass("Upload",
           on_progress <- function(num_bytes){
             setTxtProgressBar(pbar_bytes, num_bytes)
           }
-          on.exit(close(pbar_bytes))
+          on.exit(close(pbar_bytes), add = TRUE)
         }
 
         if (isTRUE(temp_upload$resumable)) {
@@ -209,7 +209,7 @@ Upload <- setRefClass("Upload",
         # See: https://stackoverflow.com/questions/31080363/how-to-post-multipart-related-content-with-httr-for-google-drive-api
         metadata_file <- tempfile()
         writeLines(jsonlite::toJSON(payload, auto_unbox = TRUE, null="null"), metadata_file)
-        on.exit(unlink(metadata_file))
+        on.exit(unlink(metadata_file), add = TRUE)
 
         files <- list(metadata = httr::upload_file(metadata_file, type="application/json"), data=data)
         payload <- NULL

@@ -19,7 +19,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
       url <- str_interp("${url}?${query_string}")
     }
     con <- curl::curl(url, handle=h)
-    on.exit(close(con))
+    on.exit(close(con), add=TRUE)
 
     tryCatch({
       open(con, "rb", blocking = FALSE)
@@ -99,8 +99,6 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
       headers <- append(headers, c("Content-Type"="application/json"))
       body <- jsonlite::toJSON(payload, na="null", null="null", auto_unbox=TRUE)
     }
-
-    print(body)
 
     res <- httr::VERB(
       method,
@@ -402,7 +400,7 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
     dir.create(folder, recursive = TRUE)
 
     if (type != 'arrow_dataset'){
-      on.exit(unlink(folder, recursive=TRUE))
+      on.exit(unlink(folder, recursive=TRUE), add=TRUE)
     }
   }
 
@@ -487,7 +485,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
       # This ensures the url method doesn't time out after 60s. Only applies to this function, doesn't set globally
       options(timeout=3600)
       con <- url(str_interp('${base_url}/${stream$id}?offset=${stream_rows_read}'), open = "rb", headers = headers, blocking=FALSE)
-      on.exit(close(con))
+      on.exit(close(con), add=TRUE)
       stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
 
       if (!is.null(folder) && is.null(output_file)){

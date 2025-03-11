@@ -72,7 +72,7 @@ Notebook <- setRefClass("Notebook",
        temp_upload = res$results[[1]]
 
        con <- base::file(temp_file_path, "rb")
-       on.exit(close(con))
+       on.exit(close(con), add=TRUE)
 
        if (temp_upload$resumable) {
          perform_resumable_upload(

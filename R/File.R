@@ -72,7 +72,7 @@ File <- setRefClass(
         stream_callback = function(){
           writeBin(chunk, con)
         }
-        on.exit(close(con))
+        on.exit(close(con), add=TRUE)
       }
 
       res <- make_request(method="GET", path=str_interp("/rawFiles/${.self$id}"), query=list(allowRedirect="true"), parse_response=FALSE, get_download_path_callback=get_download_path_callback, stream_callback=stream_callback)
