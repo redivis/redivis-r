@@ -87,8 +87,9 @@ Table <- setRefClass("Table",
       files = NULL,
       directory = NULL,
       progress = TRUE,
-      max_parallelization = min(20, parallelly::availableCores())
+      max_parallelization = parallelly::availableCores()
     ) {
+      max_parallelization <- min(20, max_parallelization)
       add_table_files <- function(){
           # Ensure exactly one of files or directory is provided
           if ((is.null(files) && is.null(directory)) ||
