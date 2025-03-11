@@ -2,12 +2,35 @@
 #' @include api_request.R util.R
 File <- setRefClass(
   "File",
-  fields = list(id = "character"),
-
+  fields = list(
+    id = "character",
+    properties="list",
+    table="ANY"
+  ),
   methods = list(
-    show = function(){
-      print(str_interp("<File ${.self$id}>"))
+    initialize = function(..., id="", properties=list(), table=NULL){
+      populated_properties = append(properties, list(kind="rawFile", id=id, uri=str_interp("/rawFiles/${id}")))
+      callSuper(...,
+        id=id,
+        properties=populated_properties,
+        table=table
+      )
     },
+
+    show = function(){
+      if (!is.null(.self$properties$name)){
+        print(str_interp("<File name=${.self$properties$name}, id=${.self$id})>"))
+      } else {
+        print(str_interp("<File id=${.self$id}>"))
+      }
+
+    },
+
+    get = function(){
+      res <- make_request(method="HEAD", path=str_interp("/rawFiles/${.self$id}"))
+      parse_file_headers(.self, httr::headers(res))
+    },
+
     download = function(path = NULL, overwrite = FALSE) {
       is_dir = FALSE
 
@@ -49,10 +72,10 @@ File <- setRefClass(
         stream_callback = function(){
           writeBin(chunk, con)
         }
-        on.exit(close(con))
+        on.exit(close(con), add=TRUE)
       }
 
-      res <- make_request(method="GET", path=str_interp("/rawFiles/${id}"), query=list(allowRedirect="true"), parse_response=FALSE, get_download_path_callback=get_download_path_callback, stream_callback=stream_callback)
+      res <- make_request(method="GET", path=str_interp("/rawFiles/${.self$id}"), query=list(allowRedirect="true"), parse_response=FALSE, get_download_path_callback=get_download_path_callback, stream_callback=stream_callback)
       if (is_dir){
         return(res)
       } else {
@@ -61,12 +84,27 @@ File <- setRefClass(
     },
 
     read = function(as_text = FALSE) {
-      res <- make_request(method="GET", path=str_interp("/rawFiles/${id}"), parse_response = FALSE)
+      res <- make_request(method="GET", path=str_interp("/rawFiles/${.self$id}"), parse_response = FALSE)
       httr::content(res, as = if(as_text) 'text' else 'raw')
     },
 
     stream = function(callback) {
-      make_request(method="GET", path=str_interp("/rawFiles/${id}"), parse_response = FALSE, stream_callback = callback)
+      make_request(method="GET", path=str_interp("/rawFiles/${.self$id}"), parse_response = FALSE, stream_callback = callback)
     }
   )
 )
+
+parse_file_headers <- function(file, headers) {
+  file$properties$name <- get_filename_from_content_disposition(headers[["content-disposition"]])
+  file$properties$contentType <- headers[["content-type"]]
+
+  digest = if (!is.null(headers[["Digest"]])) headers[["Digest"]] else headers[["x-goog-hash"]]
+
+  if (!is.null(digest)) {
+    file$properties$md5 <- sub("md5=", "", digest)
+  }
+
+  content_length <- headers[["content-length"]]
+
+  file$properties$size <- as.integer(if (!is.null(content_length)) content_length else headers[["x-goog-stored-content-length"]])
+}

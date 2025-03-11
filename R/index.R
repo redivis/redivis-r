@@ -12,6 +12,7 @@
 #' output_table <- redivis::query(query = 'SELECT 1 + 1 AS two')$to_tibble()
 #' @export
 query <- function(query="", default_workflow=NULL, default_dataset=NULL) {
+  show_namespace_warning("query")
   if (is.null(default_workflow) && is.null(default_dataset)){
     default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
     default_dataset <- Sys.getenv("REDIVIS_DEFAULT_DATASET")
@@ -34,6 +35,7 @@ query <- function(query="", default_workflow=NULL, default_dataset=NULL) {
 #' redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 #' @export
 user <- function(name){
+  show_namespace_warning("user")
   User$new(name=name)
 }
 
@@ -52,6 +54,7 @@ user <- function(name){
 #' redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 #' @export
 organization <- function(name){
+  show_namespace_warning("organization")
   Organization$new(name=name)
 }
 
@@ -68,6 +71,7 @@ organization <- function(name){
 
 #' @export
 table <- function(name){
+  show_namespace_warning("table")
   if (Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != ""){
     Table$new(name=name)
   } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != ""){
@@ -97,6 +101,7 @@ table <- function(name){
 #' file <- redivis::file("s335-8ey8zt7bx.qKmzpdttY2ZcaLB0wbRB7A")$download()
 #' @export
 file <- function(id) {
+  show_namespace_warning("file")
   File$new(id=id)
 }
 
@@ -110,6 +115,7 @@ file <- function(id) {
 #' redivis::current_notebook()$create_output_table(df)
 #' @export
 current_notebook <- function() {
+  show_namespace_warning("current_notebook")
   if(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != "") {
     Notebook$new(current_notebook_job_id=Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID"))
   }else {
@@ -125,6 +131,7 @@ current_notebook <- function() {
 #' @examples
 #' redivis::authenticate(force_reauthentication=FALSE)
 authenticate <- function(scope=NULL, force_reauthentication=FALSE) {
+  show_namespace_warning("authenticate")
   if (force_reauthentication){
     clear_cached_credentials()
   }
@@ -145,13 +152,57 @@ authenticate <- function(scope=NULL, force_reauthentication=FALSE) {
 #' dataset <- redivis$user("username")$dataset("dataset_name")
 #' @export
 redivis <- list(
-  "query"=query,
-  "user"=user,
-  "organization"=organization,
-  "file"=file,
-  "table"=table,
-  "current_notebook"=current_notebook,
-  "authenticate"=authenticate
+  "query"=function(query="", default_workflow=NULL, default_dataset=NULL) {
+    if (is.null(default_workflow) && is.null(default_dataset)){
+      default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
+      default_dataset <- Sys.getenv("REDIVIS_DEFAULT_DATASET")
+    }
+    Query$new(query=query, default_workflow=default_workflow, default_dataset=default_dataset)
+  },
+  "user"=function(name){
+    User$new(name=name)
+  },
+  "organization"=function(name){
+    Organization$new(name=name)
+  },
+  "file"=function(id) {
+    File$new(id=id)
+  },
+  "table"=function(name){
+    if (Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != ""){
+      Table$new(name=name)
+    } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != ""){
+      user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[1]
+      workflow_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[2]
+      User$new(name=user_name)$workflow(name=workflow_name)$table(name=name)
+
+    }else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != ""){
+      user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[1]
+      dataset_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[2]
+
+      User$new(name=user_name)$dataset(name=dataset_name)$table(name=name)
+    }
+    else{
+      stop("Cannot reference an unqualified table if the neither the REDIVIS_DEFAULT_WORKFLOW or REDIVIS_DEFAULT_DATASET environment variables are set.")
+    }
+  },
+  "current_notebook"=function() {
+    if(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != "") {
+      Notebook$new(current_notebook_job_id=Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID"))
+    }else {
+      NULL
+    }
+  },
+  "authenticate"=function(scope=NULL, force_reauthentication=FALSE) {
+    if (force_reauthentication){
+      clear_cached_credentials()
+    }
+    if (is.character(scope)){
+      scope <- list(scope)
+    }
+    get_auth_token(scope=scope)
+    invisible(NULL)
+  }
 )
 
 

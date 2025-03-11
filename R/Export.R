@@ -144,7 +144,7 @@ perform_parallel_export_download <- function(uri, file_count, download_path, is_
       if (!is.null(con) && base::isOpen(con)) {
         close(con)
       }
-    })
+    }, add=TRUE)
 
     query_params = list()
     if (!is.null(file_number)){

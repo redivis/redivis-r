@@ -1,6 +1,6 @@
 
 #' @include auth.R util.R
-make_request <- function(method='GET', query=NULL, payload = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, headers_callback=NULL, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE){
+make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, headers_callback=NULL, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE){
   # IMPORTANT: if updating the function signature, make sure to also pass to the two scenarios where we retry on 401 status
 
   if (!is.null(stream_callback) || !is.null(get_download_path_callback)){
@@ -19,7 +19,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
       url <- str_interp("${url}?${query_string}")
     }
     con <- curl::curl(url, handle=h)
-    on.exit(close(con))
+    on.exit(close(con), add=TRUE)
 
     tryCatch({
       open(con, "rb", blocking = FALSE)
@@ -34,6 +34,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
               method=method,
               query=query,
               payload=payload,
+              files=files,
               parse_response=parse_response,
               path=path,
               download_path=download_path,
@@ -85,14 +86,28 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
     if (!is.null(download_path)) handler <- httr::write_disk(download_path, overwrite = download_overwrite)
     else if (!is.null(stream_callback)) handler <- httr::write_stream(stream_callback)
 
+    headers <- get_authorization_header()
+    encode <- NULL
+    body <- NULL
+
+    if (!is.null(files)){
+      encode <- "multipart"
+      body <- files
+    }
+    else if (!is.null(payload)){
+      # Don't use encode for JSON, so we can have more control
+      headers <- append(headers, c("Content-Type"="application/json"))
+      body <- jsonlite::toJSON(payload, na="null", null="null", auto_unbox=TRUE)
+    }
+
     res <- httr::VERB(
       method,
       handler,
       url = generate_api_url(path),
-      httr::add_headers(get_authorization_header()),
+      httr::add_headers(headers),
       query = query,
-      body = payload,
-      encode="json",
+      body = body,
+      encode=encode,
       httr::timeout(3600)
     )
 
@@ -101,7 +116,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
       warning(httr::headers(res)$'x-redivis-warning')
     }
 
-    if (!parse_response && httr::status_code(res) < 400){
+    if ((!parse_response || method == "HEAD") && httr::status_code(res) < 400){
       return(res)
     }
 
@@ -142,6 +157,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, parse_respons
           method=method,
           query=query,
           payload=payload,
+          files=files,
           parse_response=parse_response,
           path=path,
           download_path=download_path,
@@ -384,7 +400,7 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
     dir.create(folder, recursive = TRUE)
 
     if (type != 'arrow_dataset'){
-      on.exit(unlink(folder, recursive=TRUE))
+      on.exit(unlink(folder, recursive=TRUE), add=TRUE)
     }
   }
 
@@ -469,7 +485,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
       # This ensures the url method doesn't time out after 60s. Only applies to this function, doesn't set globally
       options(timeout=3600)
       con <- url(str_interp('${base_url}/${stream$id}?offset=${stream_rows_read}'), open = "rb", headers = headers, blocking=FALSE)
-      on.exit(close(con))
+      on.exit(close(con), add=TRUE)
       stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
 
       if (!is.null(folder) && is.null(output_file)){
