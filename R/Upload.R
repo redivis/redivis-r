@@ -2,15 +2,16 @@
 Upload <- setRefClass("Upload",
    fields = list(name="character", table="Table", properties="list", uri="character"),
    methods = list(
-     initialize = function(..., name="", properties=list()){
+     initialize = function(..., name="", properties=list(), table=NULL){
        if (!is.null(properties$uri)){
          computed_uri <- properties$uri
        } else {
-         escaped_name = gsub('\\.', '_', upload$name)
-         computed_uri <- str_interp("${upload$table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}")
+         escaped_name = gsub('\\.', '_', name)
+         computed_uri <- str_interp("${table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}")
        }
        callSuper(...,
                  name=name,
+                 table=table,
                  properties=properties,
                  uri=computed_uri
        )
@@ -224,7 +225,7 @@ Upload <- setRefClass("Upload",
       temp_upload_id <- NULL
 
       ## If `content` is a file path (a string) then open it as a binary connection
-      if (is.character(content) && file.exists(content)) {
+      if (is.character(content)) {
         if (base::file.exists(content)){
           f <- base::file(content, open="rb", blocking=FALSE)
           on.exit(close(f), add = TRUE)
