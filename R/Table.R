@@ -56,7 +56,7 @@ Table <- setRefClass("Table",
          payload <- append(payload, list("description"=description))
        }
        if (!is.null(upload_merge_strategy)){
-         payload <- append(payload, list("upload_merge_strategy"=upload_merge_strategy))
+         payload <- append(payload, list("uploadMergeStrategy"=upload_merge_strategy))
        }
        res <- make_request(
          method="PATCH",

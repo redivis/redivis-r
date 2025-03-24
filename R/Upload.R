@@ -2,7 +2,7 @@
 Upload <- setRefClass("Upload",
    fields = list(name="character", table="Table", properties="list", uri="character"),
    methods = list(
-     initialize = function(..., name="", properties=list(), table=NULL){
+     initialize = function(..., name="", properties=list(), table){
        if (!is.null(properties$uri)){
          computed_uri <- properties$uri
        } else {
