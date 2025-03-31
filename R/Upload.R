@@ -395,11 +395,3 @@ Upload <- setRefClass("Upload",
   )
 )
 
-get_upload_uri = function(upload){
-  if (!is.null(upload$properties$uri)){
-    return(upload$properties$uri)
-  }
-  escaped_name = gsub('\\.', '_', upload$name)
-  str_interp("${upload$table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}")
-}
-

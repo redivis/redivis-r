@@ -414,7 +414,6 @@ make_rows_request <- function(uri, max_results=NULL, selected_variable_names = N
 
   ds <- arrow::open_dataset(folder, format = if (use_export_api) "parquet" else "feather", schema = if (is.null(batch_preprocessor) && !use_export_api) get_arrow_schema(variables) else NULL)
 
-  # TODO: remove head() once BE is sorted
   if (type == 'arrow_dataset'){
     return(ds)
   } else {
@@ -468,8 +467,6 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
 
   process_arrow_stream <- function(stream, in_memory_batches=c(), stream_writer=NULL, output_file=NULL, stream_rows_read=0, retry_count=0){
     schema <- get_arrow_schema(variables)
-    schema_field_uncased_name_map <- sapply(schema$names, tolower)
-    schema_field_uncased_name_map <- purrr::set_names(names(schema_field_uncased_name_map), schema_field_uncased_name_map)
 
     # Workaround for self-signed certs in dev
     # h <- curl::new_handle()
@@ -493,7 +490,6 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
         output_file <- arrow::FileOutputStream$create(str_interp('${folder}/${stream$id}.feather'))
       }
 
-      fields_to_rename <- list()
       fields_to_add <- list()
       should_reorder_fields <- FALSE
       time_variables_to_coerce = c()
@@ -502,47 +498,35 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
       # Make sure to first only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
       for (field in stream_reader$schema$fields){
         i <- i+1
-        final_schema_field_name <- schema_field_uncased_name_map[[tolower(field$name)]]
 
-        if (final_schema_field_name != field$name){
-          stream_reader_schema <- stream_reader$schema
-          rename_config <- purrr::set_names(list(list(new_name=final_schema_field_name, index=i)), c(final_schema_field_name))
-          fields_to_rename <- append(fields_to_rename, rename_config)
-        }
         if (coerce_schema && is(field$type, "Time64")){
           time_variables_to_coerce <- append(time_variables_to_coerce, field$name)
         }
-        if (!should_reorder_fields && i != match(final_schema_field_name, names(schema))){
+        if (!should_reorder_fields && i != match(field$name, names(schema))){
           should_reorder_fields <- TRUE
         }
       }
 
       for (field_name in schema$names){
-        if (is.null(stream_reader$schema$GetFieldByName(field_name)) && is.null(fields_to_rename[[field_name]])){
+        if (is.null(stream_reader$schema$GetFieldByName(field_name))){
           fields_to_add <- append(fields_to_add, schema$GetFieldByName(field_name))
         }
       }
 
-      if (should_reorder_fields && length(fields_to_add)){
+      if (!should_reorder_fields && length(fields_to_add)){
         should_reorder_fields <- TRUE
       }
 
       last_measured_time <- Sys.time()
       current_progress_rows <- 0
-      overread_stream_rows <- 0
 
       while (TRUE){
         batch <- stream_reader$read_next_batch()
-        if (is.null(batch) || overread_stream_rows > 0){
+        if (is.null(batch)){
           break
         } else {
           current_progress_rows <- current_progress_rows + batch$num_rows
           stream_rows_read <- stream_rows_read + batch$num_rows
-
-          if (!is.null(stream$maxResults) && stream_rows_read > stream$maxResults){
-            overread_stream_rows <- stream_rows_read - stream$maxResults
-            current_progress_rows <- current_progress_rows - overread_stream_rows
-          }
 
           # We need to coerce_schema for all dataset tables, since their underlying storage type is always a string
           if (coerce_schema){
@@ -552,9 +536,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
             for (time_variable in time_variables_to_coerce){
               batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
             }
-            for (rename_args in fields_to_rename){
-              names(batch)[[rename_args$index]] <- rename_args$new_name
-            }
+
             # TODO: this is a significant bottleneck. Can we make it faster, maybe call all at once?
             for (field in fields_to_add){
               if (is(field$type, "Date32")){
@@ -589,9 +571,6 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
           }
 
           if (!is.null(batch)){
-            if (overread_stream_rows > 0){
-              batch <- head(batch, batch$num_rows - overread_stream_rows)
-            }
             if (!is.null(output_file)){
               if (is.null(stream_writer)){
                 stream_writer <- arrow::RecordBatchFileWriter$create(output_file, schema=if (is.null(batch_preprocessor)) schema else batch$schema)
