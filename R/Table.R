@@ -245,7 +245,7 @@ Table <- setRefClass("Table",
        Variable$new(name=name, table=.self)
      },
 
-     upload = function(name){
+     upload = function(name=""){
        Upload$new(name=name, table=.self)
      },
 
@@ -578,6 +578,7 @@ get_table_request_params = function(self, max_results, variables, geography_vari
       lower_variable_names,
       function (name) all_variables[match(name, sapply(all_variables, function(variable) tolower(variable$name)))][1]
     )
+    variables_list <- Filter(Negate(is.null), variables_list)
   }
 
   if (is.null(self$properties$container)){
