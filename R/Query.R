@@ -167,6 +167,7 @@ get_query_request_params = function(self, max_results, variables, geography_vari
       lower_variable_names,
       function (name) all_variables[match(name, sapply(all_variables, function(variable) tolower(variable$name)))][1]
     )
+    variables_list <- Filter(Negate(is.null), variables_list)
   }
 
   selected_variable_names <- if (is.null(variables)) NULL else Map(function(variable_name) variable_name, variables)
