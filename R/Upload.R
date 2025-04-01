@@ -20,6 +20,9 @@ Upload <- setRefClass("Upload",
        print(str_interp("<Upload ${.self$uri}>"))
      },
     get = function(){
+      if (.self$name == "" && is.null(.self$properties$uri)){
+        stop('Cannot get an upload without a specified name')
+      }
       .self$properties <- make_request(path=.self$uri)
       .self$uri <- .self$properties$uri
       .self
@@ -227,6 +230,9 @@ Upload <- setRefClass("Upload",
       ## If `content` is a file path (a string) then open it as a binary connection
       if (is.character(content)) {
         if (base::file.exists(content)){
+          if (.self$name == ""){
+            .self$name = basename(content)
+          }
           f <- base::file(content, open="rb", blocking=FALSE)
           on.exit(close(f), add = TRUE)
           content <- f
@@ -237,6 +243,16 @@ Upload <- setRefClass("Upload",
             stop("No file found at path provided for `content` argument. To upload data as content, make sure that the `content` argument is a raw vector.")
           }
         }
+      } else if (!is.null(content) && inherits(content, "connection")){
+        if (.self$name == ""){
+          .self$name = basename(get_conn_name(content))
+        }
+      } else if (!is.null(content) && !is.raw(content)){
+        temp_file_path <- convert_data_to_parquet(content)
+        content <-  base::file(temp_file_path, open="rb", blocking=FALSE)
+        on.exit(close(content), add = TRUE)
+        on.exit(base::file.remove(temp_file_path), add = TRUE)
+        type="parquet"
       }
 
       ## Check if content is large enough to need a temporary upload.
@@ -305,7 +321,15 @@ Upload <- setRefClass("Upload",
         warning("The schema option is ignored for uploads that aren't of type `stream`")
       }
 
-      exists <- .self$exists()
+      exists <- FALSE
+      if (.self$name != ""){
+        if (is.null(.self$properties$uri)){
+          # Handles case when name has changed in this fn
+          escaped_name = gsub('\\.', '_', .self$name)
+          .self$uri <- str_interp("${.self$table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}")
+        }
+        exists <- .self$exists()
+      }
 
       if (if_not_exists && exists) {
         return(.self)
@@ -365,6 +389,7 @@ Upload <- setRefClass("Upload",
       )
 
       .self$properties <- response
+      .self$uri <- .self$properties$uri
 
       ## Wait for the upload to finish if required
       tryCatch({
@@ -384,7 +409,7 @@ Upload <- setRefClass("Upload",
           }
         }
       }, error = function(e) {
-        if (remove_on_fail) {
+        if (remove_on_fail && .self$properties$status == "failed") {
           .self$delete()
         }
         stop(e)

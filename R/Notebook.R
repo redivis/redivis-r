@@ -23,26 +23,8 @@ Notebook <- setRefClass("Notebook",
          )
        }
 
-       folder <- str_interp('/${get_temp_dir()}/out')
-
-       if (!dir.exists(folder)) dir.create(folder, recursive = TRUE)
-
-       temp_file_path <- str_interp('${folder}/${uuid::UUIDgenerate()}')
-
-       should_remove_tempfile = TRUE
-
-       if (is(data,"sf")){
-         sf_column_name <- attr(data, "sf_column")
-         if (is.null(geography_variables)){
-           payload=base::append(
-             payload,
-             list("geographyVariables" = list(sf_column_name))
-           )
-         }
-         wkt_geopoint <- sapply(sf::st_geometry(data), function(x) sf::st_as_text(x))
-         sf::st_geometry(data) <- NULL
-         data[sf_column_name] <- wkt_geopoint
-       }
+       should_remove_tempfile <- TRUE
+       temp_file_path <- NULL
 
        if (is.character(data)){
          if (endsWith(data, ".parquet")) {
@@ -51,14 +33,17 @@ Notebook <- setRefClass("Notebook",
          } else {
            stop("Only paths to parquet files (ending in .parquet) are supported when a string argument is provided")
          }
-       } else if (is(data, "Dataset")){
-         dir.create(temp_file_path)
-         arrow::write_dataset(data, temp_file_path, format='parquet', max_partitions=1, basename_template="part-{i}.parquet")
-         temp_file_path <- str_interp('${temp_file_path}/part-0.parquet')
-         file_path = temp_file_path
        } else {
-          arrow::write_parquet(data, sink=temp_file_path)
-          file_path = temp_file_path
+          if (is(data,"sf")){
+            sf_column_name <- attr(data, "sf_column")
+            if (is.null(geography_variables)){
+              payload=base::append(
+              payload,
+              list("geographyVariables" = list(sf_column_name))
+              )
+            }
+          }
+         temp_file_path <- convert_data_to_parquet(data)
        }
 
        file_size <- base::file.info(temp_file_path)$size

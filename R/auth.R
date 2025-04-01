@@ -150,6 +150,8 @@ perform_oauth_login <- function(scope, amr_values=NULL, upgrade_credentials=FALS
 }
 
 refresh_credentials <- function(scope=NULL, amr_values=NULL) {
+  # Recreate, in case REDIVIS_API_ENDPOINT has changed
+  auth_vars$base_url <- sub("(https?://.*?)(/|$).*", "\\1", Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com'))
   if (!is.null(scope) || !is.null(amr_values)){
     perform_oauth_login(
       scope=if (is.null(scope)) get_current_credential_scope() else scope,

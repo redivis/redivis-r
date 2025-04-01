@@ -245,7 +245,7 @@ Table <- setRefClass("Table",
        Variable$new(name=name, table=.self)
      },
 
-     upload = function(name){
+     upload = function(name=""){
        Upload$new(name=name, table=.self)
      },
 

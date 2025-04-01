@@ -1,7 +1,7 @@
 
 #' @include auth.R util.R
-make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, headers_callback=NULL, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE){
-  # IMPORTANT: if updating the function signature, make sure to also pass to the two scenarios where we retry on 401 status
+make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, headers_callback=NULL, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE, retry_count=0){
+  # IMPORTANT: if updating the function signature, make sure to also pass to the 4 scenarios where we retry on 401 / 503 status (retry_count doesn't always need to be passed)
 
   if (!is.null(stream_callback) || !is.null(get_download_path_callback)){
     h <- curl::new_handle()
@@ -26,6 +26,27 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
       res_data <- curl::handle_data(h)
     }, error = function(e){
       res_data <- curl::handle_data(h)
+      if (res_data$status_code == 503 && retry_count < 10){
+        Sys.sleep(retry_count)
+        return(
+          make_request(
+            method=method,
+            query=query,
+            payload=payload,
+            files=files,
+            parse_response=parse_response,
+            path=path,
+            download_path=download_path,
+            download_overwrite=download_overwrite,
+            as_stream=as_stream,
+            headers_callback=headers_callback,
+            get_download_path_callback=get_download_path_callback,
+            stream_callback=stream_callback,
+            stop_on_error=stop_on_error,
+            retry_count=retry_count+1
+          )
+        )
+      }
       if (res_data$status_code >= 400){
         if (res_data$status_code == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
           refresh_credentials()
@@ -110,6 +131,29 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
       encode=encode,
       httr::timeout(3600)
     )
+
+    if (httr::status_code(res) == 503 && retry_count < 10){
+      Sys.sleep(retry_count)
+      print('retrying...')
+      return(
+        make_request(
+          method=method,
+          query=query,
+          payload=payload,
+          files=files,
+          parse_response=parse_response,
+          path=path,
+          download_path=download_path,
+          download_overwrite=download_overwrite,
+          as_stream=as_stream,
+          headers_callback=headers_callback,
+          get_download_path_callback=get_download_path_callback,
+          stream_callback=stream_callback,
+          stop_on_error=stop_on_error,
+          retry_count=retry_count+1
+        )
+      )
+    }
 
     if (!is.null(httr::headers(res)$'x-redivis-warning') && is.null(globals$printed_warnings[[httr::headers(res)$'x-redivis-warning']])){
       globals$printed_warnings[httr::headers(res)$'x-redivis-warning'] <- TRUE
@@ -498,8 +542,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
       # Make sure to first only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
       for (field in stream_reader$schema$fields){
         i <- i+1
-
-        if (coerce_schema && is(field$type, "Time64")){
+        if (coerce_schema && is(schema[[field$name]]$type, "Time64")){
           time_variables_to_coerce <- append(time_variables_to_coerce, field$name)
         }
         if (!should_reorder_fields && i != match(field$name, names(schema))){
