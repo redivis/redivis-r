@@ -249,10 +249,11 @@ Upload <- setRefClass("Upload",
         }
       } else if (!is.null(content) && !is.raw(content)){
         temp_file_path <- convert_data_to_parquet(content)
-        content <-  base::file(temp_file_path, open="rb", blocking=FALSE)
-        on.exit(close(content), add = TRUE)
+        f <- base::file(temp_file_path, open="rb", blocking=FALSE)
+        on.exit(close(f), add = TRUE)
         on.exit(base::file.remove(temp_file_path), add = TRUE)
         type="parquet"
+        content <- f
       }
 
       ## Check if content is large enough to need a temporary upload.
