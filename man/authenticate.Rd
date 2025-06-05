@@ -4,7 +4,7 @@
 \alias{authenticate}
 \title{authenticate}
 \usage{
-authenticate(force_reauthentication = FALSE)
+authenticate(scope = NULL, force_reauthentication = FALSE)
 }
 \value{
 void

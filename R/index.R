@@ -168,6 +168,9 @@ redivis <- list(
   "file"=function(id) {
     File$new(id=id)
   },
+  "make_api_request"=function(method='GET', path = "", query=NULL, payload=NULL, parse_response=TRUE, stream_callback=NULL){
+    make_request(method=method, path=path, query=query, payload=payload, parse_response=parse_response, stream_callback=stream_callback)
+  },
   "table"=function(name){
     if (Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != ""){
       Table$new(name=name)
