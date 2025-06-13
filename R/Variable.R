@@ -17,6 +17,9 @@ Variable <- setRefClass("Variable",
       print(str_interp("<Variable `${.self$table$qualified_reference}`.${.self$name}>"))
     },
     get = function(wait_for_statistics=FALSE) {
+      if (wait_for_statistics){
+        warning('Calling variable$get with the wait_for_statistics parameter is deprecated. Please use variable$get_statistics() instead.')
+      }
       .self$properties = make_request(path=.self$uri)
       .self$uri = .self$properties$uri
       while (wait_for_statistics && .self$properties$statistics$status == "running"){
@@ -25,6 +28,15 @@ Variable <- setRefClass("Variable",
         .self$uri = .self$properties$uri
       }
       .self
+    },
+
+    get_statistics = function(){
+      statistics <- make_request(path=str_interp("${.self$uri}/statistics"))
+      while (statistics$status == "running" || statistics$status == "queued"){
+        Sys.sleep(2)
+        statistics <- make_request(path=str_interp("${.self$uri}/statistics"))
+      }
+      statistics
     },
 
     exists = function(){
