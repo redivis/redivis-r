@@ -1,4 +1,4 @@
-#' @include Dataset.R Workflow.R api_request.R
+#' @include Dataset.R Workflow.R Secret.R api_request.R
 User <- setRefClass("User",
   fields = list(name="character"),
   methods = list(
@@ -16,6 +16,10 @@ User <- setRefClass("User",
     project = function(name) {
       warning("Deprecation warning: Projects have been renamed to Workflows, please update your code to: user$workflow()")
       Workflow$new(name=name, user=.self)
+    },
+
+    secret = function(name) {
+        Secret$new(name=name, user=.self)
     },
 
     list_datasets = function(max_results=NULL) {

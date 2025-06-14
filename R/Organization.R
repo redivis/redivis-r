@@ -1,4 +1,4 @@
-#' @include Dataset.R api_request.R
+#' @include Dataset.R Secret.R api_request.R
 Organization <- setRefClass("Organization",
   fields = list(name="character"),
   methods = list(
@@ -7,6 +7,9 @@ Organization <- setRefClass("Organization",
     },
     dataset = function(name, version=NULL) {
       Dataset$new(name=name, version=version, organization=.self)
+    },
+    secret = function(name) {
+      Secret$new(name=name, organization=.self)
     },
     list_datasets = function(max_results=NULL) {
       datasets <- make_paginated_request(path=str_interp("/organizations/${.self$name}/datasets"), page_size=100, max_results=max_results)
