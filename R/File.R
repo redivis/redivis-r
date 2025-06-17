@@ -83,13 +83,36 @@ File <- setRefClass(
       }
     },
 
-    read = function(as_text = FALSE) {
-      res <- make_request(method="GET", path=str_interp("/rawFiles/${.self$id}"), parse_response = FALSE)
+    read = function(as_text = FALSE, start_byte=0, end_byte=0) {
+      range_headers = list()
+      if (start_byte){
+        range_headers["Range"] = str_interp("bytes=${start_byte}-")
+      }
+      else if (end_byte){
+        range_headers["Range"] = str_interp("bytes=${start_byte}-${end_byte}")
+      }
+
+      res <- make_request(
+        method="GET",
+        path=str_interp("/rawFiles/${.self$id}"),
+        parse_response = FALSE,
+        headers=range_headers
+      )
       httr::content(res, as = if(as_text) 'text' else 'raw')
     },
 
-    stream = function(callback) {
-      make_request(method="GET", path=str_interp("/rawFiles/${.self$id}"), parse_response = FALSE, stream_callback = callback)
+    stream = function(callback, start_byte=0) {
+      range_headers = list()
+      if (start_byte){
+        range_headers["Range"] = str_interp("bytes=${start_byte}-")
+      }
+      make_request(
+        method="GET",
+        path=str_interp("/rawFiles/${.self$id}"),
+        parse_response = FALSE,
+        stream_callback = callback,
+        headers = range_headers
+      )
     }
   )
 )

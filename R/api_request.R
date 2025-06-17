@@ -1,12 +1,11 @@
 
 #' @include auth.R util.R
-make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE, headers_callback=NULL, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE, retry_count=0){
+make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE,  headers=NULL, headers_callback=NULL, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE, retry_count=0){
   # IMPORTANT: if updating the function signature, make sure to also pass to the 4 scenarios where we retry on 401 / 503 status (retry_count doesn't always need to be passed)
 
   if (!is.null(stream_callback) || !is.null(get_download_path_callback)){
     h <- curl::new_handle()
-    auth = get_authorization_header()
-    curl::handle_setheaders(h, "Authorization"=auth[[1]])
+    curl::handle_setheaders(h, append(get_authorization_header(as_list=TRUE), headers))
     curl::handle_setopt(h, failonerror = 0)
     url <- generate_api_url(path)
     if (length(query) > 0){
@@ -39,6 +38,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
             download_path=download_path,
             download_overwrite=download_overwrite,
             as_stream=as_stream,
+            headers=headers,
             headers_callback=headers_callback,
             get_download_path_callback=get_download_path_callback,
             stream_callback=stream_callback,
@@ -61,6 +61,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
               download_path=download_path,
               download_overwrite=download_overwrite,
               as_stream=as_stream,
+              headers=headers,
               headers_callback=headers_callback,
               get_download_path_callback=get_download_path_callback,
               stream_callback=stream_callback,
@@ -107,7 +108,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
     if (!is.null(download_path)) handler <- httr::write_disk(download_path, overwrite = download_overwrite)
     else if (!is.null(stream_callback)) handler <- httr::write_stream(stream_callback)
 
-    headers <- get_authorization_header()
+    request_headers <- append(get_authorization_header(), unlist(headers))
     encode <- NULL
     body <- NULL
 
@@ -117,7 +118,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
     }
     else if (!is.null(payload)){
       # Don't use encode for JSON, so we can have more control
-      headers <- append(headers, c("Content-Type"="application/json"))
+      request_headers <- append(request_headers, c("Content-Type"="application/json"))
       body <- jsonlite::toJSON(payload, na="null", null="null", auto_unbox=TRUE)
     }
 
@@ -125,7 +126,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
       method,
       handler,
       url = generate_api_url(path),
-      httr::add_headers(headers),
+      httr::add_headers(request_headers),
       query = query,
       body = body,
       encode=encode,
@@ -146,6 +147,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
           download_path=download_path,
           download_overwrite=download_overwrite,
           as_stream=as_stream,
+          headers=headers,
           headers_callback=headers_callback,
           get_download_path_callback=get_download_path_callback,
           stream_callback=stream_callback,
@@ -207,6 +209,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
           download_path=download_path,
           download_overwrite=download_overwrite,
           as_stream=as_stream,
+          headers=headers,
           headers_callback=headers_callback,
           get_download_path_callback=get_download_path_callback,
           stream_callback=stream_callback,
@@ -246,8 +249,8 @@ perform_parallel_download <- function(paths, overwrite, get_download_path_from_h
   for (path in paths){
     h <- curl::new_handle()
     url <- generate_api_url(path)
-    auth = get_authorization_header()
-    curl::handle_setheaders(h, "Authorization"=auth[[1]])
+    auth = get_authorization_header(as_list=TRUE)
+    curl::handle_setheaders(h, auth)
     curl::handle_setopt(h, "url"=url)
 
     fail_fn <- function(e){
@@ -480,9 +483,13 @@ generate_api_url <- function(path){
 
 version_info <- R.Version()
 redivis_version <- packageVersion("redivis")
-get_authorization_header <- function(){
+get_authorization_header <- function(as_list=FALSE){
   auth_token <- get_auth_token()
-  c("Authorization"=str_interp("Bearer ${auth_token}"), "User-Agent"=str_interp("redivis-r/${redivis_version} (${version_info$platform}; R/${version_info$major}.${version_info$minor})"))
+  if (as_list){
+    list("Authorization"=str_interp("Bearer ${auth_token}"), "User-Agent"=str_interp("redivis-r/${redivis_version} (${version_info$platform}; R/${version_info$major}.${version_info$minor})"))
+  } else {
+    c("Authorization"=str_interp("Bearer ${auth_token}"), "User-Agent"=str_interp("redivis-r/${redivis_version} (${version_info$platform}; R/${version_info$major}.${version_info$minor})"))
+  }
 }
 
 
