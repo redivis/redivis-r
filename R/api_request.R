@@ -5,7 +5,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
 
   if (!is.null(stream_callback) || !is.null(get_download_path_callback)){
     h <- curl::new_handle()
-    curl::handle_setheaders(h, append(get_authorization_header(as_list=TRUE), headers))
+    curl::handle_setheaders(h, .list=append(get_authorization_header(as_list=TRUE), headers))
     curl::handle_setopt(h, failonerror = 0)
     url <- generate_api_url(path)
     if (length(query) > 0){
@@ -250,7 +250,7 @@ perform_parallel_download <- function(paths, overwrite, get_download_path_from_h
     h <- curl::new_handle()
     url <- generate_api_url(path)
     auth = get_authorization_header(as_list=TRUE)
-    curl::handle_setheaders(h, auth)
+    curl::handle_setheaders(h, .list=auth)
     curl::handle_setopt(h, "url"=url)
 
     fail_fn <- function(e){
@@ -522,7 +522,7 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
     # Workaround for self-signed certs in dev
     # h <- curl::new_handle()
     # auth = get_authorization_header()
-    # curl::handle_setheaders(h, "Authorization"=auth[[1]])
+    # curl::handle_setheaders(h, .list=auth)
     # if (Sys.getenv("REDIVIS_API_ENDPOINT") == "https://localhost:8443/api/v1"){
     #   curl::handle_setopt(h, "ssl_verifypeer"=0L)
     # }
