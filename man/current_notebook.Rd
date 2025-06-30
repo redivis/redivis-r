@@ -10,7 +10,7 @@ current_notebook()
 class<Notebook>
 }
 \description{
-A reference to the current Redivis notebook. Will be NULL if not running in a Redivis notebook environment.
+DEPRECATED: please use redivis$current_notebook
 }
 \examples{
 redivis::current_notebook()$create_output_table(df)

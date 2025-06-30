@@ -11,13 +11,12 @@ auth_vars$client_id = 'Ah850nGnQg5mFWd25nkyk9Y3'
 auth_vars$base_url = sub("(https?://.*?)(/|$).*", "\\1", Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com'))
 
 get_auth_token <- function(scope=NULL) {
-
   if (is.null(scope)){
     scope <- auth_vars$default_scope
   }
 
   if (!is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA))) {
-    if (is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA)) && interactive()) {
+    if (is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset=NA)) && interactive()) {
       warning("Setting the REDIVIS_API_TOKEN for interactive sessions is deprecated and highly discouraged.
 Please delete the token on Redivis and remove it from your code, and follow the authentication prompts here instead.
 

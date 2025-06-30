@@ -5,18 +5,83 @@
 \alias{redivis}
 \title{redivis}
 \format{
-An object of class \code{list} of length 8.
+An object of class \code{list} of length 15.
 }
 \usage{
-redivis
+library(redivis)
+
+# Reference various resources
+redivis$current_user()
+redivis$dataset(name)
+redivis$datasource(source)
+redivis$file(id)
+redivis$notebook(name)
+redivis$organization(name)
+redivis$table(name)
+redivis$transform(name)
+redivis$user(name)
+redivis$workflow(name)
+
+# Create a SQL query
+redivis$query(query)
+
+# Only available within Redivis notebooks
+redivis$current_notebook()
+redivis$current_workflow()
+user$secret("MY_SECRET")$get_value()
+organization$secret("OUR_SECRET")$get_value()
+
+# Read data
+query$to_tibble()
+table$to_tibble()
+# also:
+#   to_data_table()
+#   to_arrow_table()
+#   to_arrow_batch_iterator()
+#   to_sf_tibble()
+#   ...
+table$download(path=NULL, format="csv", ...)
+file$read(...)
+file$download(path=NULL, ...)
+file$stream(callback)
+table$download_files(path, ...)
+
+# Upload tabular data
+table$upload()$create("/path/to/file.csv", ...)
+# Upload raw files
+table$add_files(directory="/path/to/dir", ...)
+
+# List resources
+organization$list_datasets(max_results)
+user$list_datasets(max_results)
+user$list_workflows(max_results)
+dataset$list_tables(max_results)
+workflow$list_transforms(max_results)
+table$list_variables(max_results)
+#...etc, see documentation
+
+# Miscellaneous methods, for advanced use cases
+redivis$authenticate(scope=NULL, force_reauthentication=FALSE)
+redivis$make_api_request(method="GET", path, ...)
 }
 \value{
-list
+list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, query, table, transform, user, workflow)
 }
 \description{
-Redivis wrapper, all primary methods accessible via $
+Redivis wrapper, all primary constructor accessible via redivis$<constructor>()
+
+Full documentation and examples available at: https://apidocs.redivis.com/client-libraries/redivis-r
 }
 \examples{
-dataset <- redivis$user("username")$dataset("dataset_name")
+ df <- redivis$table("demo.ghcn_daily_weather_data.stations")$to_tibble()
+ df <- redivis$query("SELECT 1+1 as two")$to_tibble()
+
+ dataset <- redivis$dataset("demo.ghcn_daily_weather_data")$exists() -> TRUE
+ datasets <- redivis$organization("demo")$list_datasets(max_results=10)
+ workflows <- redivis$current_user()$list_workflows(10)
+
+ # Only callable from within a Redivis notebook
+ notebook <- redivis$current_notebook();
+ workflow <- redivis$current_workflow();
 }
 \keyword{datasets}

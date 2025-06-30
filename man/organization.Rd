@@ -13,7 +13,7 @@ organization(name)
 class<user>
 }
 \description{
-Reference organization-owned resources on Redivis
+DEPRECATED: please use redivis$organization
 }
 \examples{
 redivis::organization('demo_organization')$dataset('some_dataset')$table('a_table')$to_tibble(max_results=100)
