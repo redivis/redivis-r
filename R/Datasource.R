@@ -28,7 +28,7 @@ Datasource <- setRefClass("Datasource",
 
        callSuper(source=parsed_source,
                  workflow=parsed_workflow,
-                 uri=str_interp("${workflow$uri}/dataSources/${parsed_source}"),
+                 uri=str_interp("${parsed_workflow$uri}/dataSources/${parsed_source}"),
                  properties=properties
        )
      },

@@ -71,17 +71,8 @@ Workflow <- setRefClass("Workflow",
        Transform$new(name=name, workflow=.self)
      },
 
-     datasource = function(dataset=NULL, workflow=NULL){
-       if (is.null(dataset) && is.null(workflow)){
-          stop("Either a dataset or a workflow must be specified")
-       }
-       if (!is.null(dataset) && !is.character(dataset)){
-         dataset <- dataset$uri
-       }
-       if (!is.null(workflow) && !is.character(workflow)){
-         workflow <- workflow$uri
-       }
-       Datasource$new(source=if(!is.null(dataset)) dataset else workflow, workflow=.self)
+     datasource = function(source){
+       Datasource$new(source=source, workflow=.self)
      },
 
      query = function(query){
