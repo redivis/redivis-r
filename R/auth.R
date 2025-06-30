@@ -6,7 +6,7 @@ auth_vars$redivis_dir = file.path(Sys.getenv("HOME"), ".redivis")
 auth_vars$cached_credentials = NULL
 auth_vars$verify_ssl = !grepl("https://localhost", Sys.getenv("REDIVIS_API_ENDPOINT", "https://redivis.com"), fixed = TRUE)
 auth_vars$credentials_file = file.path(file.path(Sys.getenv("HOME"), ".redivis"), "r_credentials")
-auth_vars$default_scope = list('data.edit')
+auth_vars$default_scope = list('data.edit', 'workflow.write')
 auth_vars$client_id = 'Ah850nGnQg5mFWd25nkyk9Y3'
 auth_vars$base_url = sub("(https?://.*?)(/|$).*", "\\1", Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com'))
 
