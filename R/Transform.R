@@ -19,7 +19,7 @@ Transform <- setRefClass("Transform",
           stop("Invalid transform specifier, must be the fully qualified reference if no dataset or workflow is specified")
         }
       }
-      parent_reference <- str_interp("${parent_reference}.")
+      parent_reference <- str_interp("${parsed_workflow$qualified_reference}.")
       scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else parsed_name
       qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${parent_reference}${parsed_name}")
       callSuper(...,
