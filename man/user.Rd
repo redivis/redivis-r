@@ -13,7 +13,7 @@ user(name)
 class<user>
 }
 \description{
-Reference user-owned resources on Redivis
+DEPRECATED: please use redivis$user
 }
 \examples{
 redivis::user('my_username')$workflow('my_workflow')$table('my_table')$to_tibble(max_results=100)

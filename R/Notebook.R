@@ -1,7 +1,120 @@
 #' @include Table.R User.R api_request.R util.R
 Notebook <- setRefClass("Notebook",
-   fields = list(current_notebook_job_id="character"),
+   fields = list(
+     name="character",
+     workflow="ANY",
+     properties="list",
+     qualified_reference="character",
+     scoped_reference="character",
+     uri="character"
+   ),
+
+   #
+   # IMPORTANT: any calls to R stop() need to use base::stop(), otherwise it'll call the stop method on the notebook, because R ?!
+   #
    methods = list(
+     initialize = function(..., name="", workflow=NULL, properties=list()){
+       parent_reference <- ""
+       parsed_name <- name
+       parsed_workflow <- workflow
+       if (is.null(parsed_workflow)){
+         split <- strsplit(name, "\\.")[[1]]
+         if (length(split) == 3){
+           parsed_name <- split[[3]]
+           parsed_workflow <- Workflow$new(name=paste(split[1:2], collapse='.'))
+         } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != ""){
+           parsed_workflow <- Workflow$new(name=Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"))
+         } else if (
+           name != "" # Need this check otherwise package won't build (?)
+         ){
+           base::stop("Invalid notebook specifier, must be the fully qualified reference if no dataset or workflow is specified")
+         }
+       }
+       parent_reference <- str_interp("${parsed_workflow$qualified_reference}.")
+       scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else parsed_name
+       qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${parent_reference}${parsed_name}")
+       callSuper(...,
+                 name=parsed_name,
+                 workflow=parsed_workflow,
+                 qualified_reference=qualified_reference_val,
+                 scoped_reference=scoped_reference_val,
+                 uri=str_interp("/notebooks/${URLencode(qualified_reference_val)}"),
+                 properties=properties
+       )
+     },
+
+     show = function(){
+       print(str_interp("<Notebook `${.self$qualified_reference}`>"))
+     },
+
+     exists = function(){
+       res <- make_request(method="HEAD", path=.self$uri, stop_on_error=FALSE)
+       if (length(res$error)){
+         if (res$status == 404){
+           return(FALSE)
+         } else {
+           base::stop(str_interp("${res$error}: ${res$error_description}"))
+         }
+       } else {
+         return(TRUE)
+       }
+     },
+
+     get = function() {
+       .self$properties = make_request(path=.self$uri)
+       .self$uri = .self$properties$uri
+       .self
+     },
+
+     source_tables = function(){
+       .self$get()
+
+       lapply(.self$properties[["sourceTables"]], function(source_table) {
+         Table$new(name=source_table[["qualifiedReference"]], properties = source_table)
+       })
+     },
+
+     output_table = function(){
+       .self$get()
+       output_table_properties <- .self$properties[["outputTable"]]
+       if (is.null(.self$properties[["outputTable"]])){
+         return(NULL)
+       }
+       Table$new(name=output_table_properties[["qualifiedReference"]], properties = output_table_properties)
+     },
+
+     run = function(wait_for_finish=TRUE) {
+       .self$properties = make_request(method="POST", path=str_interp("${.self$uri}/run"))
+       .self$uri = .self$properties$uri
+
+       if (wait_for_finish) {
+         repeat {
+           Sys.sleep(2)
+           .self$get()
+
+           current_job <- .self$properties[["currentJob"]]
+           if (is.null(current_job)){
+             # When the job finishes, we need to look at the lastRunJob for status
+             current_job <- .self$properties[["lastRunJob"]]
+           }
+
+           if (!is.null(current_job) && current_job[["status"]] %in% c("completed", "failed")) {
+             if (current_job[["status"]] == "failed") {
+               base::stop(current_job[["errorMessage"]])
+             }
+             break
+           }
+         }
+       }
+       .self
+     },
+
+     stop = function() {
+       .self$properties = make_request(method="POST", path=str_interp("${.self$uri}/stop"))
+       .self$uri = .self$properties$uri
+       .self
+     },
+
      create_output_table = function(data, name = NULL, geography_variables = NULL, append = FALSE){
        payload = list()
        if (!is.null(name)){
@@ -31,7 +144,7 @@ Notebook <- setRefClass("Notebook",
            should_remove_tempfile <- FALSE
            temp_file_path <- data
          } else {
-           stop("Only paths to parquet files (ending in .parquet) are supported when a string argument is provided")
+           base::stop("Only paths to parquet files (ending in .parquet) are supported when a string argument is provided")
          }
        } else {
           if (is(data,"sf")){
@@ -47,6 +160,12 @@ Notebook <- setRefClass("Notebook",
        }
 
        file_size <- base::file.info(temp_file_path)$size
+
+       if (is.null(.self$properties$currentJob)){
+         .self$get()
+       }
+
+       current_notebook_job_id = .self$properties[["currentJob"]][["id"]]
 
        res <- make_request(
          method="POST",

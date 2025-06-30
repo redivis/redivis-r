@@ -6,17 +6,37 @@ Table <- setRefClass("Table",
    methods = list(
      initialize = function(..., name="", dataset=NULL, workflow=NULL, properties=list()){
        parent_reference <- ""
+       parsed_name <- name
+       parsed_dataset <- dataset
+       parsed_workflow <- workflow
        if (!is.null(dataset)) {
          parent_reference <- str_interp("${dataset$qualified_reference}.")
        } else if (!is.null(workflow)){
          parent_reference <- str_interp("${workflow$qualified_reference}.")
+       } else {
+         split <- strsplit(name, "\\.")[[1]]
+         if (length(split) == 3){
+           parsed_name <- split[[3]]
+           parent_reference <- paste(split[1:2], collapse='.')
+           parsed_dataset <- Dataset$new(name=parent_reference)
+           parsed_workflow <- Workflow$new(name=parent_reference)
+           parent_reference <- str_interp("${parent_reference}.")
+         } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != ""){
+           parsed_workflow <- Workflow$new(name=Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"))
+         } else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != ""){
+           parsed_dataset <- Dataset$new(name=Sys.getenv("REDIVIS_DEFAULT_DATASET"))
+         } else if (
+            name != "" # Need this check otherwise package won't build (?)
+         ){
+           stop("Invalid table specifier, must be the fully qualified reference if no dataset or workflow is specified")
+         }
        }
-       scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else name
-       qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${parent_reference}${name}")
+       scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else parsed_name
+       qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${parent_reference}${parsed_name}")
        callSuper(...,
-                 name=name,
-                 dataset=dataset,
-                 workflow=workflow,
+                 name=parsed_name,
+                 dataset=parsed_dataset,
+                 workflow=parsed_workflow,
                  qualified_reference=qualified_reference_val,
                  scoped_reference=scoped_reference_val,
                  uri=str_interp("/tables/${URLencode(qualified_reference_val)}"),
@@ -250,6 +270,7 @@ Table <- setRefClass("Table",
      },
 
      create = function(description=NULL, upload_merge_strategy="append", is_file_index=FALSE){
+       rectify_ambiguous_table_container(.self)
        payload = list(
          "name"=.self$name,
          "uploadMergeStrategy"=upload_merge_strategy,
@@ -482,6 +503,22 @@ Table <- setRefClass("Table",
    )
 )
 
+rectify_ambiguous_table_container <- function(table){
+  if (!is.null(table$dataset) && !is.null(table$workflow)){
+    if (!is.null(table$properties[['container']])){
+      if (table$properties[['container']][['kind']] == 'dataset'){
+        table$workflow = NULL
+      } else {
+        table$dataset = NULL
+      }
+    } else if (table$dataset$exists()){
+      table$workflow = NULL
+    } else {
+      table$dataset = NULL
+    }
+  }
+}
+
 perform_table_parallel_file_upload <- function(batch_files, max_parallelization, pb_bytes=NULL, pb_bytes_multiplier=1){
   if (parallelly::supportsMulticore()){
     oplan <- future::plan(future::multicore, workers = max_parallelization)
@@ -542,7 +579,7 @@ perform_table_parallel_file_download <- function(vec, path, overwrite, max_paral
     return(file_path)
   }
   perform_parallel_download(
-    purrr::map(vec, function(id){str_interp("/rawFiles/${id}?allowRedirect=true")}),
+    purrr::map(vec, function(id){str_interp("/rawFiles/${id}")}),
     overwrite=overwrite,
     get_download_path_from_headers=get_download_path_from_headers,
     on_finish=function(){pb(1)},
@@ -558,6 +595,7 @@ update_table_properties <- function(instance, properties){
   instance$scoped_reference = properties$scopedReference
   instance$name = properties$name
   instance$uri = properties$uri
+  rectify_ambiguous_table_container(instance)
 }
 
 
@@ -597,7 +635,7 @@ get_table_request_params = function(self, max_results, variables, geography_vari
     }
   }
 
-  max_streaming_bytes <- if (is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset = NA))) {
+  max_streaming_bytes <- if (is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA))) {
     1e9
   } else {
     1e11

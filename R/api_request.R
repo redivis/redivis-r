@@ -1,10 +1,59 @@
 
 #' @include auth.R util.R
-make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL, parse_response=TRUE, path = "", download_path = NULL, download_overwrite = FALSE, as_stream=FALSE,  headers=NULL, headers_callback=NULL, get_download_path_callback=NULL, stream_callback = NULL, stop_on_error=TRUE, retry_count=0){
-  # IMPORTANT: if updating the function signature, make sure to also pass to the 4 scenarios where we retry on 401 / 503 status (retry_count doesn't always need to be passed)
+make_request <- function(
+    method='GET',
+    query=NULL,
+    payload = NULL,
+    files = NULL,
+    parse_response=TRUE,
+    path = "",
+    download_path = NULL,
+    download_overwrite = FALSE,
+    as_stream=FALSE,
+    headers=list(),
+    headers_callback=NULL,
+    get_download_path_callback=NULL,
+    stream_callback = NULL,
+    stop_on_error=TRUE,
+    start_byte=0,
+    end_byte=NULL,
+    resumable_byte=0,
+    retry_count=0
+){
+  args <- list(
+    method=method,
+    query=query,
+    payload = payload,
+    files = files,
+    parse_response=parse_response,
+    path = path,
+    download_path = download_path,
+    download_overwrite = download_overwrite,
+    as_stream=as_stream,
+    headers=headers,
+    headers_callback=headers_callback,
+    get_download_path_callback=get_download_path_callback,
+    stream_callback = stream_callback,
+    stop_on_error=stop_on_error,
+    start_byte=start_byte,
+    end_byte=end_byte,
+    resumable_byte=resumable_byte,
+    retry_count=retry_count
+  )
+
+  if (start_byte || resumable_byte){
+    if (!is.null(end_byte)){
+      headers$Range = str_interp("bytes=${start_byte+resumable_byte}-${end_byte}")
+    } else {
+      headers$Range = str_interp("bytes=${start_byte+resumable_byte}-")
+    }
+  }
 
   if (!is.null(stream_callback) || !is.null(get_download_path_callback)){
     h <- curl::new_handle()
+    if (Sys.getenv("REDIVIS_API_ENDPOINT") == "https://localhost:8443/api/v1"){
+      curl::handle_setopt(h, "ssl_verifypeer"=0L)
+    }
     curl::handle_setheaders(h, .list=append(get_authorization_header(as_list=TRUE), headers))
     curl::handle_setopt(h, failonerror = 0)
     url <- generate_api_url(path)
@@ -23,51 +72,19 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
     tryCatch({
       open(con, "rb", blocking = FALSE)
       res_data <- curl::handle_data(h)
-    }, error = function(e){
+    },
+    warning=function(w){},
+    error=function(e){
       res_data <- curl::handle_data(h)
-      if (res_data$status_code == 503 && retry_count < 10){
+      if ((res_data$status_code == 503 || res_data$status_code == 0) && retry_count < 10){
         Sys.sleep(retry_count)
-        return(
-          make_request(
-            method=method,
-            query=query,
-            payload=payload,
-            files=files,
-            parse_response=parse_response,
-            path=path,
-            download_path=download_path,
-            download_overwrite=download_overwrite,
-            as_stream=as_stream,
-            headers=headers,
-            headers_callback=headers_callback,
-            get_download_path_callback=get_download_path_callback,
-            stream_callback=stream_callback,
-            stop_on_error=stop_on_error,
-            retry_count=retry_count+1
-          )
-        )
+        args$retry_count <- args$retry_count + 1
+        return(do.call(make_request, args))
       }
       if (res_data$status_code >= 400){
-        if (res_data$status_code == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))){
+        if (res_data$status_code == 401 && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA)) && is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset=NA))){
           refresh_credentials()
-          return(
-            make_request(
-              method=method,
-              query=query,
-              payload=payload,
-              files=files,
-              parse_response=parse_response,
-              path=path,
-              download_path=download_path,
-              download_overwrite=download_overwrite,
-              as_stream=as_stream,
-              headers=headers,
-              headers_callback=headers_callback,
-              get_download_path_callback=get_download_path_callback,
-              stream_callback=stream_callback,
-              stop_on_error=stop_on_error
-            )
-          )
+          return(do.call(make_request, args))
         }
         if (stop_on_error){
           stop(str_interp("Received HTTP status ${res_data$status_code} for path ${url}"))
@@ -80,27 +97,53 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
 
     res_data <- curl::handle_data(h)
 
-    headers <- parse_curl_headers(res_data)
+    response_headers <- parse_curl_headers(res_data)
     if (!is.null(headers_callback)){
-      headers_callback(headers)
+      headers_callback(response_headers)
     }
 
+    args$retry_count <- 0
     if (is.null(get_download_path_callback)){
-      while(isIncomplete(con)){
-        buf <- readBin(con, raw(), 16384)
-        cb_res <- stream_callback(buf)
-        if (!is.null(cb_res) && stream_callback(cb_res) == FALSE){
-          break;
+      bytes_read <- 0
+      tryCatch({
+        while(isIncomplete(con)){
+          buf <- readBin(con, raw(), 16384)
+          cb_res <- stream_callback(buf)
+          bytes_read <- bytes_read + length(buf)
+          if (!is.null(cb_res) && stream_callback(cb_res) == FALSE){
+            break;
+          }
         }
-      }
+      },
+      warning=function(w){},
+      error=function(e){
+        if ("accept-ranges" %in% names(response_headers) && retry_count < 10){
+          Sys.sleep(retry_count)
+          args$retry_count <- args$retry_count + 1
+          args$resumable_byte=bytes_read
+          return(do.call(make_request, args))
+        }
+      })
     } else {
-      download_path <- get_download_path_callback(headers)
-      file_con <- base::file(download_path, "w+b")
-      on.exit(close(file_con), add=TRUE)
-      while(isIncomplete(con)){
-        writeBin(readBin(con, raw(), 16384), file_con)
-      }
-      return(download_path)
+
+      download_path <- get_download_path_callback(response_headers)
+      file_con <- base::file(download_path, if (resumable_byte) "ab" else "w+b")
+      tryCatch({
+        on.exit(close(file_con), add=TRUE)
+        while(isIncomplete(con)){
+          writeBin(readBin(con, raw(), 16384), file_con)
+        }
+        return(download_path)
+      },
+      warning=function(w){},
+      error=function(e){
+        if ("accept-ranges" %in% names(response_headers) && retry_count < 10){
+          Sys.sleep(retry_count)
+          args$resumable_byte=file.size(download_path)
+          return(do.call(make_request, args))
+        }
+        stop(e)
+      })
     }
 
   } else {
@@ -135,26 +178,8 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
 
     if (httr::status_code(res) == 503 && retry_count < 10){
       Sys.sleep(retry_count)
-      print('retrying...')
-      return(
-        make_request(
-          method=method,
-          query=query,
-          payload=payload,
-          files=files,
-          parse_response=parse_response,
-          path=path,
-          download_path=download_path,
-          download_overwrite=download_overwrite,
-          as_stream=as_stream,
-          headers=headers,
-          headers_callback=headers_callback,
-          get_download_path_callback=get_download_path_callback,
-          stream_callback=stream_callback,
-          stop_on_error=stop_on_error,
-          retry_count=retry_count+1
-        )
-      )
+      args$retry_count <- args$retry_count + 1
+      return(do.call(make_request, args))
     }
 
     if (!is.null(httr::headers(res)$'x-redivis-warning') && is.null(globals$printed_warnings[[httr::headers(res)$'x-redivis-warning']])){
@@ -188,7 +213,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
         || (httr::status_code(res) == 403 && response_content$error == 'insufficient_scope')
       )
       && is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA))
-      && is.na(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID", unset=NA))
+      && is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset=NA))
     ){
       message(
         str_interp("\n${response_content$error}: ${response_content$error_description}\n")
@@ -198,24 +223,7 @@ make_request <- function(method='GET', query=NULL, payload = NULL, files = NULL,
         scope=if(is.null(response_content$scope)) NULL else strsplit(response_content$scope, " "),
         amr_values=response_content$amr_values
       )
-      return(
-        make_request(
-          method=method,
-          query=query,
-          payload=payload,
-          files=files,
-          parse_response=parse_response,
-          path=path,
-          download_path=download_path,
-          download_overwrite=download_overwrite,
-          as_stream=as_stream,
-          headers=headers,
-          headers_callback=headers_callback,
-          get_download_path_callback=get_download_path_callback,
-          stream_callback=stream_callback,
-          stop_on_error=stop_on_error
-        )
-      )
+      return(do.call(make_request, args))
     }
 
     if (httr::status_code(res) >= 400 && stop_on_error){
@@ -333,7 +341,9 @@ RedivisBatchReader <- setRefClass(
   "RedivisBatchReader",
   fields = list(
     streams = "list",
+    current_offset="numeric",
     coerce_schema="logical",
+    retry_count="numeric",
     # Can't figure out how to pass non-built-in classes here, so just pass as list
     custom_classes="list",
     current_stream_index="numeric",
@@ -341,59 +351,87 @@ RedivisBatchReader <- setRefClass(
   ),
 
   methods = list(
-    get_next_reader__ = function(){
+    get_next_reader__ = function(offset=0){
+      .self$current_offset=offset
       base_url = generate_api_url('/readStreams')
-
       options(timeout=3600)
       headers <- get_authorization_header()
-      con <- url(str_interp('${base_url}/${streams[[.self$current_stream_index]]$id}'), open = "rb", headers = headers, blocking=FALSE)
-      stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
-      writer_schema_fields <- list()
+      tryCatch({
+        con <- url(str_interp('${base_url}/${streams[[.self$current_stream_index]]$id}?offset=${.self$current_offset}'), open = "rb", headers = headers, blocking=FALSE)
+        stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
 
-      # Make sure to only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
-      for (field_name in stream_reader$schema$names){
-        writer_schema_fields <- append(writer_schema_fields, .self$custom_classes$schema$GetFieldByName(field_name))
-      }
+        writer_schema_fields <- list()
 
-      if (coerce_schema){
-        for (field in writer_schema_fields){
-          if (is(field$type, "Time64")){
-            .self$time_variables <- append(.self$time_variables, field$name)
+        # Make sure to only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
+        for (field_name in stream_reader$schema$names){
+          writer_schema_fields <- append(writer_schema_fields, .self$custom_classes$schema$GetFieldByName(field_name))
+        }
+
+        if (coerce_schema){
+          for (field in writer_schema_fields){
+            if (is(field$type, "Time64")){
+              .self$time_variables <- append(.self$time_variables, field$name)
+            }
           }
         }
-      }
 
-      .self$custom_classes = list(
-        current_record_batch_reader=stream_reader,
-        writer_schema=arrow::schema(writer_schema_fields),
-        schema=.self$custom_classes$schema,
-        current_connection=con
-      )
+        .self$custom_classes = list(
+          current_record_batch_reader=stream_reader,
+          writer_schema=arrow::schema(writer_schema_fields),
+          schema=.self$custom_classes$schema,
+          current_connection=con
+        )
+      },
+      warning=function(w){},
+      error=function(e){
+        .self$retry_count = .self$retry_count + 1
+        if (.self$retry_count > 10){
+          message("Download connection failed after too many retries, giving up.")
+          stop(conditionMessage(e))
+        }
+        Sys.sleep(.self$retry_count)
+
+        return(.self$get_next_reader__(.self$current_offset))
+      })
     },
     read_next_batch = function() {
-      batch <- .self$custom_classes$current_record_batch_reader$read_next_batch()
+      tryCatch({
+        batch <- .self$custom_classes$current_record_batch_reader$read_next_batch()
 
-      if (is.null(batch)){
-        if (.self$current_stream_index == length(.self$streams)){
-          return(NULL)
-        } else {
-          .self$current_stream_index = .self$current_stream_index + 1
-          .self$get_next_reader__()
-          return(.self$read_next_batch())
-        }
-      } else {
-        if (.self$coerce_schema){
-          # Note: this approach is much more performant than using %>% mutate(across())
-          # TODO: in the future, Arrow may support native conversion from time string to their type
-          for (time_variable in .self$time_variables){
-            batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
+        if (is.null(batch)){
+          if (.self$current_stream_index == length(.self$streams)){
+            return(NULL)
+          } else {
+            .self$current_stream_index = .self$current_stream_index + 1
+            .self$get_next_reader__()
+            return(.self$read_next_batch())
           }
+        } else {
+          if (.self$coerce_schema){
+            # Note: this approach is much more performant than using %>% mutate(across())
+            # TODO: in the future, Arrow may support native conversion from time string to their type
+            for (time_variable in .self$time_variables){
+              batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
+            }
 
-          batch <- (arrow::as_record_batch(batch, schema=.self$custom_classes$writer_schema))
+            batch <- (arrow::as_record_batch(batch, schema=.self$custom_classes$writer_schema))
+          }
+          .self$current_offset <- .self$current_offset + batch$num_rows
+          .self$retry_count <- 0
+          return (batch)
         }
+      },
+      error=function(e){
+          .self$retry_count = .self$retry_count + 1
+          if (.self$retry_count > 10){
+            message("Download connection failed after too many retries, giving up.")
+            stop(conditionMessage(e))
+          }
+          Sys.sleep(.self$retry_count)
+          .self$get_next_reader__(.self$current_offset)
+          return(.self$read_next_batch())
+        })
 
-        return (batch)
-      }
     },
     close = function(){
       base::close(.self$custom_classes$current_connection)
@@ -537,6 +575,8 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
       on.exit(close(con), add=TRUE)
       stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace("arrow")$MakeRConnectionInputStream(con))
 
+      retry_count <- 0
+
       if (!is.null(folder) && is.null(output_file)){
         output_file <- arrow::FileOutputStream$create(str_interp('${folder}/${stream$id}.feather'))
       }
@@ -652,16 +692,19 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
         }
         output_file$close()
       }
-    }, error = function(cond){
-      if (grepl("cannot read from connection", conditionMessage(cond))){
+    },
+    warning=function(w){},
+    error=function(e){
+      print(e)
+      if (grepl("cannot read from connection", conditionMessage(e))){
         if (retry_count > 10){
           message("Download connection failed after too many retries, giving up.")
-          stop(conditionMessage(cond))
+          stop(conditionMessage(e))
         }
-        Sys.sleep(1)
+        Sys.sleep(retry_count)
         return(process_arrow_stream(stream, in_memory_batches, stream_writer, output_file, stream_rows_read, retry_count=retry_count+1))
       } else {
-        stop(conditionMessage(cond))
+        stop(conditionMessage(e))
       }
     })
 

@@ -3,7 +3,7 @@
 
 #' @title query
 #'
-#' @description Create a Redivis SQL query
+#' @description DEPRECATED: please use redivis$query
 #'
 #' @param query The query string to execute
 #'
@@ -23,7 +23,7 @@ query <- function(query="", default_workflow=NULL, default_dataset=NULL) {
 
 #' @title user
 #'
-#' @description Reference user-owned resources on Redivis
+#' @description DEPRECATED: please use redivis$user
 #'
 #' @param name The user's username
 #'
@@ -42,7 +42,7 @@ user <- function(name){
 
 #' @title organization
 #'
-#' @description Reference organization-owned resources on Redivis
+#' @description DEPRECATED: please use redivis$organization
 #'
 #' @param name The organization's username
 #'
@@ -60,7 +60,7 @@ organization <- function(name){
 
 #' @title table
 #'
-#' @description Reference a specific table when the REDIVIS_DEFAULT_WORKFLOW or REDIVIS_DEFAULT_DATASET env variable is set
+#' @description DEPRECATED: please use redivis$table
 #'
 #' @param name The table's username
 #'
@@ -72,7 +72,7 @@ organization <- function(name){
 #' @export
 table <- function(name){
   show_namespace_warning("table")
-  if (Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != ""){
+  if (Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != ""){
     Table$new(name=name)
   } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != ""){
     user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[1]
@@ -92,7 +92,7 @@ table <- function(name){
 
 #' @title file
 #'
-#' @description Reference a file stored on Redivis
+#' @description DEPRECATED: please use redivis$file
 #'
 #' @param id The id of the file
 #'
@@ -108,7 +108,7 @@ file <- function(id) {
 
 #' @title current_notebook
 #'
-#' @description A reference to the current Redivis notebook. Will be NULL if not running in a Redivis notebook environment.
+#' @description DEPRECATED: please use redivis$current_notebook
 #'
 #' @return class<Notebook>
 #' @examples
@@ -116,86 +116,93 @@ file <- function(id) {
 #' @export
 current_notebook <- function() {
   show_namespace_warning("current_notebook")
-  if(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != "") {
-    Notebook$new(current_notebook_job_id=Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID"))
+  if(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
+    Notebook$new(name=Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK"))
   }else {
     NULL
   }
 }
 
-#' @title authenticate
-#'
-#' @description Manually authenticate the current session with your Redivis credentials. Authentication normally happens automatically, and this method does not need to be called directly in most use cases.
-#'
-#' @return void
-#' @examples
-#' redivis::authenticate(force_reauthentication=FALSE)
-authenticate <- function(scope=NULL, force_reauthentication=FALSE) {
-  show_namespace_warning("authenticate")
-  if (force_reauthentication){
-    clear_cached_credentials()
-  }
-  if (is.character(scope)){
-    scope <- list(scope)
-  }
-  get_auth_token(scope=scope)
-  invisible(NULL)
-}
-
 
 #' @title redivis
 #'
-#' @description Redivis wrapper, all primary methods accessible via $
+#' @description Redivis wrapper, all primary constructor accessible via redivis$<constructor>()
 #'
-#' @return list
+#' Full documentation and examples available at: https://apidocs.redivis.com/client-libraries/redivis-r
+#'
+#' @usage
+#' library(redivis)
+#'
+#' # Reference various resources
+#' redivis$current_user()
+#' redivis$dataset(name)
+#' redivis$datasource(source)
+#' redivis$file(id)
+#' redivis$notebook(name)
+#' redivis$organization(name)
+#' redivis$table(name)
+#' redivis$transform(name)
+#' redivis$user(name)
+#' redivis$workflow(name)
+#'
+#' # Create a SQL query
+#' redivis$query(query)
+#'
+#' # Only available within Redivis notebooks
+#' redivis$current_notebook()
+#' redivis$current_workflow()
+#' user$secret("MY_SECRET")$get_value()
+#' organization$secret("OUR_SECRET")$get_value()
+#'
+#' # Read data
+#' query$to_tibble()
+#' table$to_tibble()
+#' # also:
+#' #   to_data_table()
+#' #   to_arrow_table()
+#' #   to_arrow_batch_iterator()
+#' #   to_sf_tibble()
+#' #   ...
+#' table$download(path=NULL, format="csv", ...)
+#' file$read(...)
+#' file$download(path=NULL, ...)
+#' file$stream(callback)
+#' table$download_files(path, ...)
+#'
+#' # Upload tabular data
+#' table$upload()$create("/path/to/file.csv", ...)
+#' # Upload raw files
+#' table$add_files(directory="/path/to/dir", ...)
+#'
+#' # List resources
+#' organization$list_datasets(max_results)
+#' user$list_datasets(max_results)
+#' user$list_workflows(max_results)
+#' dataset$list_tables(max_results)
+#' workflow$list_transforms(max_results)
+#' table$list_variables(max_results)
+#' #...etc, see documentation
+#'
+#' # Miscellaneous methods, for advanced use cases
+#' redivis$authenticate(scope=NULL, force_reauthentication=FALSE)
+#' redivis$make_api_request(method="GET", path, ...)
+#'
+#'
+#' @return list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, query, table, transform, user, workflow)
 #' @examples
-#' dataset <- redivis$user("username")$dataset("dataset_name")
+#'  df <- redivis$table("demo.ghcn_daily_weather_data.stations")$to_tibble()
+#'  df <- redivis$query("SELECT 1+1 as two")$to_tibble()
+#'
+#'  dataset <- redivis$dataset("demo.ghcn_daily_weather_data")$exists() -> TRUE
+#'  datasets <- redivis$organization("demo")$list_datasets(max_results=10)
+#'  workflows <- redivis$current_user()$list_workflows(10)
+#'
+#'  # Only callable from within a Redivis notebook
+#'  notebook <- redivis$current_notebook();
+#'  workflow <- redivis$current_workflow();
 #' @export
 redivis <- list(
-  "query"=function(query="", default_workflow=NULL, default_dataset=NULL) {
-    if (is.null(default_workflow) && is.null(default_dataset)){
-      default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
-      default_dataset <- Sys.getenv("REDIVIS_DEFAULT_DATASET")
-    }
-    Query$new(query=query, default_workflow=default_workflow, default_dataset=default_dataset)
-  },
-  "user"=function(name){
-    User$new(name=name)
-  },
-  "organization"=function(name){
-    Organization$new(name=name)
-  },
-  "file"=function(id) {
-    File$new(id=id)
-  },
-  "make_api_request"=function(method='GET', path = "", query=NULL, payload=NULL, headers=NULL, parse_response=TRUE, stream_callback=NULL){
-    make_request(method=method, path=path, query=query, payload=payload, headers=headers, parse_response=parse_response, stream_callback=stream_callback)
-  },
-  "table"=function(name){
-    if (Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != ""){
-      Table$new(name=name)
-    } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != ""){
-      user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[1]
-      workflow_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[2]
-      User$new(name=user_name)$workflow(name=workflow_name)$table(name=name)
 
-    }else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != ""){
-      user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[1]
-      dataset_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[2]
-
-      User$new(name=user_name)$dataset(name=dataset_name)$table(name=name)
-    }
-    else{
-      stop("Cannot reference an unqualified table if the neither the REDIVIS_DEFAULT_WORKFLOW or REDIVIS_DEFAULT_DATASET environment variables are set.")
-    }
-  },
-  "current_notebook"=function() {
-    if(Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID") != "") {
-      Notebook$new(current_notebook_job_id=Sys.getenv("REDIVIS_NOTEBOOK_JOB_ID"))
-    }else {
-      NULL
-    }
-  },
   "authenticate"=function(scope=NULL, force_reauthentication=FALSE) {
     if (force_reauthentication){
       clear_cached_credentials()
@@ -205,7 +212,77 @@ redivis <- list(
     }
     get_auth_token(scope=scope)
     invisible(NULL)
+  },
+
+  "current_notebook"=function() {
+    if(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
+      Notebook$new(name=Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK"))
+    }else {
+      NULL
+    }
+  },
+
+  "current_user"=function(){
+    res <- make_request(method="GET", path="/users/me")
+    User$new(name=res$name)
+  },
+
+  "current_workflow"=function(){
+    if(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
+      Workflow$new(name=Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"))
+    }else {
+      NULL
+    }
+  },
+
+  "dataset"=function(name, version=NULL){
+    Dataset$new(name=name, version=version)
+  },
+
+  "datasource"=function(source){
+    Datasource$new(source=source)
+  },
+
+  "file"=function(id) {
+    File$new(id=id)
+  },
+
+  "make_api_request"=function(method='GET', path = "", query=NULL, payload=NULL, headers=NULL, parse_response=TRUE, stream_callback=NULL){
+    make_request(method=method, path=path, query=query, payload=payload, headers=headers, parse_response=parse_response, stream_callback=stream_callback)
+  },
+
+  "notebook"=function(name){
+    Notebook$new(name=name)
+  },
+
+  "organization"=function(name){
+    Organization$new(name=name)
+  },
+
+  "query"=function(query="", default_workflow=NULL, default_dataset=NULL) {
+    if (is.null(default_workflow) && is.null(default_dataset)){
+      default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
+      default_dataset <- Sys.getenv("REDIVIS_DEFAULT_DATASET")
+    }
+    Query$new(query=query, default_workflow=default_workflow, default_dataset=default_dataset)
+  },
+
+  "table"=function(name){
+    Table$new(name=name)
+  },
+
+  "transform"=function(name){
+    Transform$new(name=name)
+  },
+
+  "user"=function(name){
+    User$new(name=name)
+  },
+
+  "workflow"=function(name){
+    Workflow$new(name=name)
   }
+
 )
 
 

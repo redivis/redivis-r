@@ -75,7 +75,7 @@ File <- setRefClass(
         on.exit(close(con), add=TRUE)
       }
 
-      res <- make_request(method="GET", path=str_interp("/rawFiles/${.self$id}"), query=list(allowRedirect="true"), parse_response=FALSE, get_download_path_callback=get_download_path_callback, stream_callback=stream_callback)
+      res <- make_request(method="GET", path=str_interp("/rawFiles/${.self$id}"), parse_response=FALSE, get_download_path_callback=get_download_path_callback, stream_callback=stream_callback)
       if (is_dir){
         return(res)
       } else {
@@ -83,35 +83,25 @@ File <- setRefClass(
       }
     },
 
-    read = function(as_text = FALSE, start_byte=0, end_byte=0) {
-      range_headers = list()
-      if (start_byte){
-        range_headers["Range"] = str_interp("bytes=${start_byte}-")
-      }
-      else if (end_byte){
-        range_headers["Range"] = str_interp("bytes=${start_byte}-${end_byte}")
-      }
-
+    read = function(as_text = FALSE, start_byte=0, end_byte=NULL) {
       res <- make_request(
         method="GET",
         path=str_interp("/rawFiles/${.self$id}"),
         parse_response = FALSE,
-        headers=range_headers
+        start_byte=start_byte,
+        end_byte=end_byte
       )
       httr::content(res, as = if(as_text) 'text' else 'raw')
     },
 
-    stream = function(callback, start_byte=0) {
-      range_headers = list()
-      if (start_byte){
-        range_headers["Range"] = str_interp("bytes=${start_byte}-")
-      }
+    stream = function(callback, start_byte=0, end_byte=NULL) {
       make_request(
         method="GET",
         path=str_interp("/rawFiles/${.self$id}"),
         parse_response = FALSE,
         stream_callback = callback,
-        headers = range_headers
+        start_byte=start_byte,
+        end_byte=end_byte
       )
     }
   )
@@ -127,7 +117,5 @@ parse_file_headers <- function(file, headers) {
     file$properties$md5 <- sub("md5=", "", digest)
   }
 
-  content_length <- headers[["content-length"]]
-
-  file$properties$size <- as.integer(if (!is.null(content_length)) content_length else headers[["x-goog-stored-content-length"]])
+  file$properties$size <- as.integer(dplyr::coalesce(headers[["x-redivis-size"]], headers[["x-goog-stored-content-length"]], headers[["content-length"]]))
 }

@@ -1,4 +1,3 @@
-
 #' @include Organization.R User.R Table.R api_request.R
 Dataset <- setRefClass("Dataset",
    fields = list(
@@ -14,8 +13,29 @@ Dataset <- setRefClass("Dataset",
    methods = list(
 
     initialize = function(..., name="", version=NULL, user=NULL, organization=NULL, properties=list()){
-      parsed_name <- strsplit(name, ":")[[1]][1]
+      parsed_name <- name
       version_arg <- version
+      parsed_user <- user
+      parsed_organization <- organization
+
+      if (is.null(user) && is.null(organization)){
+        split <- strsplit(name, "\\.")[[1]]
+        if (length(split) == 2){
+          parsed_name <- split[[2]]
+          username <- split[[1]]
+          parsed_user <- User$new(name=username)
+          parsed_organization <- Organization$new(name=username)
+        } else if (Sys.getenv("REDIVIS_DEFAULT_USER", FALSE)){
+          parsed_user <- User$new(name=Sys.getenv("REDIVIS_DEFAULT_USER"))
+        } else if (Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION", FALSE)){
+          parsed_user <- Organization$new(name=Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION"))
+        } else {
+          stop("Invalid dataset specifier, must be the fully qualified reference if no owner is specified")
+        }
+      }
+
+      parsed_name <- strsplit(parsed_name, ":")[[1]][1]
+
       if (!is.null(version) && version != "current" && version != "next" && !startsWith(tolower(version), "v")){
         version_arg <- str_interp("v${version}")
       } else if (is.null(version) && !is.na(stringr::str_match(name, ":(v\\d+[._]\\d+|current|next)")[2])){
@@ -38,15 +58,15 @@ Dataset <- setRefClass("Dataset",
         reference_id <- paste0(":", reference_id)
       }
 
-      owner_name <- if (is.null(user)) organization$name else user$name
+      owner_name <- if (is.null(parsed_user)) parsed_organization$name else parsed_user$name
       scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else str_interp("${parsed_name}${reference_id}${version_string}")
       qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${owner_name}.${scoped_reference_val}")
 
       callSuper(...,
                 name=parsed_name,
                 version=version_arg,
-                user=user,
-                organization=organization,
+                user=parsed_user,
+                organization=parsed_organization,
                 qualified_reference=qualified_reference_val,
                 scoped_reference=scoped_reference_val,
                 uri=str_interp("/datasets/${URLencode(qualified_reference_val)}"),
@@ -59,6 +79,7 @@ Dataset <- setRefClass("Dataset",
     },
 
     create = function(public_access_level="none", description=NULL){
+      rectify_ambiguous_dataset_owner(.self)
       if (is.null(.self$organization)){
         path <- str_interp("/users/${.self$user$name}/datasets")
       } else {
@@ -129,7 +150,7 @@ Dataset <- setRefClass("Dataset",
   },
 
   query = function(query){
-    redivis::query(query, default_dataset=.self$qualified_reference)
+    redivis$query(query, default_dataset=.self$qualified_reference)
   },
 
   release = function(){
@@ -172,6 +193,22 @@ Dataset <- setRefClass("Dataset",
   )
 )
 
+rectify_ambiguous_dataset_owner <- function(dataset){
+  if (!is.null(dataset$user) && !is.null(dataset$organization)){
+    if (!is.null(dataset$properties[['owner']])){
+      if (dataset$properties[['owner']][['kind']] == 'user'){
+        dataset$organization = NULL
+      } else {
+        dataset$user = NULL
+      }
+    } else if (dataset$organization$exists()){
+      dataset$user = NULL
+    } else {
+      dataset$organization = NULL
+    }
+  }
+}
+
 update_dataset_properties <- function(instance, properties){
   instance$properties = properties
   instance$qualified_reference = properties$qualifiedReference
@@ -179,6 +216,7 @@ update_dataset_properties <- function(instance, properties){
   instance$name = properties$name
   instance$uri = properties$uri
   instance$version = properties$version$tag
+  rectify_ambiguous_dataset_owner(instance)
 }
 
 

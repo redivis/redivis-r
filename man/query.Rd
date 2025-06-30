@@ -13,7 +13,7 @@ query(query = "", default_workflow = NULL, default_dataset = NULL)
 class<Query>
 }
 \description{
-Create a Redivis SQL query
+DEPRECATED: please use redivis$query
 }
 \examples{
 output_table <- redivis::query(query = 'SELECT 1 + 1 AS two')$to_tibble()

@@ -13,7 +13,7 @@ file(id)
 class<File>
 }
 \description{
-Reference a file stored on Redivis
+DEPRECATED: please use redivis$file
 }
 \examples{
 file <- redivis::file("s335-8ey8zt7bx.qKmzpdttY2ZcaLB0wbRB7A")$download()
