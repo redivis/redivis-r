@@ -65,12 +65,8 @@ Query <- setRefClass("Query",
       )
     },
 
-    to_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
-      params <- get_query_request_params(.self, max_results, variables, geography_variable)
-
-      if (!is.null(params$geography_variable)){
-        warning('Returning sf tibbles via the to_tibble method is deprecated, and will be removed soon. Please use table$to_sf_tibble() instead.', immediate. = TRUE)
-      }
+    to_tibble = function(max_results=NULL, variables=NULL, progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
+      params <- get_query_request_params(.self, max_results, variables)
 
       df <- make_rows_request(
         uri=params$uri,
@@ -84,14 +80,14 @@ Query <- setRefClass("Query",
         max_parallelization = max_parallelization
       )
 
-      if (!is.null(params$geography_variable)){
-        sf::st_as_sf(df, wkt=params$geography_variable, crs=4326)
-      } else {
-        df
-      }
+      df
     },
 
     to_sf_tibble = function(max_results=NULL, variables=NULL, geography_variable='', progress=TRUE, batch_preprocessor=NULL, max_parallelization=parallelly::availableCores()) {
+      if (!requireNamespace("sf", quietly = TRUE)) {
+        stop("The sf package must be installed to use the to_sf_tibble() method.")
+      }
+
       params <- get_query_request_params(.self, max_results, variables, geography_variable)
 
       if (is.null(params$geography_variable)){

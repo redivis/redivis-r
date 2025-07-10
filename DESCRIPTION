@@ -20,7 +20,6 @@ Imports:
     stringr (>= 1.4.0),
     tibble (>= 3.0.0),
     arrow (>= 16.1.0),
-    sf (>= 1.0),
     openssl (>= 2.0.0),
     purrr (>= 0.3.0),
     progressr (>= 0.9.0),
@@ -30,6 +29,7 @@ Encoding: UTF-8
 Language: en-US
 RoxygenNote: 7.3.2
 Suggests: 
+    sf (>= 1.0),
     testthat (>= 2.1.0)
 Collate: 
     'util.R'
