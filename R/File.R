@@ -5,15 +5,17 @@ File <- setRefClass(
   fields = list(
     id = "character",
     properties="list",
-    table="ANY"
+    table="ANY",
+    query="ANY"
   ),
   methods = list(
-    initialize = function(..., id="", properties=list(), table=NULL){
+    initialize = function(..., id="", properties=list(), table=NULL, query=NULL){
       populated_properties = append(properties, list(kind="rawFile", id=id, uri=str_interp("/rawFiles/${id}")))
       callSuper(...,
         id=id,
         properties=populated_properties,
-        table=table
+        table=table,
+        query=query
       )
     },
 

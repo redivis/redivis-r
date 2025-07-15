@@ -63,7 +63,7 @@ get_temp_dir <- function(){
 
 get_filename_from_content_disposition <- function(s) {
   fname <- stringr::str_match(s, "filename\\*=([^;]+)")[,2]
-  if (is.na(fname)) {
+  if (is.na(fname) || length(fname) == 0) {
     fname <- stringr::str_match(s, "filename=([^;]+)")[,2]
   }
   if (grepl("utf-8''", fname, ignore.case = TRUE)) {
@@ -267,4 +267,57 @@ show_namespace_warning <- function(method){
     globals$printed_warnings[message] <- TRUE
     warning(message)
   }
+}
+
+parallel_download_raw_files <- function(self, path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE, max_parallelization=100){
+  if (endsWith(path, '/')) {
+    path <- stringr::str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
+  }
+
+  if (is.null(file_id_variable)){
+    file_id_variables <- make_paginated_request(path=str_interp("${self$uri}/variables"), max_results=2, query = list(isFileId = TRUE))
+
+    if (length(file_id_variables) == 0){
+      stop("No variable containing file ids was found on this table")
+    } else if (length(file_id_variables) > 1){
+      stop("This table contains multiple variables representing a file id. Please specify the variable with file ids you want to download via the 'file_id_variable' parameter.")
+    }
+    file_id_variable = file_id_variables[[1]]$'name'
+  }
+
+  df <- make_rows_request(
+    uri=self$uri,
+    max_results=max_results,
+    selected_variable_names = list(file_id_variable),
+    type='data_table',
+    variables=list(list(name=file_id_variable, type="string")),
+    progress=FALSE
+  )
+
+  if (!dir.exists(path)) dir.create(path, recursive = TRUE)
+
+  if (progress){
+    progressr::with_progress(perform_parallel_raw_file_download(df[[file_id_variable]], path, overwrite, max_parallelization))
+  } else {
+    perform_parallel_raw_file_download(df[[file_id_variable]], path, overwrite, max_parallelization)
+  }
+}
+
+perform_parallel_raw_file_download <- function(vec, path, overwrite, max_parallelization){
+  pb <- progressr::progressor(steps = length(vec))
+  download_paths <- list()
+  get_download_path_from_headers <- function(headers){
+    name <- get_filename_from_content_disposition(headers$'content-disposition')
+    file_path <- base::file.path(path, name)
+    download_paths <<- append(download_paths, file_path)
+    return(file_path)
+  }
+  perform_parallel_download(
+    purrr::map(vec, function(id){str_interp("/rawFiles/${id}")}),
+    overwrite=overwrite,
+    get_download_path_from_headers=get_download_path_from_headers,
+    on_finish=function(){pb(1)},
+    max_parallelization
+  );
+  return(download_paths)
 }

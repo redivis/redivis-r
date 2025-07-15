@@ -45,6 +45,10 @@ Upload <- setRefClass("Upload",
       invisible(NULL)
     },
 
+    variable = function(name){
+      Variable$new(name=name, upload=.self)
+    },
+
     list_variables = function(max_results){
       variables <- make_paginated_request(
         path=str_interp("${.self$uri}/variables"),

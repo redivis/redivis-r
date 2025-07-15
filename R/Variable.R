@@ -1,20 +1,34 @@
 #' @include Table.R api_request.R
 Variable <- setRefClass("Variable",
-  fields = list(name="character", table="ANY", upload="ANY", properties="list", uri="character"),
+  fields = list(name="character", table="ANY", upload="ANY", query="ANY", properties="list", uri="character"),
   methods = list(
-    initialize = function(..., name="", table=NULL, upload=NULL, properties=list()){
-      parent_uri <- if (is.null(upload)) table$uri else upload$uri
-      uri_val <- if (length(properties$uri)) properties$uri else str_interp("${parent_uri}}/variables/${name}")
+    initialize = function(..., name="", table=NULL, upload=NULL, query=NULL, properties=list()){
+      parent_uri <- NULL
+      if (!is.null(table)){
+        parent_uri <- table$uri
+      } else if (!is.null(upload)){
+        parent_uri <- upload$uri
+      } else {
+        parent_uri <- query$uri
+      }
+      uri_val <- if (length(properties$uri)) properties$uri else str_interp("${parent_uri}/variables/${name}")
       callSuper(...,
                 name=name,
                 upload=upload,
                 table=table,
+                query=query,
                 uri=uri_val,
                 properties=properties
       )
     },
     show = function(){
-      print(str_interp("<Variable `${.self$table$qualified_reference}`.${.self$name}>"))
+      if (!is.null(.self$table)){
+        print(str_interp("<Variable `${.self$table$qualified_reference}`.${.self$name}>"))
+      } else if (!is.null(.self$upload)){
+        print(str_interp("<Variable `${.self$table$qualified_reference}.${.self$upload$name}`.${.self$name}>"))
+      } else {
+        print(str_interp("<Variable `${.self$query$uri}`.${.self$name}>"))
+      }
     },
     get = function(wait_for_statistics=FALSE) {
       if (wait_for_statistics){
