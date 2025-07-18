@@ -251,25 +251,61 @@ parse_curl_headers <- function(res_data){
   headers <- purrr::set_names(header_contents, header_names)
 }
 
-perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, max_parallelization=100, stop_on_error=TRUE){
-  pool <- curl::new_pool(total_con=max_parallelization)
+perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, max_parallelization, stop_on_error=TRUE){
+  # R can have at most 128 open file connections, so prevent higher parallelization
+  max_parallelization <- min(128, length(paths), max_parallelization)
+  multiplex_streams = 5
+  pool <- curl::new_pool(total_con=ceiling(max_parallelization / multiplex_streams), max_streams=multiplex_streams)
   handles = list()
-  for (path in paths){
+  file_connections = vector("list", length(paths))
+  on.exit(
+    {
+      for (con in file_connections){
+        if (!is.null(con)){
+          base::close(con)
+        }
+      }
+    },
+    add=TRUE
+  )
+  current_parallel_downloads <- 0
+  for (i in 1:length(paths)){
     h <- curl::new_handle()
-    url <- generate_api_url(path)
+    url <- generate_api_url(paths[[i]])
     auth = get_authorization_header(as_list=TRUE)
     curl::handle_setheaders(h, .list=auth)
     curl::handle_setopt(h, "url"=url)
+    current_parallel_downloads <- current_parallel_downloads + 1
 
-    fail_fn <- function(e){
-      stop(e)
+    # TODO: in the future, if we can pass a list of filenames directly into this fn, we can provide just the download path as the data arg, which is more performant (and I think can have more connections)
+    # See https://github.com/jeroen/curl/issues/148#issuecomment-381650017
+    curl::multi_add(
+      h,
+      pool = pool,
+      data = parallel_download_data_cb_factory(h, url, get_download_path_from_headers, overwrite, on_finish, stop_on_error, file_connections, i),
+      fail = function(e){
+        for (con in file_connections){
+          if (!is.null(con)){
+            base::close(con)
+          }
+        }
+        stop(e)
+      },
+      done = function(res_data){
+       current_parallel_downloads <<- current_parallel_downloads - 1
+      }
+    )
+    if (current_parallel_downloads > max_parallelization){
+      curl::multi_run(pool=pool, poll=1) # The poll argument cases multi_run to exit as soon as one file finishes
     }
-    curl::multi_add(h, fail = fail_fn, data = parallel_download_data_cb_factory(h, url, get_download_path_from_headers, overwrite, on_finish, stop_on_error), pool = pool)
   }
-  curl::multi_run(pool=pool)
+  if (current_parallel_downloads > 0){
+    curl::multi_run(pool=pool)
+  }
+
 }
 
-parallel_download_data_cb_factory <- function(h, url, get_download_path_from_headers, overwrite, on_finish, stop_on_error){
+parallel_download_data_cb_factory <- function(h, url, get_download_path_from_headers, overwrite, on_finish, stop_on_error, file_connections, index){
   file_con <- NULL
   handle <- h
   path <- url
@@ -291,13 +327,14 @@ parallel_download_data_cb_factory <- function(h, url, get_download_path_from_hea
         stop(str_interp("File already exists at '${download_path}'. Set parameter overwrite=TRUE to overwrite existing files."))
       }
       file_con <<- base::file(download_path, "w+b")
+      file_connections[[index]] <- file_con
     }
     if (length(chunk)){
       writeBin(chunk, file_con)
     }
     if (final){
+      base::close(file_con)
       on_finish()
-      close(file_con)
     }
   })
 }

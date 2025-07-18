@@ -269,7 +269,7 @@ show_namespace_warning <- function(method){
   }
 }
 
-parallel_download_raw_files <- function(self, path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE, max_parallelization=100){
+parallel_download_raw_files <- function(self, path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE, max_parallelization=NULL){
   if (endsWith(path, '/')) {
     path <- stringr::str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
   }

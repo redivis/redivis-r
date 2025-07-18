@@ -94,7 +94,7 @@ Export <- setRefClass("Export",
   )
 )
 
-
+# TODO: This should look more like raw file download and be centralized with the perform_parallel_download fn
 perform_parallel_export_download <- function(uri, file_count, download_path, is_dir, overwrite, total_size){
   pb_multiplier <- 100 / total_size
   pb <- progressr::progressor(steps=100)

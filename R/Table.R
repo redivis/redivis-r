@@ -463,7 +463,7 @@ Table <- setRefClass("Table",
        return(res)
      },
 
-     download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE, max_parallelization=100){
+     download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE, max_parallelization=NULL){
         parallel_download_raw_files(
           self=.self,
           path=path,
