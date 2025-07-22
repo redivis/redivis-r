@@ -251,135 +251,198 @@ parse_curl_headers <- function(res_data){
   headers <- purrr::set_names(header_contents, header_names)
 }
 
-perform_parallel_download <- function(paths, overwrite, get_download_path_from_headers, on_finish, max_parallelization, stop_on_error=TRUE){
-  # R can have at most 128 open file connections, so prevent higher parallelization
+perform_parallel_download <- function(
+    paths,
+    overwrite,
+    get_download_path_from_headers,
+    on_finish,
+    max_parallelization,
+    stop_on_error = TRUE
+) {
+  # limit open files
   max_parallelization <- max(min(128, length(paths), max_parallelization), 1)
-  streams_per_connection = 5
-  pool <- curl::new_pool(total_con=ceiling(max_parallelization / streams_per_connection), max_streams=streams_per_connection)
-  handles = list()
-  file_connections = vector("list", length(paths))
-  on.exit(
-    {
-      for (con in file_connections){
-        if (!is.null(con)){
-          tryCatch({
-            base::close(file_con)
-          }, error=function(e){})
-        }
-      }
-    },
-    add=TRUE
+  streams_per_connection <- 5
+  pool <- curl::new_pool(
+    total_con   = ceiling(max_parallelization / streams_per_connection),
+    max_streams = streams_per_connection
   )
-  current_parallel_downloads <- 0
-  for (i in 1:length(paths)){
-    current_parallel_downloads <- current_parallel_downloads + 1
-    execute_retryable_download(
-      paths,
-      i,
-      pool,
-      get_download_path_from_headers,
-      overwrite,
-      on_finish,
-      stop_on_error,
-      file_connections,
-      done=function(){
-        current_parallel_downloads <<- current_parallel_downloads - 1
+
+  # track open connections so we can clean up on exit
+  file_connections <- vector("list", length(paths))
+  file_paths <- vector("list", length(paths))
+
+  on.exit({
+    for (con in file_connections) {
+      if (!is.null(con)) {
+        tryCatch(close(con), error = function(e) {})
       }
-    )
-    if (current_parallel_downloads > max_parallelization){
-      curl::multi_run(pool=pool, poll=1) # The poll argument causes multi_run to exit as soon as one file finishes
     }
-  }
-  if (current_parallel_downloads > 0){
-    curl::multi_run(pool=pool)
-  }
-}
+  }, add = TRUE)
 
-execute_retryable_download <- function(paths, index, pool, get_download_path_from_headers, overwrite, on_finish, stop_on_error, file_connections, done, retry_count=0, start_byte=0){
-  max_retries = 10
-  h <- curl::new_handle()
-  if (Sys.getenv("REDIVIS_API_ENDPOINT") == "https://localhost:8443/api/v1"){
-    curl::handle_setopt(h, "ssl_verifypeer"=0L)
-  }
-  url <- generate_api_url(paths[[index]])
-  headers <- get_authorization_header(as_list=TRUE)
-  if (start_byte > 0){
-    headers$Range <- str_interp("bytes=${start_byte}-")
-  }
-  curl::handle_setheaders(h, .list=headers)
-  curl::handle_setopt(h, "url"=url)
-  file_con <- NULL
-  download_path <- NULL
+  # a queue of downloads still to schedule (for retries)
+  pending <- list()
 
-  print(str_interp("downloading from byte ${start_byte}"))
+  # keep track of simultaneously‐running downloads
+  active_downloads <- 0L
 
-  # TODO: in the future, if we can pass a list of filenames directly into this fn, we can provide just the download path as the data arg, which is more performant (and I think can have more connections)
-  # See https://github.com/jeroen/curl/issues/148#issuecomment-381650017
-  curl::multi_add(
-    h,
-    pool = pool,
-    done = done,
-    data = function(chunk, final){
-      if (is.null(file_con)){
-        res_data <- curl::handle_data(h)
-        status_code <- res_data$status_code
-        print(status_code)
-        if (status_code == 0){ # This means that there was a curl error, in which case the fail fn should be called
-          return(NULL)
+  # helper to schedule (or re‐schedule) a download
+  schedule_download <- function(index, retry_count = 0L, start_byte = 0L) {
+    max_retries <- 10L
+    path        <- paths[[index]]
+    url         <- generate_api_url(path)
+
+    if (retry_count > 0){
+      Sys.sleep(retry_count)
+    }
+
+    # build a fresh handle
+    h <- curl::new_handle()
+    if (Sys.getenv("REDIVIS_API_ENDPOINT") == "https://localhost:8443/api/v1") {
+      curl::handle_setopt(h, ssl_verifypeer = 0L)
+    }
+
+    headers <- get_authorization_header(as_list = TRUE)
+    if (start_byte > 0) {
+      headers$Range <- sprintf("bytes=%d-", start_byte)
+    }
+    curl::handle_setheaders(h, .list = headers)
+    curl::handle_setopt(h, url = url)
+
+    # local state for this download
+    file_con     <- NULL
+    download_path <- NULL
+    content_length <- NULL
+    bytes_written <- 0
+    did_error <- FALSE
+
+    # callback: write chunks
+    write_cb <- function(chunk, final) {
+      if (did_error){
+        return()
+      }
+      # open file on first chunk
+      if (is.null(file_con)) {
+        # Note: at this point the response headers have been processed,
+        # so we can query the status code via curl::handle_data()
+        res <- curl::handle_data(h)
+        status <- res$status_code
+
+        if (status == 0) {
+          # curl‐level error; let fail_cb handle it
+          return()
         }
-        if (status_code == 503 && retry_count < max_retries){
-          Sys.sleep(retry_count)
-          return(execute_retryable_download(paths, index, pool, get_download_path_from_headers, overwrite, on_finish, stop_on_error, file_connections, done, retry_count + 1, start_byte))
+        if (status == 503L && retry_count < max_retries) {
+          did_error <<- TRUE
+          active_downloads <<- active_downloads - 1L
+          # queue a retry
+          pending[[length(pending) + 1]] <<- list(
+            index       = index,
+            retry_count = retry_count + 1L,
+            start_byte  = start_byte + bytes_written
+          )
+          return()
         }
-        if (status_code >= 400){
-          if (stop_on_error){
-            stop(str_interp("Received HTTP status ${status_code} for path ${paths[[index]]}"))
+        if (status >= 400L) {
+          active_downloads <<- active_downloads - 1L
+          if (stop_on_error) {
+            stop(sprintf("HTTP %d for path %s", status, path))
           } else {
-            return(NULL)
+            return()
           }
         }
 
-        headers <- parse_curl_headers(res_data)
+        headers <- parse_curl_headers(res)
+        content_length <<- as.integer(headers[["content-length"]])
         download_path <<- get_download_path_from_headers(headers)
-        if (!overwrite && base::file.exists(download_path)){
-          stop(str_interp("File already exists at '${download_path}'. Set parameter overwrite=TRUE to overwrite existing files."))
+        if (!overwrite && file.exists(download_path)) {
+          stop(sprintf(
+            "File already exists at '%s'. Set overwrite = TRUE to overwrite.",
+            download_path
+          ))
         }
-        file_con <<- base::file(download_path, if (start_byte == 0) "w+b" else "a+b")
-        file_connections[[index]] <- file_con
+        file_paths[[index]] <<- download_path
+        retry_count <<- 0
+        file_con <<- base::file(download_path, if (start_byte == 0) "wb" else "ab")
+        file_connections[[index]] <<- file_con
       }
-      if (length(chunk)){
+
+      # write the chunk
+      if (length(chunk)) {
+        bytes_written <<- bytes_written + length(chunk)
         writeBin(chunk, file_con)
       }
-      if (final){
-        base::close(file_con)
-        file_connections[[index]] <- NULL
-        on_finish()
-      }
-    },
-    fail = function(e){
-      if (!is.null(file_con)){
-        tryCatch({
-          base::close(file_con)
-        }, error=function(e){})
-        file_connections[[index]] <- NULL
-      }
-      if (retry_count < max_retries){
-        start_byte <- 0
-        if (!is.null(file_con)){
-          print(paths[[index]])
-          start_byte <- file.size(download_path)
-          if (is.na(start_byte)){
-            start_byte <- 0
-          }
-        }
 
-        Sys.sleep(retry_count)
-        execute_retryable_download(paths, index, pool, get_download_path_from_headers, overwrite, on_finish, stop_on_error, file_connections, done, retry_count + 1, start_byte)
-      } else {
-        stop(e)
+      # on final chunk, clean up if we're done (note that if we haven't read all bytes in content-length, fail_cb will be called)
+      if (final && bytes_written == content_length) {
+        close(file_con)
+        file_connections[[index]] <<- NULL
+        on_finish()
+        active_downloads <<- active_downloads - 1L
       }
     }
-  )
+
+    # callback: on error
+    fail_cb <- function(err) {
+      active_downloads <<- active_downloads - 1L
+      if (!is.null(file_con)) {
+        tryCatch(close(file_con), error = function(e) {})
+        file_connections[[index]] <<- NULL
+      }
+      if (retry_count < max_retries) {
+        pending[[length(pending) + 1]] <<- list(
+          index       = index,
+          retry_count = retry_count + 1L,
+          start_byte  = bytes_written + start_byte
+        )
+      } else {
+        stop(err)
+      }
+    }
+
+    # finally, add to the pool
+    curl::multi_add(
+      handle = h,
+      pool   = pool,
+      data   = write_cb,
+      fail   = fail_cb
+    )
+    active_downloads <<- active_downloads + 1L
+  }
+
+  current_index <- 1
+
+  # schedule all initial downloads
+  while (current_index <= length(paths)) {
+    schedule_download(current_index)
+    current_index <- current_index + 1
+    if (active_downloads >= max_parallelization) break
+  }
+
+  # drive the pool until everything (including retries) is done
+  while (active_downloads > 0L) {
+    curl::multi_run(pool = pool, poll = 1)
+
+    # schedule any pending retries
+    if (length(pending) > 0L) {
+      for (task in pending) {
+        schedule_download(
+          task$index,
+          retry_count = task$retry_count,
+          start_byte  = task$start_byte
+        )
+        # Make sure we wait for all retries to enqueue. Add 0.1s as additional buffer
+        Sys.sleep(max(vapply(pending, function(task) task$retry_count, 1)) + 0.1)
+      }
+      pending <- list()
+    }
+    while (current_index <= length(paths)) {
+      schedule_download(current_index)
+      current_index <- current_index + 1
+      if (active_downloads >= max_parallelization) break
+    }
+  }
+
+  return(file_paths)
 }
 
 

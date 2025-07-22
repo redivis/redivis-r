@@ -305,14 +305,12 @@ parallel_download_raw_files <- function(self, path = getwd(), overwrite = FALSE,
 
 perform_parallel_raw_file_download <- function(vec, path, overwrite, max_parallelization){
   pb <- progressr::progressor(steps = length(vec))
-  download_paths <- list()
   get_download_path_from_headers <- function(headers){
     name <- get_filename_from_content_disposition(headers$'content-disposition')
     file_path <- base::file.path(path, name)
-    download_paths <<- append(download_paths, file_path)
     return(file_path)
   }
-  perform_parallel_download(
+  download_paths <- perform_parallel_download(
     purrr::map(vec, function(id){str_interp("/rawFiles/${id}")}),
     overwrite=overwrite,
     get_download_path_from_headers=get_download_path_from_headers,
