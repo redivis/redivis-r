@@ -265,6 +265,13 @@ perform_parallel_download <- function(
     total_con   = ceiling(max(1, max_parallelization / 2)), # multiplexing allows us to have fewer connections, so divide by 2
   )
 
+  # TODO: upgrade to curl >= 6.1.0 and we can do:
+  # streams_per_connection <- 5
+  # pool <- curl::new_pool(
+  #   total_con   = ceiling(max_parallelization / streams_per_connection),
+  #   max_streams = streams_per_connection
+  # )
+
   # track open connections so we can clean up on exit
   file_connections <- vector("list", length(paths))
   file_paths <- vector("list", length(paths))
