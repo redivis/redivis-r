@@ -261,10 +261,8 @@ perform_parallel_download <- function(
 ) {
   # limit open files
   max_parallelization <- max(min(128, length(paths), max_parallelization), 1)
-  streams_per_connection <- 5
   pool <- curl::new_pool(
-    total_con   = ceiling(max_parallelization / streams_per_connection),
-    max_streams = streams_per_connection
+    total_con   = ceiling(max(1, max_parallelization / 2)), # multiplexing allows us to have fewer connections, so divide by 2
   )
 
   # track open connections so we can clean up on exit
