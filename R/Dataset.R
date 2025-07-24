@@ -153,8 +153,12 @@ Dataset <- setRefClass("Dataset",
     redivis$query(query, default_dataset=.self$qualified_reference)
   },
 
-  release = function(){
-    version_res <- make_request(method="POST", path=str_interp("${.self$uri}/versions/next/release"))
+  release = function(release_notes=NULL){
+    version_res <- make_request(
+      method="POST",
+      path=str_interp("${.self$uri}/versions/next/release"),
+      payload=list(release_notes=release_notes)
+    )
     .self$uri = version_res$datasetUri
     .self$get()
     .self
