@@ -3,6 +3,14 @@ Secret <- setRefClass(
   "Secret",
   fields = list(name="character", user="ANY", organization="ANY"),
   methods = list(
+    # Need to explicitly initialize user/org to NULL
+    initialize = function(..., name, user=NULL, organization=NULL){
+      callSuper(...,
+                name=name,
+                user=user,
+                organization=organization
+      )
+    },
     show = function(){
       print(str_interp("<Secret ${.self$name}>"))
     },
