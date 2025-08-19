@@ -1,7 +1,8 @@
-#' @include User.R Datasource.R Notebook.R Transform.R Table.R api_request.R
+#' @include User.R Organization.R Datasource.R Notebook.R Transform.R Table.R api_request.R
 Workflow <- setRefClass("Workflow",
    fields = list(name="character",
                  user="ANY",
+                 organization="ANY",
                  uri="character",
                  qualified_reference="character",
                  scoped_reference="character",
@@ -9,26 +10,34 @@ Workflow <- setRefClass("Workflow",
              ),
    methods = list(
 
-     initialize = function(..., name="", user=NULL, properties=list()){
+     initialize = function(..., name="", user=NULL, organization=NULL, properties=list()){
        parsed_user <- user
+       parsed_organization <- organization
        parsed_name <- name
-       if (is.null(user)){
+       if (is.null(user) && is.null(organization)){
          split <- strsplit(name, "\\.")[[1]]
          if (length(split) == 2){
            parsed_name <- split[[2]]
            username <- split[[1]]
            parsed_user <- User$new(name=username)
+           parsed_organization <- Organization$new(name=username)
          } else if (Sys.getenv("REDIVIS_DEFAULT_USER", FALSE)){
            parsed_user <- User$new(name=Sys.getenv("REDIVIS_DEFAULT_USER"))
+         } else if (Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION", FALSE)){
+           parsed_organization <- Organization$new(name=Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION"))
          } else {
            stop("Invalid workflow specifier, must be the fully qualified reference if no owner is specified")
          }
        }
-       qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${parsed_user$name}.${parsed_name}")
+
+       owner_name <- if (is.null(parsed_user)) parsed_organization$name else parsed_user$name
        scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else parsed_name
+       qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${owner_name}.${scoped_reference_val}")
+
        callSuper(...,
                  name=parsed_name,
                  user=parsed_user,
+                 organization = parsed_organization,
                  qualified_reference=qualified_reference_val,
                  scoped_reference=scoped_reference_val,
                  uri=str_interp("/workflows/${URLencode(qualified_reference_val)}"),

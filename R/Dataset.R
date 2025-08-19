@@ -28,7 +28,7 @@ Dataset <- setRefClass("Dataset",
         } else if (Sys.getenv("REDIVIS_DEFAULT_USER", FALSE)){
           parsed_user <- User$new(name=Sys.getenv("REDIVIS_DEFAULT_USER"))
         } else if (Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION", FALSE)){
-          parsed_user <- Organization$new(name=Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION"))
+          parsed_organization <- Organization$new(name=Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION"))
         } else {
           stop("Invalid dataset specifier, must be the fully qualified reference if no owner is specified")
         }

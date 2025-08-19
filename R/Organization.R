@@ -1,4 +1,4 @@
-#' @include Dataset.R Secret.R api_request.R
+#' @include Dataset.R Secret.R Workflow.R api_request.R
 Organization <- setRefClass("Organization",
   fields = list(name="character"),
   methods = list(
@@ -10,6 +10,9 @@ Organization <- setRefClass("Organization",
     },
     secret = function(name) {
       Secret$new(name=name, organization=.self)
+    },
+    workflow = function(name) {
+      Workflow$new(name=name, organization=.self)
     },
 
     exists = function(){
@@ -30,6 +33,13 @@ Organization <- setRefClass("Organization",
       datasets <- make_paginated_request(path=str_interp("/organizations/${.self$name}/datasets"), page_size=100, max_results=max_results)
       purrr::map(datasets, function(dataset) {
         Dataset$new(name=dataset$name, properties=dataset, organization=.self)
+      })
+    },
+
+    list_workflows = function(max_results=NULL) {
+      workflows <- make_paginated_request(path=str_interp("/organizations/${.self$name}/workflows"), page_size=100, max_results=max_results)
+      purrr::map(workflows, function(workflow) {
+        Workflow$new(name=workflow$name, properties=workflow, organization=.self)
       })
     }
   )
