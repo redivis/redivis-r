@@ -54,10 +54,43 @@ Transform <- setRefClass("Transform",
       .self
     },
 
+    update = function(name=NULL, source_table=NULL){
+      payload = list()
+
+      if (!is.null(name)){
+        payload$name = name
+      }
+
+      if (!is.null(source_table)){
+        if (is(source_table, "Table")){
+          payload$sourceTable = source_table.qualified_reference
+        } else {
+          payload$sourceTable = source_table
+        }
+      }
+      .self$properties = make_request(
+        method="PATCH",
+        path=.self$uri,
+        payload=payload,
+      )
+      .self$uri <- .self$properties$uri
+      .self
+    },
+
     source_tables = function(){
+      warning("Deprecation warning: The source_tables() method has been renamed to referenced_tables(); please use this instead. This method will be removed in the future.")
+      return(.self$referenced_tables())
+    },
+
+    source_table = function(){
+      .self$get()
+      Table$new(name=.self$properties[["sourceTable"]], properties = .self$properties[["sourceTable"]][["qualifiedReference"]])
+    },
+
+    referenced_tables = function(){
       .self$get()
 
-      lapply(.self$properties[["sourceTables"]], function(source_table) {
+      lapply(.self$properties[["referencedTables"]], function(source_table) {
         Table$new(name=source_table[["qualifiedReference"]], properties = source_table)
       })
     },

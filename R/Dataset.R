@@ -1,8 +1,8 @@
-#' @include Organization.R User.R Table.R api_request.R
+#' @include Organization.R User.R Table.R Version.R api_request.R
 Dataset <- setRefClass("Dataset",
    fields = list(
     name="character",
-    version="ANY",
+    version_tag="ANY",
     user="ANY",
     organization="ANY",
     uri="character",
@@ -64,7 +64,7 @@ Dataset <- setRefClass("Dataset",
 
       callSuper(...,
                 name=parsed_name,
-                version=version_arg,
+                version_tag=version_arg,
                 user=parsed_user,
                 organization=parsed_organization,
                 qualified_reference=qualified_reference_val,
@@ -106,7 +106,7 @@ Dataset <- setRefClass("Dataset",
       .self$get()
     }
     if (is.null(.self$properties$nextVersion)){
-      make_request(method="POST", path=str_interp("/${.self$uri}/versions"))
+      make_request(method="POST", path=str_interp("${.self$uri}/versions"))
     } else if (!if_not_exists){
       stop(str_interp("Next version already exists at ${.self$properties$nextVersion$datasetUri}. To avoid this error, set argument if_not_exists to TRUE"))
     }
@@ -138,9 +138,35 @@ Dataset <- setRefClass("Dataset",
     }
   },
 
+  version = function(tag=NULL){
+    if (is.null(tag) && is.null(.self$version_tag)){
+      .self$get()
+    }
+    return(Version$new(if(is.null(tag)) .self$version_tag else tag, dataset=.self))
+  },
+
+  previous_version = function(){
+    return(.self$version()$previous_version()$dataset())
+  },
+
+  next_version = function(){
+    return(.self$version()$next_version()$dataset())
+  },
+
+  list_versions = function(max_results=NULL){
+    versions <- make_paginated_request(
+      path=str_interp("${.self$uri}/versions"),
+      page_size=100,
+      max_results=max_results
+    )
+    purrr::map(versions, function(properties) {
+      Version$new(tag=properties$tag, dataset=.self, properties=properties)
+    })
+  },
+
   list_tables = function(max_results=NULL) {
     tables <- make_paginated_request(
-      path=str_interp("/${.self$uri}/tables"),
+      path=str_interp("${.self$uri}/tables"),
       page_size=100,
       max_results=max_results
     )
@@ -219,7 +245,7 @@ update_dataset_properties <- function(instance, properties){
   instance$scoped_reference = properties$scopedReference
   instance$name = properties$name
   instance$uri = properties$uri
-  instance$version = properties$version$tag
+  instance$version_tag = properties$version$tag
   rectify_ambiguous_dataset_owner(instance)
 }
 

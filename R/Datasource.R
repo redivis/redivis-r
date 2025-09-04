@@ -56,6 +56,25 @@ Datasource <- setRefClass("Datasource",
        }
      },
 
+     create = function(){
+       payload = list()
+
+       if (Dataset$new(.self$source_reference)$exists()){
+         payload$sourceDataset = .self$source_reference
+       } else {
+         payload$sourceWorkflow = .self$source_reference
+       }
+
+       .self$properties <- make_request(
+         method = "POST",
+         path = str_interp("${.self$workflow$uri}/dataSources"),
+         payload = payload
+       )
+       .self$uri <- .self$properties[["uri"]]
+
+       return(.self)
+     },
+
      update = function(source_dataset=NULL, source_workflow=NULL, sample=NULL, version=NULL, mapped_tables=NULL){
        if (inherits(source_workflow, "Workflow")) {
          source_workflow <- source_workflow$qualified_reference
@@ -123,6 +142,28 @@ Datasource <- setRefClass("Datasource",
        .self$uri <- .self$properties[["uri"]]
 
        return(.self)
+     },
+
+     source_dataset = function(){
+       if (!("sourceDataset" %in% names(.self$properties))){
+         .self$get()
+       }
+       source_dataset = .self$properties$sourceDataset
+       if (is.null(source_dataset)){
+         stop("This datasource doesn't have a source dataset. Use the source_workflow() method instead.")
+       }
+       Dataset$new(name=source_dataset[["qualifiedReference"]], properties=source_dataset)
+     },
+
+     source_workflow = function(){
+       if (!("sourceWorkflow" %in% names(.self$properties))){
+         .self$get()
+       }
+       source_workflow = .self$properties$sourceWorkflow
+       if (is.null(source_workflow)){
+         stop("This datasource doesn't have a source workflow. Use the source_dataset() method instead.")
+       }
+       Workflow$new(name=source_workflow[["qualifiedReference"]], properties=source_workflow)
      }
    )
 )
