@@ -59,10 +59,10 @@ Datasource <- setRefClass("Datasource",
      create = function(){
        payload = list()
 
-       if (Dataset$new(.self$source_reference)$exists()){
-         payload$sourceDataset = .self$source_reference
+       if (Dataset$new(name=.self$source)$exists()){
+         payload$sourceDataset = .self$source
        } else {
-         payload$sourceWorkflow = .self$source_reference
+         payload$sourceWorkflow = .self$source
        }
 
        .self$properties <- make_request(
