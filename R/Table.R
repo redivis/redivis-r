@@ -465,7 +465,7 @@ Table <- setRefClass("Table",
 
      download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE, max_parallelization=NULL){
         parallel_download_raw_files(
-          self=.self,
+          instance=.self,
           path=path,
           overwrite=overwrite,
           max_results=max_results,
@@ -554,9 +554,9 @@ update_table_properties <- function(instance, properties){
 }
 
 
-get_table_request_params = function(self, max_results, variables, geography_variable=NULL){
+get_table_request_params = function(instance, max_results, variables, geography_variable=NULL){
   # IMPORTANT: note that this is also called be the upload$to_* methods
-  all_variables <- make_paginated_request(path=str_interp("${self$uri}/variables"), page_size=1000)
+  all_variables <- make_paginated_request(path=str_interp("${instance$uri}/variables"), page_size=1000)
 
   if (is.null(variables)){
     variables_list <- all_variables
@@ -574,8 +574,8 @@ get_table_request_params = function(self, max_results, variables, geography_vari
     variables_list <- Filter(Negate(is.null), variables_list)
   }
 
-  if (is.null(self$properties$container)){
-    self$get()
+  if (is.null(instance$properties$container)){
+    instance$get()
   }
 
   selected_variable_names <- if (is.null(variables)) NULL else Map(function(variable_name) variable_name, variables)
@@ -598,12 +598,12 @@ get_table_request_params = function(self, max_results, variables, geography_vari
 
   list(
     "max_results" = max_results,
-    "uri" = self$uri,
+    "uri" = instance$uri,
     "selected_variable_names" = selected_variable_names,
     "variables"=variables_list,
     "geography_variable"=geography_variable,
-    "coerce_schema"=self$properties$container$kind == 'dataset',
-    "use_export_api"=self$properties$numBytes > max_streaming_bytes
+    "coerce_schema"=instance$properties$container$kind == 'dataset',
+    "use_export_api"=instance$properties$numBytes > max_streaming_bytes
   )
 }
 

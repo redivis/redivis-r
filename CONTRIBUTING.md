@@ -8,7 +8,6 @@ devtools::install()
 Reload with Cmd + Shift + L or devtools::load_all(), experiment in console
 
 ## Testing
-Sys.setenv(REDIVIS_API_TOKEN="<TOKEN>")
 Sys.setenv(REDIVIS_API_ENDPOINT="https://local.host:8443/api/v1")
 devtools::test()
 

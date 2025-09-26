@@ -65,7 +65,7 @@ Query <- setRefClass("Query",
 
     download_files = function(path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE, max_parallelization=NULL){
         parallel_download_raw_files(
-          self=.self,
+          instance=.self,
           path=path,
           overwrite=overwrite,
           max_results=max_results,
@@ -200,9 +200,9 @@ Query <- setRefClass("Query",
   )
 )
 
-get_query_request_params = function(self, max_results, variables, geography_variable = NULL){
-  res <- query_wait_for_finish(self$properties)
-  self$properties = res
+get_query_request_params = function(instance, max_results, variables, geography_variable = NULL){
+  res <- query_wait_for_finish(instance$properties)
+  instance$properties = res
 
   uri <- str_interp("/queries/${res$id}")
   all_variables <- res$outputSchema

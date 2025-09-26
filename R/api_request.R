@@ -560,7 +560,9 @@ RedivisBatchReader <- setRefClass(
             # Note: this approach is much more performant than using %>% mutate(across())
             # TODO: in the future, Arrow may support native conversion from time string to their type
             for (time_variable in .self$time_variables){
-              batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
+              if (!is(batch[[time_variable]]$type, 'Time64')){
+                batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
+              }
             }
 
             batch <- (arrow::as_record_batch(batch, schema=.self$custom_classes$writer_schema))
@@ -767,13 +769,15 @@ parallel_stream_arrow <- function(folder, streams, max_results, variables, coerc
           current_progress_rows <- current_progress_rows + batch$num_rows
           stream_rows_read <- stream_rows_read + batch$num_rows
 
-          # We need to coerce_schema for all dataset tables, since their underlying storage type is always a string
+          # We need to coerce_schema for all dataset tables, since their underlying storage type may not be the same as the logical type
           if (coerce_schema){
             # Note: this approach is much more performant than using %>% mutate(across())
-            # TODO: in the future, Arrow may support native coversion from time string to their type
+            # TODO: in the future, Arrow may support native conversion from time string to their type
             # To test if supported: arrow::arrow_array(rep('10:30:04.123', 2))$cast(arrow::time64(unit="us"))
             for (time_variable in time_variables_to_coerce){
-              batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
+              if (!is(batch[[time_variable]]$type, 'Time64')){
+                batch[[time_variable]] <- arrow::arrow_array(stringr::str_c('2000-01-01T', batch[[time_variable]]$as_vector()))$cast(arrow::timestamp(unit='us'))
+              }
             }
 
             # TODO: this is a significant bottleneck. Can we make it faster, maybe call all at once?

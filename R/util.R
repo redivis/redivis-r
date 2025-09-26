@@ -269,13 +269,13 @@ show_namespace_warning <- function(method){
   }
 }
 
-parallel_download_raw_files <- function(self, path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE, max_parallelization=NULL){
+parallel_download_raw_files <- function(instance, path = getwd(), overwrite = FALSE, max_results = NULL, file_id_variable = NULL, progress=TRUE, max_parallelization=NULL){
   if (endsWith(path, '/')) {
     path <- stringr::str_sub(path,1,nchar(path)-1) # remove trailing "/", as this screws up file.path()
   }
 
   if (is.null(file_id_variable)){
-    file_id_variables <- make_paginated_request(path=str_interp("${self$uri}/variables"), max_results=2, query = list(isFileId = TRUE))
+    file_id_variables <- make_paginated_request(path=str_interp("${instance$uri}/variables"), max_results=2, query = list(isFileId = TRUE))
 
     if (length(file_id_variables) == 0){
       stop("No variable containing file ids was found on this table")
@@ -286,7 +286,7 @@ parallel_download_raw_files <- function(self, path = getwd(), overwrite = FALSE,
   }
 
   df <- make_rows_request(
-    uri=self$uri,
+    uri=instance$uri,
     max_results=max_results,
     selected_variable_names = list(file_id_variable),
     type='data_table',
