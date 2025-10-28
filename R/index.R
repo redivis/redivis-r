@@ -140,6 +140,7 @@ current_notebook <- function() {
 #' redivis$file(id)
 #' redivis$notebook(name)
 #' redivis$organization(name)
+#' redivis$parameter(name)
 #' redivis$table(name)
 #' redivis$transform(name)
 #' redivis$user(name)
@@ -188,7 +189,7 @@ current_notebook <- function() {
 #' redivis$make_api_request(method="GET", path, ...)
 #'
 #'
-#' @return list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, query, table, transform, user, workflow)
+#' @return list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, parameter, query, table, transform, user, workflow)
 #' @examples
 #'  df <- redivis$table("demo.ghcn_daily_weather_data.stations")$to_tibble()
 #'  df <- redivis$query("SELECT 1+1 as two")$to_tibble()
@@ -257,6 +258,10 @@ redivis <- list(
 
   "organization"=function(name){
     Organization$new(name=name)
+  },
+
+  "parameter"=function(name){
+    Parameter$new(name=name)
   },
 
   "query"=function(query="", default_workflow=NULL, default_dataset=NULL) {

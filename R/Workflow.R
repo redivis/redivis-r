@@ -1,4 +1,4 @@
-#' @include User.R Organization.R Datasource.R Notebook.R Transform.R Table.R api_request.R
+#' @include User.R Organization.R Datasource.R Notebook.R Transform.R Table.R Parameter.R api_request.R
 Workflow <- setRefClass("Workflow",
    fields = list(name="character",
                  user="ANY",
@@ -80,6 +80,10 @@ Workflow <- setRefClass("Workflow",
        Transform$new(name=name, workflow=.self)
      },
 
+     parameter = function(name){
+       Parameter$new(name=name, workflow=.self)
+     },
+
      datasource = function(source){
        Datasource$new(source=source, workflow=.self)
      },
@@ -118,6 +122,17 @@ Workflow <- setRefClass("Workflow",
        )
        purrr::map(notebooks, function(notebook_properties) {
          Notebook$new(name=notebook_properties$name, workflow=.self, properties=notebook_properties)
+       })
+     },
+
+     list_parameters = function(max_results=NULL) {
+       parameters <- make_paginated_request(
+         path=str_interp("${.self$uri}/parameters"),
+         page_size=100,
+         max_results=max_results,
+       )
+       purrr::map(parameters, function(parameter_properties) {
+         Parameter$new(name=parameter_properties$name, workflow=.self, properties=parameter_properties)
        })
      },
 

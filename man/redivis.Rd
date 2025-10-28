@@ -5,7 +5,7 @@
 \alias{redivis}
 \title{redivis}
 \format{
-An object of class \code{list} of length 15.
+An object of class \code{list} of length 16.
 }
 \usage{
 library(redivis)
@@ -17,6 +17,7 @@ redivis$datasource(source)
 redivis$file(id)
 redivis$notebook(name)
 redivis$organization(name)
+redivis$parameter(name)
 redivis$table(name)
 redivis$transform(name)
 redivis$user(name)
@@ -65,7 +66,7 @@ redivis$authenticate(scope=NULL, force_reauthentication=FALSE)
 redivis$make_api_request(method="GET", path, ...)
 }
 \value{
-list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, query, table, transform, user, workflow)
+list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, parameter, query, table, transform, user, workflow)
 }
 \description{
 Redivis wrapper, all primary constructor accessible via redivis$<constructor>()
