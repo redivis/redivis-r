@@ -80,7 +80,6 @@ Datasource <- setRefClass("Datasource",
          source_workflow <- source_workflow$qualified_reference
        }
        if (inherits(source_dataset, "Dataset")) {
-         print('hello')
          source_dataset <- source_dataset$qualified_reference
        }
 
