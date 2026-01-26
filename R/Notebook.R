@@ -214,15 +214,13 @@ Notebook <- setRefClass("Notebook",
        if (temp_upload$resumable) {
          perform_resumable_upload(
            data=con,
-           temp_upload_url=temp_upload$url,
-           proxy_url=str_interp("${Sys.getenv('REDIVIS_API_ENDPOINT')}/notebookJobs/${current_notebook_job_id}/tempUploadProxy")
+           temp_upload_url=temp_upload$url
          )
        } else {
          perform_standard_upload(
            data=con,
-           temp_upload_url=temp_upload$url,
-           proxy_url=str_interp("${Sys.getenv('REDIVIS_API_ENDPOINT')}/notebookJobs/${current_notebook_job_id}/tempUploadProxy")
-           )
+           temp_upload_url=temp_upload$url
+        )
        }
 
        payload <- base::append(payload, list(tempUploadId=temp_upload$id))
