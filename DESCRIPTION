@@ -46,9 +46,11 @@ Collate:
     'Datasource.R'
     'Organization.R'
     'Workflow.R'
+    'tabular_reader.R'
     'Table.R'
     'Dataset.R'
     'File.R'
     'Query.R'
     'Upload.R'
     'index.R'
+    

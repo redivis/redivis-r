@@ -1,6 +1,5 @@
 #' @importFrom stringr str_interp
 
-
 #' @title query
 #'
 #' @description DEPRECATED: please use redivis$query
@@ -11,13 +10,17 @@
 #' @examples
 #' output_table <- redivis::query(query = 'SELECT 1 + 1 AS two')$to_tibble()
 #' @export
-query <- function(query="", default_workflow=NULL, default_dataset=NULL) {
+query <- function(query = "", default_workflow = NULL, default_dataset = NULL) {
   show_namespace_warning("query")
-  if (is.null(default_workflow) && is.null(default_dataset)){
+  if (is.null(default_workflow) && is.null(default_dataset)) {
     default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
     default_dataset <- Sys.getenv("REDIVIS_DEFAULT_DATASET")
   }
-  Query$new(query=query, default_workflow=default_workflow, default_dataset=default_dataset)
+  Query$new(
+    query = query,
+    default_workflow = default_workflow,
+    default_dataset = default_dataset
+  )
 }
 
 
@@ -34,9 +37,9 @@ query <- function(query="", default_workflow=NULL, default_dataset=NULL) {
 #' We can also construct a query scoped to a particular workflow, removing the need to fully qualify table names
 #' redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 #' @export
-user <- function(name){
+user <- function(name) {
   show_namespace_warning("user")
-  User$new(name=name)
+  User$new(name = name)
 }
 
 
@@ -53,9 +56,9 @@ user <- function(name){
 #' We can also construct a query scoped to a particular dataset, removing the need to fully qualify table names
 #' redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 #' @export
-organization <- function(name){
+organization <- function(name) {
   show_namespace_warning("organization")
-  Organization$new(name=name)
+  Organization$new(name = name)
 }
 
 #' @title table
@@ -70,23 +73,34 @@ organization <- function(name){
 #'
 
 #' @export
-table <- function(name){
+table <- function(name) {
   show_namespace_warning("table")
-  if (Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != ""){
-    Table$new(name=name)
-  } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != ""){
-    user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[1]
-    workflow_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[2]
-    User$new(name=user_name)$workflow(name=workflow_name)$table(name=name)
+  if (Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
+    Table$new(name = name)
+  } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
+    user_name <- unlist(strsplit(
+      Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"),
+      "[.]"
+    ))[1]
+    workflow_name <- unlist(strsplit(
+      Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"),
+      "[.]"
+    ))[2]
+    User$new(name = user_name)$workflow(name = workflow_name)$table(name = name)
+  } else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != "") {
+    user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[
+      1
+    ]
+    dataset_name <- unlist(strsplit(
+      Sys.getenv("REDIVIS_DEFAULT_DATASET"),
+      "[.]"
+    ))[2]
 
-  }else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != ""){
-    user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[1]
-    dataset_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[2]
-
-    User$new(name=user_name)$dataset(name=dataset_name)$table(name=name)
-  }
-  else{
-    stop("Cannot reference an unqualified table if the neither the REDIVIS_DEFAULT_WORKFLOW or REDIVIS_DEFAULT_DATASET environment variables are set.")
+    User$new(name = user_name)$dataset(name = dataset_name)$table(name = name)
+  } else {
+    stop(
+      "Cannot reference an unqualified table if the neither the REDIVIS_DEFAULT_WORKFLOW or REDIVIS_DEFAULT_DATASET environment variables are set."
+    )
   }
 }
 
@@ -102,7 +116,7 @@ table <- function(name){
 #' @export
 file <- function(id) {
   show_namespace_warning("file")
-  File$new(id=id)
+  File$new(id = id)
 }
 
 
@@ -116,9 +130,9 @@ file <- function(id) {
 #' @export
 current_notebook <- function() {
   show_namespace_warning("current_notebook")
-  if(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
-    Notebook$new(name=Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK"))
-  }else {
+  if (Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
+    Notebook$new(name = Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK"))
+  } else {
     NULL
   }
 }
@@ -203,91 +217,111 @@ current_notebook <- function() {
 #'  workflow <- redivis$current_workflow();
 #' @export
 redivis <- list(
-
-  "authenticate"=function(scope=NULL, force_reauthentication=FALSE) {
-    if (force_reauthentication){
+  "authenticate" = function(scope = NULL, force_reauthentication = FALSE) {
+    if (force_reauthentication) {
       clear_cached_credentials()
     }
-    if (is.character(scope)){
+    if (is.character(scope)) {
       scope <- list(scope)
     }
-    get_auth_token(scope=scope)
+    get_auth_token(scope = scope)
     invisible(NULL)
   },
 
-  "current_notebook"=function() {
-    if(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
-      Notebook$new(name=Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK"))
-    }else {
+  "current_notebook" = function() {
+    if (Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
+      Notebook$new(name = Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK"))
+    } else {
       NULL
     }
   },
 
-  "current_user"=function(){
-    res <- make_request(method="GET", path="/users/me")
-    User$new(name=res$name)
+  "current_user" = function() {
+    res <- make_request(method = "GET", path = "/users/me")
+    User$new(name = res$name)
   },
 
-  "current_workflow"=function(){
-    if(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
-      Workflow$new(name=Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"))
-    }else {
+  "current_workflow" = function() {
+    if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
+      Workflow$new(name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"))
+    } else {
       NULL
     }
   },
 
-  "dataset"=function(name, version=NULL){
-    Dataset$new(name=name, version=version)
+  "dataset" = function(name, version = NULL) {
+    Dataset$new(name = name, version = version)
   },
 
-  "datasource"=function(source){
-    Datasource$new(source=source)
+  "datasource" = function(source) {
+    Datasource$new(source = source)
   },
 
-  "file"=function(id) {
-    File$new(id=id)
+  "file" = function(id) {
+    File$new(id = id)
   },
 
-  "make_api_request"=function(method='GET', path = "", query=NULL, payload=NULL, headers=NULL, parse_response=TRUE, stream_callback=NULL){
-    make_request(method=method, path=path, query=query, payload=payload, headers=headers, parse_response=parse_response, stream_callback=stream_callback)
+  "make_api_request" = function(
+    method = 'GET',
+    path = "",
+    query = NULL,
+    payload = NULL,
+    headers = NULL,
+    parse_response = TRUE,
+    stream_callback = NULL
+  ) {
+    make_request(
+      method = method,
+      path = path,
+      query = query,
+      payload = payload,
+      headers = headers,
+      parse_response = parse_response,
+      stream_callback = stream_callback
+    )
   },
 
-  "notebook"=function(name){
-    Notebook$new(name=name)
+  "notebook" = function(name) {
+    Notebook$new(name = name)
   },
 
-  "organization"=function(name){
-    Organization$new(name=name)
+  "organization" = function(name) {
+    Organization$new(name = name)
   },
 
-  "parameter"=function(name){
-    Parameter$new(name=name)
+  "parameter" = function(name) {
+    Parameter$new(name = name)
   },
 
-  "query"=function(query="", default_workflow=NULL, default_dataset=NULL) {
-    if (is.null(default_workflow) && is.null(default_dataset)){
+  "query" = function(
+    query = "",
+    default_workflow = NULL,
+    default_dataset = NULL
+  ) {
+    if (is.null(default_workflow) && is.null(default_dataset)) {
       default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
       default_dataset <- Sys.getenv("REDIVIS_DEFAULT_DATASET")
     }
-    Query$new(query=query, default_workflow=default_workflow, default_dataset=default_dataset)
+    Query$new(
+      query = query,
+      default_workflow = default_workflow,
+      default_dataset = default_dataset
+    )
   },
 
-  "table"=function(name){
-    Table$new(name=name)
+  "table" = function(name) {
+    Table$new(name = name)
   },
 
-  "transform"=function(name){
-    Transform$new(name=name)
+  "transform" = function(name) {
+    Transform$new(name = name)
   },
 
-  "user"=function(name){
-    User$new(name=name)
+  "user" = function(name) {
+    User$new(name = name)
   },
 
-  "workflow"=function(name){
-    Workflow$new(name=name)
+  "workflow" = function(name) {
+    Workflow$new(name = name)
   }
-
 )
-
-
