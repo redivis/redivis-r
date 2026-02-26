@@ -1,4 +1,95 @@
+#' @include make_rows_request.R Directory.R api_request.R
 tabular_reader_methods <- list(
+  to_directory = function(
+    file_id_variable = NULL,
+    file_name_variable = NULL
+  ) {
+    if (inherits(.self, "Upload")) {
+      abort_redivis_value_error(
+        "Listing files on uploads is not currently supported."
+      )
+    }
+
+    is_query <- inherits(.self, "Query")
+    is_table <- inherits(.self, "Table")
+
+    check_is_ready(.self)
+
+    # Queries are immutable — return the cached directory if available
+    if (is_query && !is.null(.self$directory)) {
+      return(.self$directory)
+    }
+
+    # Capture current time in ms before the request is sent
+    current_timestamp_ms <- as.numeric(Sys.time()) * 1000
+
+    req_headers <- list()
+    if (!is.null(.self$cached_directory_timestamp)) {
+      req_headers[["If-Modified-Since"]] <- format(
+        as.POSIXct(
+          .self$cached_directory_timestamp / 1000,
+          origin = "1970-01-01",
+          tz = "GMT"
+        ),
+        "%a, %d %b %Y %H:%M:%S GMT"
+      )
+    }
+
+    query_params <- list(format = "arrow")
+    if (!is.null(file_id_variable)) {
+      query_params$fileIdVariable <- file_id_variable
+    }
+    if (!is.null(file_name_variable)) {
+      query_params$fileNameVariable <- file_name_variable
+    }
+
+    name_variable <- if (!is.null(file_name_variable)) {
+      file_name_variable
+    } else {
+      "file_name"
+    }
+
+    res <- make_request(
+      method = "GET",
+      path = str_interp("${.self$uri}/rawFiles"),
+      headers = req_headers,
+      query = query_params,
+      parse_response = FALSE
+    )
+
+    # 304 Not Modified — return cached directory
+    if (httr2::resp_status(res) == 304L) {
+      return(.self$directory)
+    }
+
+    dir <- Directory$new(
+      path = "/",
+      query = if (is_query) .self else NULL,
+      table = if (is_table) .self else NULL
+    )
+
+    raw_bytes <- httr2::resp_body_raw(res)
+    file_specs <- arrow::read_ipc_stream(raw_bytes, as_data_frame = TRUE)
+
+    # Convert to a list of rows upfront; each element is a named list of scalars
+    row_list <- purrr::transpose(as.list(file_specs))
+
+    for (file_spec in row_list) {
+      f <- File$new(
+        id = file_spec[["file_id"]],
+        name = file_spec[[name_variable]],
+        table = if (is_table) .self else NULL,
+        query = if (is_query) .self else NULL,
+        properties = file_spec
+      )
+      add_directory_file(dir, f)
+    }
+
+    .self$directory <- dir
+    .self$cached_directory_timestamp <- current_timestamp_ms
+    dir
+  },
+
   to_arrow_dataset = function(
     max_results = NULL,
     variables = NULL,
@@ -6,6 +97,7 @@ tabular_reader_methods <- list(
     batch_preprocessor = NULL,
     max_parallelization = parallelly::availableCores()
   ) {
+    check_is_ready(.self)
     params <- get_table_request_params(.self, max_results, variables)
 
     make_rows_request(
@@ -30,6 +122,7 @@ tabular_reader_methods <- list(
     batch_preprocessor = NULL,
     max_parallelization = parallelly::availableCores()
   ) {
+    check_is_ready(.self)
     params <- get_table_request_params(.self, max_results, variables)
 
     make_rows_request(
@@ -52,6 +145,7 @@ tabular_reader_methods <- list(
     variables = NULL,
     progress = TRUE
   ) {
+    check_is_ready(.self)
     params <- get_table_request_params(.self, max_results, variables)
 
     make_rows_request(
@@ -74,6 +168,7 @@ tabular_reader_methods <- list(
     batch_preprocessor = NULL,
     max_parallelization = parallelly::availableCores()
   ) {
+    check_is_ready(.self)
     params <- get_table_request_params(.self, max_results, variables)
 
     df <- make_rows_request(
@@ -102,8 +197,11 @@ tabular_reader_methods <- list(
     max_parallelization = parallelly::availableCores()
   ) {
     if (!requireNamespace("sf", quietly = TRUE)) {
-      stop("The sf package must be installed to use the to_sf_tibble() method.")
+      abort_redivis_error(
+        "The sf package must be installed to use the to_sf_tibble() method."
+      )
     }
+    check_is_ready(.self)
 
     params <- get_table_request_params(
       .self,
@@ -113,7 +211,9 @@ tabular_reader_methods <- list(
     )
 
     if (is.null(params$geography_variable)) {
-      stop('Unable to find geography variable in table')
+      abort_redivis_not_found_error(
+        'Unable to find geography variable in table'
+      )
     }
 
     df <- make_rows_request(
@@ -140,6 +240,7 @@ tabular_reader_methods <- list(
     batch_preprocessor = NULL,
     max_parallelization = parallelly::availableCores()
   ) {
+    check_is_ready(.self)
     params <- get_table_request_params(.self, max_results, variables)
 
     make_rows_request(
@@ -164,6 +265,7 @@ tabular_reader_methods <- list(
     batch_preprocessor = NULL,
     max_parallelization = parallelly::availableCores()
   ) {
+    check_is_ready(.self)
     params <- get_table_request_params(.self, max_results, variables)
 
     make_rows_request(
@@ -181,35 +283,40 @@ tabular_reader_methods <- list(
     )
   },
 
-  list_files = function(max_results = NULL, file_id_variable = NULL) {
-    if (is.null(file_id_variable)) {
-      file_id_variables <- make_paginated_request(
-        path = str_interp("${.self$uri}/variables"),
-        max_results = 2,
-        query = list(isFileId = TRUE)
-      )
-
-      if (length(file_id_variables) == 0) {
-        stop("No variable containing file ids was found on this table")
-      } else if (length(file_id_variables) > 1) {
-        stop(
-          "This table contains multiple variables representing a file id. Please specify the variable with file ids you want to download via the 'file_id_variable' parameter."
-        )
-      }
-      file_id_variable = file_id_variables[[1]]$'name'
+  file = function(path) {
+    cache_age_ms <- if (!is.null(.self$cached_directory_timestamp)) {
+      as.numeric(Sys.time()) * 1000 - .self$cached_directory_timestamp
+    } else {
+      Inf
     }
 
-    df <- make_rows_request(
-      uri = .self$uri,
-      max_results = max_results,
-      selected_variable_names = list(file_id_variable),
-      type = 'data_table',
-      variables = list(list(name = file_id_variable, type = "string")),
-      progress = FALSE
+    if (is.null(.self$directory) || cache_age_ms >= 5 * 1000) {
+      .self$to_directory()
+    }
+
+    node <- .self$directory$get(path)
+    if (inherits(node, "Directory")) {
+      abort_redivis_value_error(str_interp(
+        "'${path}' is a directory, not a file"
+      ))
+    }
+    node
+  },
+
+  list_files = function(
+    max_results = NULL,
+    file_id_variable = NULL,
+    file_name_variable = NULL
+  ) {
+    .self$to_directory(
+      file_id_variable = file_id_variable,
+      file_name_variable = file_name_variable
     )
-    purrr::map(df[[file_id_variable]], function(id) {
-      File$new(id = id, table = .self)
-    })
+    .self$directory$list(
+      mode = "files",
+      recursive = TRUE,
+      max_results = max_results
+    )
   },
   download_files = function(
     path = getwd(),
@@ -219,8 +326,12 @@ tabular_reader_methods <- list(
     progress = TRUE,
     max_parallelization = NULL
   ) {
-    parallel_download_raw_files(
-      instance = .self,
+    warning(
+      "This method is deprecated. Please use to_directory()$download() instead",
+      call. = FALSE
+    )
+    .self$to_directory(file_id_variable = file_id_variable)
+    .self$directory$download(
       path = path,
       overwrite = overwrite,
       max_results = max_results,
@@ -230,6 +341,16 @@ tabular_reader_methods <- list(
     )
   }
 )
+
+check_is_ready = function(instance) {
+  if (inherits(instance, "Query")) {
+    query_wait_for_finish(instance)
+  } else if (
+    inherits(instance, "Table") && is.null(instance$properties$container)
+  ) {
+    instance$get()
+  }
+}
 
 get_table_request_params = function(
   instance,
@@ -292,13 +413,26 @@ get_table_request_params = function(
     1e11
   }
 
+  should_use_export_api <- FALSE
+  if (inherits(instance, "Table")) {
+    max_streaming_bytes <- if (
+      is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA))
+    ) {
+      1e9
+    } else {
+      1e11
+    }
+    should_use_export_api <- instance$properties$numBytes > max_streaming_bytes
+  }
+
   list(
     "max_results" = max_results,
     "uri" = instance$uri,
     "selected_variable_names" = selected_variable_names,
     "variables" = variables_list,
     "geography_variable" = geography_variable,
-    "coerce_schema" = instance$properties$container$kind == 'dataset',
-    "use_export_api" = instance$properties$numBytes > max_streaming_bytes
+    "coerce_schema" = inherits(instance, "Table") &&
+      instance$properties$container$kind == 'dataset',
+    "use_export_api" = should_use_export_api
   )
 }

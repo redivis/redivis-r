@@ -33,7 +33,7 @@ Transform <- setRefClass(
         } else if (
           name != "" # Need this check otherwise package won't build (?)
         ) {
-          stop(
+          abort_redivis_value_error(
             "Invalid transform specifier, must be the fully qualified reference if no dataset or workflow is specified"
           )
         }
@@ -64,20 +64,18 @@ Transform <- setRefClass(
     },
 
     exists = function() {
-      res <- make_request(
-        method = "HEAD",
-        path = .self$uri,
-        stop_on_error = FALSE
-      )
-      if (length(res$error)) {
-        if (res$status == 404) {
-          return(FALSE)
-        } else {
-          stop(str_interp("${res$error}: ${res$error_description}"))
+      tryCatch(
+        {
+          make_request(
+            method = "HEAD",
+            path = .self$uri
+          )
+          TRUE
+        },
+        redivis_not_found_error = function(e) {
+          FALSE
         }
-      } else {
-        return(TRUE)
-      }
+      )
     },
 
     get = function() {
@@ -111,7 +109,8 @@ Transform <- setRefClass(
 
     source_tables = function() {
       warning(
-        "Deprecation warning: The source_tables() method has been renamed to referenced_tables(); please use this instead. This method will be removed in the future."
+        "Deprecation warning: The source_tables() method has been renamed to referenced_tables(); please use this instead. This method will be removed in the future.",
+        call. = FALSE
       )
       return(.self$referenced_tables())
     },
@@ -164,10 +163,14 @@ Transform <- setRefClass(
 
           if (
             !is.null(current_job) &&
-              current_job[["status"]] %in% c("completed", "failed")
+              current_job[["status"]] %in% c("completed", "failed", "cancelled")
           ) {
-            if (current_job[["status"]] == "failed") {
-              stop(current_job[["errorMessage"]])
+            if (current_job[["status"]] != "completed") {
+              abort_redivis_job_error(
+                message = current_job$errorMessage,
+                kind = current_job$kind,
+                status = current_job$status
+              )
             }
             break
           }

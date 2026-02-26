@@ -18,21 +18,19 @@ Organization <- setRefClass(
 
     exists = function() {
       # TODO: once we have org.get() endpoint, refactor
-      res <- make_request(
-        method = "GET",
-        path = str_interp("/organizations/${.self$name}/datasets"),
-        stop_on_error = FALSE,
-        query = list(maxResults = 1)
-      )
-      if (length(res$error)) {
-        if (res$status == 404) {
-          return(FALSE)
-        } else {
-          stop(str_interp("${res$error}: ${res$error_description}"))
+      tryCatch(
+        {
+          make_request(
+            method = "HEAD",
+            path = str_interp("/organizations/${.self$name}/datasets"),
+            query = list(maxResults = 1)
+          )
+          TRUE
+        },
+        redivis_not_found_error = function(e) {
+          FALSE
         }
-      } else {
-        return(TRUE)
-      }
+      )
     },
 
     list_datasets = function(max_results = NULL) {

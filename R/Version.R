@@ -52,20 +52,18 @@ Version <- setRefClass(
     },
 
     exists = function() {
-      res <- make_request(
-        method = "HEAD",
-        path = .self$uri,
-        stop_on_error = FALSE
-      )
-      if (length(res$error)) {
-        if (res$status == 404) {
-          return(FALSE)
-        } else {
-          stop(str_interp("${res$error}: ${res$error_description}"))
+      tryCatch(
+        {
+          make_request(
+            method = "HEAD",
+            path = .self$uri
+          )
+          TRUE
+        },
+        redivis_not_found_error = function(e) {
+          FALSE
         }
-      } else {
-        return(TRUE)
-      }
+      )
     },
 
     update = function(label = NULL, release_notes = NULL) {

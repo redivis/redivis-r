@@ -16,7 +16,8 @@ User <- setRefClass(
 
     project = function(name) {
       warning(
-        "Deprecation warning: Projects have been renamed to Workflows, please update your code to: user$workflow()"
+        "Deprecation warning: Projects have been renamed to Workflows, please update your code to: user$workflow()",
+        call. = FALSE
       )
       Workflow$new(name = name, user = .self)
     },
@@ -49,7 +50,8 @@ User <- setRefClass(
 
     list_projects = function(max_results = NULL) {
       warning(
-        "Deprecation warning: Projects have been renamed to Workflows, please update your code to: user$list_workflows()"
+        "Deprecation warning: Projects have been renamed to Workflows, please update your code to: user$list_workflows()",
+        call. = FALSE
       )
       workflows <- make_paginated_request(
         path = str_interp("/users/${.self$name}/workflows"),

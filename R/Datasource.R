@@ -18,7 +18,7 @@ Datasource <- setRefClass(
         if (default_workflow != "") {
           parsed_workflow <- Workflow$new(name = default_workflow)
         } else {
-          stop(
+          abort_redivis_value_error(
             "REDIVIS_DEFAULT_WORKFLOW must be set if no workflow is specified in the Datasource constructor"
           )
         }
@@ -47,20 +47,18 @@ Datasource <- setRefClass(
     },
 
     exists = function() {
-      res <- make_request(
-        method = "HEAD",
-        path = .self$uri,
-        stop_on_error = FALSE
-      )
-      if (length(res$error)) {
-        if (res$status == 404) {
-          return(FALSE)
-        } else {
-          stop(str_interp("${res$error}: ${res$error_description}"))
+      tryCatch(
+        {
+          make_request(
+            method = "HEAD",
+            path = .self$uri
+          )
+          TRUE
+        },
+        redivis_not_found_error = function(e) {
+          FALSE
         }
-      } else {
-        return(TRUE)
-      }
+      )
     },
 
     create = function() {
@@ -125,12 +123,12 @@ Datasource <- setRefClass(
 
         if (is.null(source_dataset) || !is.null(source_workflow)) {
           if (!is.null(sample) && isTRUE(sample)) {
-            stop(
+            abort_redivis_value_error(
               "Sampling is not applicable to datasources that reference a workflow"
             )
           }
           if (!is.null(version)) {
-            stop(
+            abort_redivis_value_error(
               "Versions are not applicable to datasources that reference a workflow"
             )
           }
@@ -170,7 +168,7 @@ Datasource <- setRefClass(
       }
       source_dataset = .self$properties$sourceDataset
       if (is.null(source_dataset)) {
-        stop(
+        abort_redivis_value_error(
           "This datasource doesn't have a source dataset. Use the source_workflow() method instead."
         )
       }
@@ -186,7 +184,7 @@ Datasource <- setRefClass(
       }
       source_workflow = .self$properties$sourceWorkflow
       if (is.null(source_workflow)) {
-        stop(
+        abort_redivis_value_error(
           "This datasource doesn't have a source workflow. Use the source_dataset() method instead."
         )
       }

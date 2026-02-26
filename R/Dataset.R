@@ -39,7 +39,7 @@ Dataset <- setRefClass(
             name = Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION")
           )
         } else {
-          stop(
+          abort_redivis_value_error(
             "Invalid dataset specifier, must be the fully qualified reference if no owner is specified"
           )
         }
@@ -157,7 +157,7 @@ Dataset <- setRefClass(
           path = str_interp("${.self$uri}/versions")
         )
       } else if (!if_not_exists) {
-        stop(str_interp(
+        abort_redivis_value_error(str_interp(
           "Next version already exists at ${.self$properties$nextVersion$datasetUri}. To avoid this error, set argument if_not_exists to TRUE"
         ))
       }
@@ -182,20 +182,18 @@ Dataset <- setRefClass(
     },
 
     exists = function() {
-      res <- make_request(
-        method = "HEAD",
-        path = .self$uri,
-        stop_on_error = FALSE
-      )
-      if (length(res$error)) {
-        if (res$status == 404) {
-          return(FALSE)
-        } else {
-          stop(str_interp("${res$error}: ${res$error_description}"))
+      tryCatch(
+        {
+          make_request(
+            method = "HEAD",
+            path = .self$uri
+          )
+          TRUE
+        },
+        redivis_not_found_error = function(e) {
+          FALSE
         }
-      } else {
-        return(TRUE)
-      }
+      )
     },
 
     version = function(tag = NULL) {

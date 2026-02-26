@@ -1,5 +1,3 @@
-library(httr)
-
 auth_vars <- new.env(parent = emptyenv())
 
 auth_vars$redivis_dir = file.path(Sys.getenv("HOME"), ".redivis")
@@ -31,10 +29,8 @@ get_auth_token <- function(scope = NULL) {
       is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA)) && interactive()
     ) {
       warning(
-        "Setting the REDIVIS_API_TOKEN for interactive sessions is deprecated and highly discouraged.
-Please delete the token on Redivis and remove it from your code, and follow the authentication prompts here instead.
-
-This environment variable should only ever be set in a non-interactive environment, such as in an automated script or service."
+        "Setting the REDIVIS_API_TOKEN for interactive sessions is deprecated and highly discouraged.\nPlease delete the token on Redivis and remove it from your code, and follow the authentication prompts here instead.\n\nThis environment variable should only ever be set in a non-interactive environment, such as in an automated script or service.",
+        call. = FALSE
       )
     }
     return(Sys.getenv("REDIVIS_API_TOKEN"))
@@ -102,27 +98,27 @@ perform_oauth_login <- function(
   challenge <- pkce$challenge
   verifier <- pkce$verifier
 
-  res <- httr::POST(
-    url = paste0(auth_vars$base_url, "/oauth/device_authorization"),
-    httr::add_headers(`Content-Type` = "application/json"),
-    body = list(
+  req <- httr2::request(paste0(
+    auth_vars$base_url,
+    "/oauth/device_authorization"
+  )) |>
+    httr2::req_method("POST") |>
+    httr2::req_headers("Content-Type" = "application/json") |>
+    httr2::req_body_json(list(
       client_id = auth_vars$client_id,
       scope = paste(scope, collapse = " "),
       amr_values = amr_values,
       code_challenge = challenge,
       code_challenge_method = 'S256',
       access_type = 'offline'
-    ),
-    encode = "json",
-    config = if (auth_vars$verify_ssl) {
-      httr::config()
-    } else {
-      httr::config(ssl_verifypeer = FALSE)
-    }
-  )
+    ))
 
-  httr::stop_for_status(res)
-  parsed_response <- httr::content(res, "parsed")
+  if (!auth_vars$verify_ssl) {
+    req <- req |> httr2::req_options(ssl_verifypeer = 0L)
+  }
+
+  res <- httr2::req_perform(req)
+  parsed_response <- httr2::resp_body_json(res)
 
   browse_url_response <- browseURL(parsed_response$verification_uri_complete)
 
@@ -138,9 +134,9 @@ perform_oauth_login <- function(
   }
   flush.console()
 
-  headers <- c()
+  headers <- list()
   if (upgrade_credentials && !is.null(auth_vars$cached_credentials)) {
-    headers <- c(
+    headers <- list(
       'Authorization' = str_interp(
         "Bearer ${auth_vars$cached_credentials$access_token}"
       )
@@ -150,7 +146,9 @@ perform_oauth_login <- function(
   started_polling_at <- Sys.time()
   while (TRUE) {
     if (difftime(Sys.time(), started_polling_at, units = "secs") > 60 * 10) {
-      stop('Timed out waiting for device authorization')
+      abort_redivis_error(
+        "Timed out after 10 minutes while waiting for device authorization"
+      )
     }
 
     Sys.sleep(ifelse(
@@ -159,39 +157,42 @@ perform_oauth_login <- function(
       parsed_response$interval
     ))
 
-    res <- httr::POST(
-      url = paste0(auth_vars$base_url, "/oauth/token"),
-      httr::add_headers(headers),
-      body = list(
+    poll_req <- httr2::request(paste0(auth_vars$base_url, "/oauth/token")) |>
+      httr2::req_method("POST") |>
+      httr2::req_headers(!!!headers) |>
+      httr2::req_body_form(
         client_id = auth_vars$client_id,
         grant_type = 'urn:ietf:params:oauth:grant-type:device_code',
         device_code = parsed_response$device_code,
         code_verifier = verifier
-      ),
-      encode = "form",
-      config = if (auth_vars$verify_ssl) {
-        httr::config()
-      } else {
-        httr::config(ssl_verifypeer = FALSE)
-      }
-    )
+      ) |>
+      httr2::req_error(is_error = function(resp) FALSE)
 
-    if (httr::status_code(res) == 200) {
+    if (!auth_vars$verify_ssl) {
+      poll_req <- poll_req |> httr2::req_options(ssl_verifypeer = 0L)
+    }
+
+    res <- httr2::req_perform(poll_req)
+
+    if (httr2::resp_status(res) == 200) {
       cat("Authentication was successful!")
       break
-    } else if (httr::status_code(res) == 400) {
-      error_response <- httr::content(res, "parsed")
+    } else if (httr2::resp_status(res) == 400) {
+      error_response <- httr2::resp_body_json(res)
       if (error_response$error == 'authorization_pending') {
         # authorization pending
       } else {
-        stop(error_response)
+        raise_api_error(response_json = error_response, response = res)
       }
     } else {
-      stop(httr::content(res, "parsed"))
+      raise_api_error(
+        response_json = httr2::resp_body_json(res),
+        response = res
+      )
     }
   }
 
-  auth_vars$cached_credentials <- httr::content(res, "parsed")
+  auth_vars$cached_credentials <- httr2::resp_body_json(res)
   write(
     jsonlite::toJSON(
       auth_vars$cached_credentials,
@@ -218,25 +219,25 @@ refresh_credentials <- function(scope = NULL, amr_values = NULL) {
       upgrade_credentials = TRUE
     )
   } else if (!is.null(auth_vars$cached_credentials$refresh_token)) {
-    res <- httr::POST(
-      url = paste0(auth_vars$base_url, "/oauth/token"),
-      body = list(
+    refresh_req <- httr2::request(paste0(auth_vars$base_url, "/oauth/token")) |>
+      httr2::req_method("POST") |>
+      httr2::req_body_form(
         client_id = auth_vars$client_id,
         grant_type = 'refresh_token',
         refresh_token = auth_vars$cached_credentials$refresh_token
-      ),
-      encode = "form",
-      config = if (auth_vars$verify_ssl) {
-        httr::config()
-      } else {
-        httr::config(ssl_verifypeer = FALSE)
-      }
-    )
+      ) |>
+      httr2::req_error(is_error = function(resp) FALSE)
 
-    if (httr::status_code(res) >= 400) {
+    if (!auth_vars$verify_ssl) {
+      refresh_req <- refresh_req |> httr2::req_options(ssl_verifypeer = 0L)
+    }
+
+    res <- httr2::req_perform(refresh_req)
+
+    if (httr2::resp_status(res) >= 400) {
       clear_cached_credentials()
     } else {
-      refresh_response <- httr::content(res, "parsed")
+      refresh_response <- httr2::resp_body_json(res)
       auth_vars$cached_credentials$access_token <- refresh_response$access_token
       auth_vars$cached_credentials$expires_at <- refresh_response$expires_at
       auth_vars$cached_credentials$expires_in <- refresh_response$expires_in

@@ -35,7 +35,7 @@ Workflow <- setRefClass(
             name = Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION")
           )
         } else {
-          stop(
+          abort_redivis_value_error(
             "Invalid workflow specifier, must be the fully qualified reference if no owner is specified"
           )
         }
@@ -80,20 +80,18 @@ Workflow <- setRefClass(
     },
 
     exists = function() {
-      res <- make_request(
-        method = "HEAD",
-        path = .self$uri,
-        stop_on_error = FALSE
-      )
-      if (length(res$error)) {
-        if (res$status == 404) {
-          return(FALSE)
-        } else {
-          stop(str_interp("${res$error}: ${res$error_description}"))
+      tryCatch(
+        {
+          make_request(
+            method = "HEAD",
+            path = .self$uri
+          )
+          TRUE
+        },
+        redivis_not_found_error = function(e) {
+          FALSE
         }
-      } else {
-        return(TRUE)
-      }
+      )
     },
 
     table = function(name) {

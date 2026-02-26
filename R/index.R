@@ -98,7 +98,7 @@ table <- function(name) {
 
     User$new(name = user_name)$dataset(name = dataset_name)$table(name = name)
   } else {
-    stop(
+    abort_redivis_value_error(
       "Cannot reference an unqualified table if the neither the REDIVIS_DEFAULT_WORKFLOW or REDIVIS_DEFAULT_DATASET environment variables are set."
     )
   }
@@ -115,8 +115,9 @@ table <- function(name) {
 #' file <- redivis::file("s335-8ey8zt7bx.qKmzpdttY2ZcaLB0wbRB7A")$download()
 #' @export
 file <- function(id) {
-  show_namespace_warning("file")
-  File$new(id = id)
+  abort_redivis_deprecation_error(
+    'Calling redivis$file() is no longer supported. Please use redivis$table("table_reference")$file("filename") instead.'
+  )
 }
 
 
@@ -151,7 +152,6 @@ current_notebook <- function() {
 #' redivis$current_user()
 #' redivis$dataset(name)
 #' redivis$datasource(source)
-#' redivis$file(id)
 #' redivis$notebook(name)
 #' redivis$organization(name)
 #' redivis$parameter(name)
@@ -179,12 +179,17 @@ current_notebook <- function() {
 #' #   to_sf_tibble()
 #' #   ...
 #' table$download(path=NULL, format="csv", ...)
+#'
+#' # Read files (file tables only):
+#' table$file("path/to/file")
+#' open(file)
 #' file$read(...)
 #' file$download(path=NULL, ...)
-#' file$stream(callback)
-#' table$download_files(path, ...)
+#' dir <- table$to_directory()
+#' dir$get("/path/to/file/or/dir")
+#' dir$download(path=NULL, ...)
 #'
-#' # Upload tabular data
+#' # Upload data
 #' table$upload()$create("/path/to/file.csv", ...)
 #' # Upload raw files
 #' table$add_files(directory="/path/to/dir", ...)
@@ -258,7 +263,9 @@ redivis <- list(
   },
 
   "file" = function(id) {
-    File$new(id = id)
+    abort_redivis_deprecation_error(
+      'Calling redivis$file() is no longer supported. Please use redivis$table("table_reference")$file("filename") instead.'
+    )
   },
 
   "make_api_request" = function(

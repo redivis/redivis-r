@@ -10,9 +10,6 @@ Notebook <- setRefClass(
     uri = "character"
   ),
 
-  #
-  # IMPORTANT: any calls to R stop() need to use base::stop(), otherwise it'll call the stop method on the notebook, because R ?!
-  #
   methods = list(
     initialize = function(
       ...,
@@ -37,7 +34,7 @@ Notebook <- setRefClass(
         } else if (
           name != "" # Need this check otherwise package won't build (?)
         ) {
-          base::stop(
+          abort_redivis_value_error(
             "Invalid notebook specifier, must be the fully qualified reference if no dataset or workflow is specified"
           )
         }
@@ -69,20 +66,18 @@ Notebook <- setRefClass(
     },
 
     exists = function() {
-      res <- make_request(
-        method = "HEAD",
-        path = .self$uri,
-        stop_on_error = FALSE
-      )
-      if (length(res$error)) {
-        if (res$status == 404) {
-          return(FALSE)
-        } else {
-          base::stop(str_interp("${res$error}: ${res$error_description}"))
+      tryCatch(
+        {
+          make_request(
+            method = "HEAD",
+            path = .self$uri
+          )
+          TRUE
+        },
+        redivis_not_found_error = function(e) {
+          FALSE
         }
-      } else {
-        return(TRUE)
-      }
+      )
     },
 
     get = function() {
@@ -116,7 +111,8 @@ Notebook <- setRefClass(
 
     source_tables = function() {
       warning(
-        "Deprecation warning: The source_tables() method has been renamed to referenced_tables(); please use this instead. This method will be removed in the future."
+        "Deprecation warning: The source_tables() method has been renamed to referenced_tables(); please use this instead. This method will be removed in the future.",
+        call. = FALSE
       )
       return(.self$referenced_tables())
     },
@@ -175,7 +171,11 @@ Notebook <- setRefClass(
               current_job[["status"]] %in% c("completed", "failed")
           ) {
             if (current_job[["status"]] == "failed") {
-              base::stop(current_job[["errorMessage"]])
+              abort_redivis_job_error(
+                message = current_job$errorMessage,
+                kind = current_job$kind,
+                status = current_job$status
+              )
             }
             break
           }
@@ -227,7 +227,7 @@ Notebook <- setRefClass(
           should_remove_tempfile <- FALSE
           temp_file_path <- data
         } else {
-          base::stop(
+          abort_redivis_value_error(
             "Only paths to parquet files (ending in .parquet) are supported when a string argument is provided"
           )
         }

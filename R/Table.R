@@ -1,4 +1,4 @@
-#' @include Dataset.R Workflow.R Variable.R Export.R util.R api_request.R
+#' @include Dataset.R Workflow.R Variable.R Export.R util.R api_request.R tabular_reader.R
 Table <- setRefClass(
   "Table",
   fields = list(
@@ -8,7 +8,9 @@ Table <- setRefClass(
     properties = "list",
     qualified_reference = "character",
     scoped_reference = "character",
-    uri = "character"
+    uri = "character",
+    directory = "ANY",
+    cached_directory_timestamp = "ANY"
   ),
 
   methods = c(
@@ -47,7 +49,7 @@ Table <- setRefClass(
         } else if (
           name != "" # Need this check otherwise package won't build (?)
         ) {
-          stop(
+          abort_redivis_value_error(
             "Invalid table specifier, must be the fully qualified reference if no dataset or workflow is specified"
           )
         }
@@ -69,6 +71,8 @@ Table <- setRefClass(
         workflow = parsed_workflow,
         qualified_reference = qualified_reference_val,
         scoped_reference = scoped_reference_val,
+        cached_directory_timestamp = NULL,
+        directory = NULL,
         uri = str_interp("/tables/${URLencode(qualified_reference_val)}"),
         properties = properties
       )
@@ -85,20 +89,18 @@ Table <- setRefClass(
     },
 
     exists = function() {
-      res <- make_request(
-        method = "HEAD",
-        path = .self$uri,
-        stop_on_error = FALSE
-      )
-      if (length(res$error)) {
-        if (res$status == 404) {
-          return(FALSE)
-        } else {
-          stop(str_interp("${res$error}: ${res$error_description}"))
+      tryCatch(
+        {
+          make_request(
+            method = "HEAD",
+            path = .self$uri
+          )
+          TRUE
+        },
+        redivis_not_found_error = function(e) {
+          FALSE
         }
-      } else {
-        return(TRUE)
-      }
+      )
     },
 
     update = function(
@@ -154,24 +156,27 @@ Table <- setRefClass(
       progress = TRUE,
       max_parallelization = parallelly::availableCores()
     ) {
+      dir <- directory # Rename to avoid confusion / warnings with table$directory field
       max_parallelization <- min(20, max_parallelization)
       add_table_files <- function() {
         # Ensure exactly one of files or directory is provided
         if (
-          (is.null(files) && is.null(directory)) ||
-            (!is.null(files) && !is.null(directory))
+          (is.null(files) && is.null(dir)) ||
+            (!is.null(files) && !is.null(dir))
         ) {
-          stop("Either files or directory must be specified")
+          abort_redivis_value_error(
+            "Either files or directory must be specified"
+          )
         }
 
         total_size <- 0
 
-        if (!is.null(directory)) {
-          directory <- normalizePath(directory)
+        if (!is.null(dir)) {
+          dir <- normalizePath(dir)
           files_list <- list()
           # Get all files recursively (full names)
           all_files <- list.files(
-            path = directory,
+            path = dir,
             recursive = TRUE,
             full.names = TRUE,
             include.dirs = FALSE
@@ -182,7 +187,7 @@ Table <- setRefClass(
             total_size <- total_size + size
             # Compute the relative path by removing the directory prefix, including trailing slash
             rel_path <- sub(
-              paste0("^", str_interp("${directory}/")),
+              paste0("^", str_interp("${dir}/")),
               "",
               filename
             )
@@ -215,102 +220,92 @@ Table <- setRefClass(
         current_batch_size <- 0
         progress_count <- 0
 
-        # Wrap in tryCatch to ensure that progress bars are closed on error
-        result <- tryCatch(
-          {
-            for (i in seq_along(files)) {
-              file <- files[[i]]
+        for (i in seq_along(files)) {
+          file <- files[[i]]
 
-              # Every 1000 files, request a new batch of temporary uploads.
-              if (((i - 1) %% 1000) == 0) {
-                batch_end <- min(i + 999, length(files))
-                batch <- files[i:batch_end]
-                payload <- list(
-                  tempUploads = lapply(batch, function(f) {
-                    list(
-                      size = f$size,
-                      name = f$name,
-                      resumable = f$size > 5e7
-                    )
-                  })
+          # Every 1000 files, request a new batch of temporary uploads.
+          if (((i - 1) %% 1000) == 0) {
+            batch_end <- min(i + 999, length(files))
+            batch <- files[i:batch_end]
+            payload <- list(
+              tempUploads = lapply(batch, function(f) {
+                list(
+                  size = f$size,
+                  name = f$name,
+                  resumable = f$size > 5e7
                 )
-                res <- make_request(
-                  method = "POST",
-                  path = paste0(.self$uri, "/tempUploads"),
-                  payload = payload
-                )
-                current_temp_uploads_batch <- res$results
-              }
+              })
+            )
+            res <- make_request(
+              method = "POST",
+              path = paste0(.self$uri, "/tempUploads"),
+              payload = payload
+            )
+            current_temp_uploads_batch <- res$results
+          }
 
-              # Assign the corresponding temporary upload from the current batch.
-              # Adjust index to be 1-indexed.
-              batch_index <- ((i - 1) %% 1000) + 1
-              current_batch_files[[length(current_batch_files) + 1]] <- list(
-                file = file,
-                temp_upload = current_temp_uploads_batch[[batch_index]]
-              )
-              current_batch_size <- current_batch_size + file$size
+          # Assign the corresponding temporary upload from the current batch.
+          # Adjust index to be 1-indexed.
+          batch_index <- ((i - 1) %% 1000) + 1
+          current_batch_files[[length(current_batch_files) + 1]] <- list(
+            file = file,
+            temp_upload = current_temp_uploads_batch[[batch_index]]
+          )
+          current_batch_size <- current_batch_size + file$size
 
-              # Check if the current batch should be processed:
-              # - when we have 1000 files, or
-              # - we are at the last file, or
-              # - the batch size exceeds the target.
-              if (
-                length(current_batch_files) >= 1000 ||
-                  i == length(files) ||
-                  current_batch_size > target_batch_size
-              ) {
-                perform_table_parallel_file_upload(
-                  batch_files = current_batch_files,
-                  max_parallelization = max_parallelization,
-                  pb_bytes = pb_bytes,
-                  pb_bytes_multiplier = pb_bytes_multiplier
-                )
+          # Check if the current batch should be processed:
+          # - when we have 1000 files, or
+          # - we are at the last file, or
+          # - the batch size exceeds the target.
+          if (
+            length(current_batch_files) >= 1000 ||
+              i == length(files) ||
+              current_batch_size > target_batch_size
+          ) {
+            perform_table_parallel_file_upload(
+              batch_files = current_batch_files,
+              max_parallelization = max_parallelization,
+              pb_bytes = pb_bytes,
+              pb_bytes_multiplier = pb_bytes_multiplier
+            )
 
-                # Adjust target batch size based on elapsed time
-                elapsed <- as.numeric(Sys.time()) - current_batch_timestamp
-                if (elapsed > 60) {
-                  target_batch_size <- target_batch_size / 2
-                } else if (elapsed < 15) {
-                  target_batch_size <- target_batch_size * 2
-                }
-
-                # Finalize upload by making a request with the batched file info.
-                payload <- list(
-                  files = lapply(current_batch_files, function(batch_file) {
-                    list(
-                      name = batch_file$file$name,
-                      tempUploadId = batch_file$temp_upload$id
-                    )
-                  })
-                )
-                response <- make_request(
-                  method = "POST",
-                  path = paste0(.self$uri, "/rawFiles"),
-                  payload = payload
-                )
-
-                # Assume File() is a constructor that creates a File object.
-                new_files <- lapply(response$results, function(f) {
-                  File$new(id = f$id, table = .self, properties = f)
-                })
-                uploaded_files <- c(uploaded_files, new_files)
-
-                # Reset batch variables for the next batch.
-                current_batch_timestamp <- as.numeric(Sys.time())
-                current_batch_files <- list()
-                current_batch_size <- 0
-              }
+            # Adjust target batch size based on elapsed time
+            elapsed <- as.numeric(Sys.time()) - current_batch_timestamp
+            if (elapsed > 60) {
+              target_batch_size <- target_batch_size / 2
+            } else if (elapsed < 15) {
+              target_batch_size <- target_batch_size * 2
             }
 
-            uploaded_files
-          },
-          error = function(e) {
-            stop(e)
-          }
-        )
+            # Finalize upload by making a request with the batched file info.
+            payload <- list(
+              files = lapply(current_batch_files, function(batch_file) {
+                list(
+                  name = batch_file$file$name,
+                  tempUploadId = batch_file$temp_upload$id
+                )
+              })
+            )
+            response <- make_request(
+              method = "POST",
+              path = paste0(.self$uri, "/rawFiles"),
+              payload = payload
+            )
 
-        return(result)
+            # Assume File() is a constructor that creates a File object.
+            new_files <- lapply(response$results, function(f) {
+              File$new(id = f$id, table = .self, properties = f)
+            })
+            uploaded_files <- c(uploaded_files, new_files)
+
+            # Reset batch variables for the next batch.
+            current_batch_timestamp <- as.numeric(Sys.time())
+            current_batch_files <- list()
+            current_batch_size <- 0
+          }
+        }
+
+        uploaded_files
       }
       if (progress) {
         progressr::with_progress(add_table_files())
@@ -365,42 +360,12 @@ Table <- setRefClass(
       .self
     },
 
-    list_files = function(max_results = NULL, file_id_variable = NULL) {
-      if (is.null(file_id_variable)) {
-        file_id_variables <- make_paginated_request(
-          path = str_interp("${.self$uri}/variables"),
-          max_results = 2,
-          query = list(isFileId = TRUE)
-        )
-
-        if (length(file_id_variables) == 0) {
-          stop("No variable containing file ids was found on this table")
-        } else if (length(file_id_variables) > 1) {
-          stop(
-            "This table contains multiple variables representing a file id. Please specify the variable with file ids you want to download via the 'file_id_variable' parameter."
-          )
-        }
-        file_id_variable = file_id_variables[[1]]$'name'
-      }
-
-      df <- make_rows_request(
-        uri = .self$uri,
-        max_results = max_results,
-        selected_variable_names = list(file_id_variable),
-        type = 'data_table',
-        variables = list(list(name = file_id_variable, type = "string")),
-        progress = FALSE
-      )
-      purrr::map(df[[file_id_variable]], function(id) {
-        File$new(id = id, table = .self)
-      })
-    },
-
     download = function(
       path = NULL,
       format = 'csv',
       overwrite = FALSE,
-      progress = TRUE
+      progress = TRUE,
+      max_parallelization = NULL
     ) {
       res <- make_request(
         method = "POST",
@@ -412,7 +377,8 @@ Table <- setRefClass(
       res <- export_job$download_files(
         path = path,
         overwrite = overwrite,
-        progress = progress
+        progress = progress,
+        max_parallelization = max_parallelization
       )
 
       return(res)
@@ -516,7 +482,9 @@ map_file <- function(file) {
   # If 'name' is not specified in the list
   if (!("name" %in% names(file))) {
     if ("data" %in% names(file)) {
-      stop('All file specifications with a "data" key must specify a name')
+      abort_redivis_value_error(
+        'All file specifications with a "data" key must specify a name'
+      )
     }
     file$name <- basename(file$path)
   }

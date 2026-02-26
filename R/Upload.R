@@ -1,4 +1,4 @@
-#' @include Table.R Variable.R api_request.R
+#' @include Table.R Variable.R api_request.R tabular_reader.R
 Upload <- setRefClass(
   "Upload",
   fields = list(
@@ -7,7 +7,8 @@ Upload <- setRefClass(
     properties = "list",
     uri = "character"
   ),
-  methods = list(
+  methods = c(
+    tabular_reader_methods,
     initialize = function(..., name = "", properties = list(), table) {
       if (!is.null(properties$uri)) {
         computed_uri <- properties$uri
@@ -30,27 +31,27 @@ Upload <- setRefClass(
     },
     get = function() {
       if (.self$name == "" && is.null(.self$properties$uri)) {
-        stop('Cannot get an upload without a specified name')
+        abort_redivis_value_error(
+          'Cannot get an upload without a specified name'
+        )
       }
       .self$properties <- make_request(path = .self$uri)
       .self$uri <- .self$properties$uri
       .self
     },
     exists = function() {
-      res <- make_request(
-        method = "HEAD",
-        path = .self$uri,
-        stop_on_error = FALSE
-      )
-      if (length(res$error)) {
-        if (res$status == 404) {
-          return(FALSE)
-        } else {
-          stop(str_interp("${res$error}: ${res$error_description}"))
+      tryCatch(
+        {
+          make_request(
+            method = "HEAD",
+            path = .self$uri
+          )
+          TRUE
+        },
+        redivis_not_found_error = function(e) {
+          FALSE
         }
-      } else {
-        return(TRUE)
-      }
+      )
     },
 
     delete = function() {
@@ -77,181 +78,11 @@ Upload <- setRefClass(
       })
     },
 
-    to_arrow_dataset = function(
-      max_results = NULL,
-      variables = NULL,
-      progress = TRUE,
-      batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
-    ) {
-      params <- get_table_request_params(.self, max_results, variables)
-
-      make_rows_request(
-        uri = params$uri,
-        max_results = params$max_results,
-        selected_variable_names = params$selected_variable_names,
-        type = 'arrow_dataset',
-        variables = params$variables,
-        progress = progress,
-        coerce_schema = TRUE,
-        batch_preprocessor = batch_preprocessor,
-        max_parallelization = max_parallelization
-      )
-    },
-
-    to_arrow_table = function(
-      max_results = NULL,
-      variables = NULL,
-      progress = TRUE,
-      batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
-    ) {
-      params <- get_table_request_params(.self, max_results, variables)
-
-      make_rows_request(
-        uri = params$uri,
-        max_results = params$max_results,
-        selected_variable_names = params$selected_variable_names,
-        type = 'arrow_table',
-        progress = progress,
-        variables = params$variables,
-        coerce_schema = TRUE,
-        batch_preprocessor = batch_preprocessor,
-        max_parallelization = max_parallelization
-      )
-    },
-
-    to_arrow_batch_reader = function(
-      max_results = NULL,
-      variables = NULL,
-      progress = TRUE
-    ) {
-      params <- get_table_request_params(.self, max_results, variables)
-
-      make_rows_request(
-        uri = params$uri,
-        max_results = params$max_results,
-        selected_variable_names = params$selected_variable_names,
-        type = 'arrow_stream',
-        variables = params$variables,
-        progress = progress,
-        coerce_schema = TRUE
-      )
-    },
-
-    to_tibble = function(
-      max_results = NULL,
-      variables = NULL,
-      progress = TRUE,
-      batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
-    ) {
-      params <- get_table_request_params(.self, max_results, variables)
-
-      df <- make_rows_request(
-        uri = params$uri,
-        max_results = params$max_results,
-        selected_variable_names = params$selected_variable_names,
-        type = 'tibble',
-        variables = params$variables,
-        progress = progress,
-        coerce_schema = TRUE,
-        batch_preprocessor = batch_preprocessor,
-        max_parallelization = max_parallelization
-      )
-
-      df
-    },
-
-    to_sf_tibble = function(
-      max_results = NULL,
-      variables = NULL,
-      geography_variable = '',
-      progress = TRUE,
-      batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
-    ) {
-      if (!requireNamespace("sf", quietly = TRUE)) {
-        stop(
-          "The sf package must be installed to use the to_sf_tibble() method."
-        )
-      }
-
-      params <- get_table_request_params(
-        .self,
-        max_results,
-        variables,
-        geography_variable
-      )
-
-      if (is.null(params$geography_variable)) {
-        stop('Unable to find geography variable in table')
-      }
-
-      df <- make_rows_request(
-        uri = params$uri,
-        max_results = params$max_results,
-        selected_variable_names = params$selected_variable_names,
-        type = 'tibble',
-        variables = params$variables,
-        progress = progress,
-        coerce_schema = TRUE,
-        batch_preprocessor = batch_preprocessor,
-        max_parallelization = max_parallelization
-      )
-
-      sf::st_as_sf(df, wkt = params$geography_variable, crs = 4326)
-    },
-
-    to_data_frame = function(
-      max_results = NULL,
-      variables = NULL,
-      progress = TRUE,
-      batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
-    ) {
-      params <- get_table_request_params(.self, max_results, variables)
-
-      make_rows_request(
-        uri = params$uri,
-        max_results = params$max_results,
-        selected_variable_names = params$selected_variable_names,
-        type = 'data_frame',
-        variables = params$variables,
-        progress = progress,
-        coerce_schema = TRUE,
-        batch_preprocessor = batch_preprocessor,
-        max_parallelization = max_parallelization
-      )
-    },
-
-    to_data_table = function(
-      max_results = NULL,
-      variables = NULL,
-      progress = TRUE,
-      batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
-    ) {
-      params <- get_table_request_params(.self, max_results, variables)
-
-      make_rows_request(
-        uri = params$uri,
-        max_results = params$max_results,
-        selected_variable_names = params$selected_variable_names,
-        type = 'data_table',
-        variables = params$variables,
-        progress = progress,
-        coerce_schema = TRUE,
-        batch_preprocessor = batch_preprocessor,
-        max_parallelization = max_parallelization
-      )
-    },
-
     insert_rows = function(rows, update_schema = FALSE) {
       if (is.character(rows)) {
         rows <- jsonlite::fromJSON(rows)
       } else if (!is(rows, "data.frame")) {
-        stop(
+        abort_redivis_value_error(
           'Invalid type for "rows" argument. Must either be a data.frame or JSON string.'
         )
       }
@@ -304,11 +135,11 @@ Upload <- setRefClass(
           content <- f
         } else {
           if (nchar(content) < 200) {
-            stop(str_interp(
+            abort_redivis_value_error(str_interp(
               "No file found at path provided for `content` argument: ${content}"
             ))
           } else {
-            stop(
+            abort_redivis_value_error(
               "No file found at path provided for `content` argument. To upload data as content, make sure that the `content` argument is a raw vector."
             )
           }
@@ -393,7 +224,8 @@ Upload <- setRefClass(
 
       if (!is.null(schema) && type != "stream") {
         warning(
-          "The schema option is ignored for uploads that aren't of type `stream`"
+          "The schema option is ignored for uploads that aren't of type `stream`",
+          call. = FALSE
         )
       }
 
@@ -414,7 +246,7 @@ Upload <- setRefClass(
       }
 
       if (isTRUE(replace_on_conflict) && isTRUE(rename_on_conflict)) {
-        stop(
+        abort_redivis_value_error(
           "Invalid parameters. replace_on_conflict and rename_on_conflict cannot both be TRUE."
         )
       }
@@ -423,7 +255,7 @@ Upload <- setRefClass(
         if (isTRUE(replace_on_conflict)) {
           .self$delete()
         } else if (!isTRUE(rename_on_conflict)) {
-          stop(sprintf(
+          abort_redivis_value_error(sprintf(
             "An upload with the name %s already exists on this version of the table. If you want to upload this file anyway, set the parameter rename_on_conflict=TRUE or replace_on_conflict=TRUE.",
             .self$name
           ))
@@ -451,12 +283,10 @@ Upload <- setRefClass(
       if (!is.null(content)) {
         data <- NULL
         if (inherits(content, "connection")) {
-          data <- httr::upload_file(get_conn_name(content))
+          data <- curl::form_file(get_conn_name(content))
         } else {
           data <- curl::form_data(content)
         }
-        # HTTR doesn't seem to provided a way to do multipart file uploads without everything first existing as a file on disk
-        # See: https://stackoverflow.com/questions/31080363/how-to-post-multipart-related-content-with-httr-for-google-drive-api
         metadata_file <- tempfile()
         writeLines(
           jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null"),
@@ -465,7 +295,7 @@ Upload <- setRefClass(
         on.exit(unlink(metadata_file), add = TRUE)
 
         files <- list(
-          metadata = httr::upload_file(
+          metadata = curl::form_file(
             metadata_file,
             type = "application/json"
           ),
@@ -499,7 +329,11 @@ Upload <- setRefClass(
               status <- .self$properties$status
               if (status == "completed" || status == "failed") {
                 if (status == "failed" && raise_on_fail) {
-                  stop(.self$properties$errorMessage)
+                  abort_redivis_job_error(
+                    message = .self$properties$errorMessage,
+                    kind = .self$properties$kind,
+                    status = .self$properties$status
+                  )
                 }
                 break
               } else {
