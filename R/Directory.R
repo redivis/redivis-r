@@ -1,18 +1,13 @@
 #' @include File.R
-Directory <- setRefClass(
+Directory <- R6::R6Class(
   "Directory",
-  fields = list(
-    path = "ANY",
-    name = "character",
-    table = "ANY",
-    query = "ANY",
-    parent = "ANY",
-    children = "list",
-    .mount_ptr = "ANY",
-    .mount_path = "ANY"
-  ),
-
-  methods = list(
+  public = list(
+    path = NULL,
+    name = NULL,
+    table = NULL,
+    query = NULL,
+    parent = NULL,
+    children = NULL,
     initialize = function(
       path,
       table = NULL,
@@ -24,18 +19,23 @@ Directory <- setRefClass(
           "All directories must either belong to a table or query."
         )
       }
-      path <<- path
-      table <<- table
-      query <<- query
-      parent <<- parent
-      children <<- list()
-      name <<- basename(path)
-      .mount_ptr <<- NULL
-      .mount_path <<- NULL
+      self$path <- path
+      self$table <- table
+      self$query <- query
+      self$parent <- parent
+      self$children <- new.env(parent = emptyenv())
+      self$name <- basename(path)
     },
 
-    show = function() {
-      print(str_interp("<Dir ${.self$path}>"))
+    print = function(...) {
+      if (!is.null(self$table)) {
+        cat(str_interp(
+          "<Dir ${self$table$qualified_reference}${self$path}>\n"
+        ))
+      } else {
+        cat(str_interp("<Dir ${self$path}>\n"))
+      }
+      invisible(self)
     },
 
     list = function(
@@ -49,7 +49,8 @@ Directory <- setRefClass(
       }
       result <- base::list()
 
-      for (child in .self$children) {
+      for (child_name in ls(self$children)) {
+        child <- self$children[[child_name]]
         if (length(result) >= max_results) {
           break
         }
@@ -105,13 +106,13 @@ Directory <- setRefClass(
       dir.create(mount_path, showWarnings = FALSE)
 
       # Collect all files recursively
-      files <- .self$list(mode = "files", recursive = TRUE)
+      files <- self$list(mode = "files", recursive = TRUE)
       if (length(files) == 0) {
         abort_redivis_value_error("Directory contains no files to mount.")
       }
 
       # Build the file manifest
-      self_path <- gsub("^/+|/+$", "", as.character(.self$path))
+      self_path <- gsub("^/+|/+$", "", as.character(self$path))
 
       rel_paths <- vapply(
         files,
@@ -145,7 +146,9 @@ Directory <- setRefClass(
       added_ats <- vapply(
         files,
         function(f) {
-          if (is.null(f$added_at) || length(f$added_at) == 0 || is.na(f$added_at)) {
+          if (
+            is.null(f$added_at) || length(f$added_at) == 0 || is.na(f$added_at)
+          ) {
             0
           } else {
             as.double(f$added_at)
@@ -167,7 +170,7 @@ Directory <- setRefClass(
         child_names_vec <- character(0)
         child_is_dir_vec <- logical(0)
 
-        for (child_name in names(node$children)) {
+        for (child_name in ls(node$children)) {
           child <- node$children[[child_name]]
           child_names_vec <- c(child_names_vec, child_name)
           child_is_dir_vec <- c(child_is_dir_vec, inherits(child, "Directory"))
@@ -179,7 +182,7 @@ Directory <- setRefClass(
         env$dir_child_is_dir[[idx]] <- child_is_dir_vec
 
         # Recurse into subdirectories
-        for (child_name in names(node$children)) {
+        for (child_name in ls(node$children)) {
           child <- node$children[[child_name]]
           if (inherits(child, "Directory")) {
             child_rel <- if (nchar(rel_prefix) == 0) {
@@ -192,7 +195,7 @@ Directory <- setRefClass(
         }
       }
 
-      walk_dir(.self, "", tree_env)
+      walk_dir(self, "", tree_env)
 
       dir_paths <- tree_env$dir_paths
       dir_child_names <- tree_env$dir_child_names
@@ -202,7 +205,7 @@ Directory <- setRefClass(
       api_base_url <- generate_api_url("")
       auth_token <- get_auth_token()
 
-      .mount_ptr <<- .Call(
+      private$.mount_ptr <- .Call(
         "C_fuse_mount",
         as.character(mount_path),
         as.character(cache_dir),
@@ -217,21 +220,19 @@ Directory <- setRefClass(
         as.character(auth_token)
       )
 
-      .mount_path <<- mount_path
+      private$.mount_path <- mount_path
       message(str_interp("Mounted at ${mount_path}"))
       invisible(mount_path)
     },
 
     unmount = function() {
-      if (is.null(.mount_ptr)) {
+      if (is.null(private$.mount_ptr)) {
         warning("Not currently mounted.", call. = FALSE)
         return(invisible(NULL))
       }
-      mount_path <- .self$.mount_path
-      .Call("C_fuse_unmount", .mount_ptr)
-      .mount_ptr <<- NULL
-      .mount_path <<- NULL
-
+      .Call("C_fuse_unmount", private$.mount_ptr)
+      private$.mount_ptr <- NULL
+      private$.mount_path <- NULL
       message("Unmounted.")
       invisible(NULL)
     },
@@ -253,7 +254,7 @@ Directory <- setRefClass(
           "Passing file ids is deprecated, please use file names instead. E.g.: table.file('filename.png')",
           call. = FALSE
         )
-        files <- .self$list(mode = "files", recursive = TRUE)
+        files <- self$list(mode = "files", recursive = TRUE)
         for (f in files) {
           if (f$id == path_str) return(f)
         }
@@ -264,7 +265,7 @@ Directory <- setRefClass(
 
       # For absolute paths, walk up to the root first
       if (startsWith(path_str, "/")) {
-        node <- .self
+        node <- self
         while (!is.null(node$parent)) {
           node <- node$parent
         }
@@ -285,10 +286,10 @@ Directory <- setRefClass(
       parts <- parts[nchar(parts) > 0]
 
       if (length(parts) == 0) {
-        return(.self)
+        return(self)
       }
 
-      node <- .self
+      node <- self
       for (idx in seq_along(parts)) {
         part <- parts[[idx]]
 
@@ -307,7 +308,7 @@ Directory <- setRefClass(
           next
         }
 
-        child <- node$children[[part]]
+        child <- get0(part, envir = node$children, inherits = FALSE)
         if (is.null(child)) {
           return(NULL)
         }
@@ -337,7 +338,7 @@ Directory <- setRefClass(
       progress = TRUE,
       max_parallelization = NULL
     ) {
-      files <- .self$list(
+      files <- self$list(
         mode = "files",
         recursive = TRUE,
         max_results = max_results
@@ -368,8 +369,8 @@ Directory <- setRefClass(
         integer(1L)
       ))
 
-      self_path <- gsub("^/+|/+$", "", as.character(.self$path))
-      args = base::list(
+      self_path <- gsub("^/+|/+$", "", as.character(self$path))
+      args <- base::list(
         uris = purrr::map(files, function(f) {
           str_interp("/rawFiles/${f$id}")
         }),
@@ -402,18 +403,18 @@ Directory <- setRefClass(
         do.call(perform_parallel_download, args)
       }
     }
+  ),
+
+  private = list(
+    .mount_ptr = NULL,
+    .mount_path = NULL
   )
 )
 
-add_directory_file = function(dir, file) {
+add_directory_file <- function(dir, file) {
   # Normalize: strip all leading/trailing slashes, then re-add single leading /
-  normalize_path <- function(p) {
-    p <- gsub("^/+|/+$", "", as.character(p))
-    p
-  }
-
-  self_path <- normalize_path(dir$path)
-  file_path <- normalize_path(file$path)
+  self_path <- gsub("^/+|/+$", "", dir$path)
+  file_path <- gsub("^/+|/+$", "", file$path)
 
   # Compute relative path by stripping self_path prefix
   if (nchar(self_path) > 0) {

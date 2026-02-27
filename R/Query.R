@@ -1,27 +1,24 @@
-#' @include Dataset.R Workflow.R api_request.R
-Query <- setRefClass(
+#' @include Dataset.R Workflow.R api_request.R TabularReader.R
+Query <- R6::R6Class(
   "Query",
-  fields = list(
-    query = "character",
-    default_dataset = "character",
-    default_workflow = "character",
-    properties = "list",
-    uri = "character",
-    did_initiate = "logical",
-    payload = "list",
-    directory = "ANY",
-    cached_directory_timestamp = "ANY"
-  ),
-  methods = c(
-    tabular_reader_methods,
-    show = function() {
-      print(str_interp("<Query ${.self$properties$id}>"))
-    },
+  inherit = TabularReader,
+  public = list(
+    query = NULL,
+    default_dataset = NULL,
+    default_workflow = NULL,
+    did_initiate = FALSE,
+    payload = NULL,
+
     initialize = function(
       query,
       default_dataset = NULL,
       default_workflow = NULL
     ) {
+      super$initialize()
+      self$query <- query
+      self$default_dataset <- default_dataset
+      self$default_workflow <- default_workflow
+
       initial_payload <- list(query = query)
 
       if (!is.null(default_workflow) && default_workflow != "") {
@@ -30,37 +27,40 @@ Query <- setRefClass(
       if (!is.null(default_dataset) && default_dataset != "") {
         initial_payload$defaultDataset <- default_dataset
       }
-      .self$cached_directory_timestamp = NULL
-      .self$directory = NULL
 
-      .self$payload <- initial_payload
+      self$payload <- initial_payload
+    },
+
+    print = function(...) {
+      cat(str_interp("<Query ${self$properties$id}>\n"))
+      invisible(self)
     },
 
     get = function() {
-      initiate_query(.self)
-      .self$properties <- make_request(
+      initiate_query(self)
+      self$properties <- make_request(
         method = 'GET',
-        path = str_interp("/queries/${.self$properties$id}")
+        path = str_interp("/queries/${self$properties$id}")
       )
-      .self
+      self
     },
 
     variable = function(name) {
-      query_wait_for_finish(.self)
-      Variable$new(name = name, query = .self)
+      query_wait_for_finish(self)
+      Variable$new(name = name, query = self)
     },
 
     list_variables = function(max_results = NULL) {
-      query_wait_for_finish(.self)
+      query_wait_for_finish(self)
       variables <- make_paginated_request(
-        path = str_interp("${.self$uri}/variables"),
+        path = str_interp("${self$uri}/variables"),
         page_size = 100,
         max_results = max_results
       )
       purrr::map(variables, function(variable_properties) {
         Variable$new(
           name = variable_properties$name,
-          query = .self,
+          query = self,
           properties = variable_properties
         )
       })

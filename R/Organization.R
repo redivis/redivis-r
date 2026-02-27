@@ -1,19 +1,25 @@
 #' @include Dataset.R Secret.R Workflow.R api_request.R
-Organization <- setRefClass(
+Organization <- R6::R6Class(
   "Organization",
-  fields = list(name = "character"),
-  methods = list(
-    show = function() {
-      print(str_interp("<Organization ${.self$name}>"))
+  public = list(
+    name = NULL,
+
+    initialize = function(name = "") {
+      self$name <- name
+    },
+
+    print = function(...) {
+      cat(str_interp("<Organization ${self$name}>\n"))
+      invisible(self)
     },
     dataset = function(name, version = NULL) {
-      Dataset$new(name = name, version = version, organization = .self)
+      Dataset$new(name = name, version = version, organization = self)
     },
     secret = function(name) {
-      Secret$new(name = name, organization = .self)
+      Secret$new(name = name, organization = self)
     },
     workflow = function(name) {
-      Workflow$new(name = name, organization = .self)
+      Workflow$new(name = name, organization = self)
     },
 
     exists = function() {
@@ -22,7 +28,7 @@ Organization <- setRefClass(
         {
           make_request(
             method = "HEAD",
-            path = str_interp("/organizations/${.self$name}/datasets"),
+            path = str_interp("/organizations/${self$name}/datasets"),
             query = list(maxResults = 1)
           )
           TRUE
@@ -35,7 +41,7 @@ Organization <- setRefClass(
 
     list_datasets = function(max_results = NULL) {
       datasets <- make_paginated_request(
-        path = str_interp("/organizations/${.self$name}/datasets"),
+        path = str_interp("/organizations/${self$name}/datasets"),
         page_size = 100,
         max_results = max_results
       )
@@ -43,14 +49,14 @@ Organization <- setRefClass(
         Dataset$new(
           name = dataset$name,
           properties = dataset,
-          organization = .self
+          organization = self
         )
       })
     },
 
     list_workflows = function(max_results = NULL) {
       workflows <- make_paginated_request(
-        path = str_interp("/organizations/${.self$name}/workflows"),
+        path = str_interp("/organizations/${self$name}/workflows"),
         page_size = 100,
         max_results = max_results
       )
@@ -58,7 +64,7 @@ Organization <- setRefClass(
         Workflow$new(
           name = workflow$name,
           properties = workflow,
-          organization = .self
+          organization = self
         )
       })
     }

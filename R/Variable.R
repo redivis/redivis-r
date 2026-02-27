@@ -1,23 +1,27 @@
 #' @include Table.R api_request.R
-Variable <- setRefClass(
+Variable <- R6::R6Class(
   "Variable",
-  fields = list(
-    name = "character",
-    table = "ANY",
-    upload = "ANY",
-    query = "ANY",
-    properties = "list",
-    uri = "character"
-  ),
-  methods = list(
+  public = list(
+    name = NULL,
+    table = NULL,
+    upload = NULL,
+    query = NULL,
+    properties = NULL,
+    uri = NULL,
+
     initialize = function(
-      ...,
       name = "",
       table = NULL,
       upload = NULL,
       query = NULL,
       properties = list()
     ) {
+      self$name <- name
+      self$table <- table
+      self$upload <- upload
+      self$query <- query
+      self$properties <- properties
+
       parent_uri <- NULL
       if (!is.null(table)) {
         parent_uri <- table$uri
@@ -26,25 +30,18 @@ Variable <- setRefClass(
       } else {
         parent_uri <- query$uri
       }
-      uri_val <- if (length(properties$uri)) {
+      self$uri <- if (length(properties$uri)) {
         properties$uri
       } else {
         str_interp("${parent_uri}/variables/${name}")
       }
-      callSuper(
-        ...,
-        name = name,
-        upload = upload,
-        table = table,
-        query = query,
-        uri = uri_val,
-        properties = properties
-      )
     },
-    show = function() {
-      print(str_interp(
-        "<Variable ${.self$name} (${.self$properties$type})>"
+
+    print = function(...) {
+      cat(str_interp(
+        "<Variable ${self$name} (${self$properties$type})>\n"
       ))
+      invisible(self)
     },
     get = function(wait_for_statistics = FALSE) {
       if (wait_for_statistics) {
@@ -53,23 +50,23 @@ Variable <- setRefClass(
           call. = FALSE
         )
       }
-      .self$properties = make_request(path = .self$uri)
-      .self$uri = .self$properties$uri
+      self$properties <- make_request(path = self$uri)
+      self$uri <- self$properties$uri
       while (
-        wait_for_statistics && .self$properties$statistics$status == "running"
+        wait_for_statistics && self$properties$statistics$status == "running"
       ) {
         Sys.sleep(2)
-        .self$properties = make_request(path = .self$uri)
-        .self$uri = .self$properties$uri
+        self$properties <- make_request(path = self$uri)
+        self$uri <- self$properties$uri
       }
-      .self
+      self
     },
 
     get_statistics = function() {
-      statistics <- make_request(path = str_interp("${.self$uri}/statistics"))
+      statistics <- make_request(path = str_interp("${self$uri}/statistics"))
       while (statistics$status == "running" || statistics$status == "queued") {
         Sys.sleep(2)
-        statistics <- make_request(path = str_interp("${.self$uri}/statistics"))
+        statistics <- make_request(path = str_interp("${self$uri}/statistics"))
       }
       statistics
     },
@@ -79,7 +76,7 @@ Variable <- setRefClass(
         {
           make_request(
             method = "HEAD",
-            path = .self$uri
+            path = self$uri
           )
           TRUE
         },
@@ -100,13 +97,13 @@ Variable <- setRefClass(
       if (!is.null(value_labels)) {
         payload <- append(payload, list("value_labels" = value_labels))
       }
-      .self$properties = make_request(
+      self$properties <- make_request(
         method = "PATCH",
-        path = .self$uri,
+        path = self$uri,
         payload = payload,
       )
-      .self$uri = .self$properties$uri
-      .self
+      self$uri <- self$properties$uri
+      self
     }
   )
 )

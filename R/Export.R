@@ -1,21 +1,28 @@
 #' @include Table.R api_request.R util.R
-Export <- setRefClass(
+Export <- R6::R6Class(
   "Export",
-  fields = list(table = "ANY", properties = "list", uri = "character"),
-  methods = list(
-    initialize = function(..., properties = list()) {
-      callSuper(..., uri = properties$uri, properties = properties)
+  public = list(
+    table = NULL,
+    properties = NULL,
+    uri = NULL,
+
+    initialize = function(table = NULL, properties = list()) {
+      self$table <- table
+      self$uri <- properties$uri
+      self$properties <- properties
     },
-    show = function() {
-      print(str_interp(
-        "<Export ${.self$uri} on ${.self$table$qualified_reference}>"
+
+    print = function(...) {
+      cat(str_interp(
+        "<Export ${self$uri} on ${self$table$qualified_reference}>\n"
       ))
+      invisible(self)
     },
 
     get = function(wait_for_statistics = FALSE) {
-      .self$properties = make_request(path = .self$uri)
-      .self$uri = .self$properties$uri
-      .self
+      self$properties <- make_request(path = self$uri)
+      self$uri <- self$properties$uri
+      self
     },
 
     download_files = function(
@@ -25,12 +32,12 @@ Export <- setRefClass(
       progress = TRUE
     ) {
       if (progress) {
-        progressr::with_progress(.self$wait_for_finish())
+        progressr::with_progress(self$wait_for_finish())
       } else {
-        .self$wait_for_finish()
+        self$wait_for_finish()
       }
 
-      file_count <- .self$properties$fileCount
+      file_count <- self$properties$fileCount
       is_dir <- FALSE
       if (is.null(path) || (file.exists(path) && file.info(path)$isdir)) {
         is_dir <- TRUE
@@ -39,7 +46,7 @@ Export <- setRefClass(
         }
         if (file_count > 1) {
           escaped_table_name <- tolower(stringr::str_replace_all(
-            .self$properties$table$name,
+            self$properties$table$name,
             "\\W+",
             "_"
           ))
@@ -61,13 +68,13 @@ Export <- setRefClass(
         dir.create(path, showWarnings = FALSE, recursive = TRUE)
         if (file_count == 1) {
           escaped_table_name <- tolower(stringr::str_replace_all(
-            .self$properties$table$name,
+            self$properties$table$name,
             "\\W+",
             "_"
           ))
           path <- file.path(
             path,
-            str_interp("${escaped_table_name}.${.self$properties$format}")
+            str_interp("${escaped_table_name}.${self$properties$format}")
           )
         }
       } else {
@@ -75,12 +82,12 @@ Export <- setRefClass(
       }
 
       if (file_count == 1) {
-        args = list(
-          uri = .self$uri,
+        args <- list(
+          uri = self$uri,
           download_path = path,
           overwrite = overwrite,
-          size = .self$properties$size,
-          md5_hash = NULL # TODO: maybe we should include md5 on the export definition?
+          size = self$properties$size,
+          md5_hash = NULL
         )
         if (progress) {
           progressr::with_progress(do.call(perform_retryable_download, args))
@@ -90,19 +97,19 @@ Export <- setRefClass(
       } else {
         part_indices <- seq_len(file_count)
 
-        args = list(
+        args <- list(
           uris = purrr::map(part_indices, function(i) {
-            paste0(.self$uri, "/download?filePart=", i - 1) # Don't forget that R is 1-indexed! grr....
+            paste0(self$uri, "/download?filePart=", i - 1)
           }),
           download_paths = purrr::map_chr(part_indices, function(i) {
             filename <- str_interp(
-              "${formatC(i - 1, width = 6, flag = '0')}.${.self$properties$format}"
+              "${formatC(i - 1, width = 6, flag = '0')}.${self$properties$format}"
             )
             file.path(path, filename)
           }),
           overwrite = overwrite,
           max_parallelization = max_parallelization,
-          total_bytes = .self$properties$size
+          total_bytes = self$properties$size
         )
         if (progress) {
           progressr::with_progress(do.call(perform_parallel_download, args))
@@ -117,9 +124,9 @@ Export <- setRefClass(
       iter_count <- 0
       pb <- progressr::progressor(steps = 100)
       pb(message = "Preparing download...")
-      previous_progress = 0
+      previous_progress <- 0
       while (TRUE) {
-        if (.self$properties$status == "completed") {
+        if (self$properties$status == "completed") {
           if (previous_progress != 100) {
             pb(
               amount = 100 - previous_progress,
@@ -127,30 +134,30 @@ Export <- setRefClass(
             )
           }
           break
-        } else if (.self$properties$status == "failed") {
+        } else if (self$properties$status == "failed") {
           abort_redivis_job_error(
-            message = .self$properties$errorMessage,
-            kind = .self$properties$kind,
-            status = .self$properties$status
+            message = self$properties$errorMessage,
+            kind = self$properties$kind,
+            status = self$properties$status
           )
-        } else if (.self$properties$status == "cancelled") {
+        } else if (self$properties$status == "cancelled") {
           abort_redivis_job_error(
             message = "Export job was cancelled",
-            kind = .self$properties$kind,
-            status = .self$properties$status
+            kind = self$properties$kind,
+            status = self$properties$status
           )
         } else {
           iter_count <- iter_count + 1
-          if (round(.self$properties$percentCompleted) > previous_progress) {
+          if (round(self$properties$percentCompleted) > previous_progress) {
             pb(
-              amount = round(.self$properties$percentCompleted) -
+              amount = round(self$properties$percentCompleted) -
                 previous_progress,
               message = "Preparing download..."
             )
-            previous_progress <- round(.self$properties$percentCompleted)
+            previous_progress <- round(self$properties$percentCompleted)
           }
           Sys.sleep(min(iter_count * 0.5, 2))
-          .self$get()
+          self$get()
         }
       }
     }

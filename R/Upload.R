@@ -1,52 +1,51 @@
-#' @include Table.R Variable.R api_request.R tabular_reader.R
-Upload <- setRefClass(
+#' @include Table.R Variable.R api_request.R TabularReader.R
+Upload <- R6::R6Class(
   "Upload",
-  fields = list(
-    name = "character",
-    table = "Table",
-    properties = "list",
-    uri = "character"
-  ),
-  methods = c(
-    tabular_reader_methods,
-    initialize = function(..., name = "", properties = list(), table) {
+  inherit = TabularReader,
+  public = list(
+    name = NULL,
+    table = NULL,
+
+    initialize = function(name = "", properties = list(), table) {
+      super$initialize()
+      self$name <- name
+      self$table <- table
+      self$properties <- properties
+
       if (!is.null(properties$uri)) {
-        computed_uri <- properties$uri
+        self$uri <- properties$uri
       } else {
-        escaped_name = gsub('\\.', '_', name)
-        computed_uri <- str_interp(
+        escaped_name <- gsub('\\.', '_', name)
+        self$uri <- str_interp(
           "${table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}"
         )
       }
-      callSuper(
-        ...,
-        name = name,
-        table = table,
-        properties = properties,
-        uri = computed_uri
-      )
     },
-    show = function() {
-      print(str_interp(
-        "<Upload ${.self$table.qualified_reference}.${.self$name}>"
+
+    print = function(...) {
+      cat(str_interp(
+        "<Upload ${self$table$qualified_reference}.${self$name}>\n"
       ))
+      invisible(self)
     },
+
     get = function() {
-      if (.self$name == "" && is.null(.self$properties$uri)) {
+      if (self$name == "" && is.null(self$properties$uri)) {
         abort_redivis_value_error(
           'Cannot get an upload without a specified name'
         )
       }
-      .self$properties <- make_request(path = .self$uri)
-      .self$uri <- .self$properties$uri
-      .self
+      self$properties <- make_request(path = self$uri)
+      self$uri <- self$properties$uri
+      self
     },
+
     exists = function() {
       tryCatch(
         {
           make_request(
             method = "HEAD",
-            path = .self$uri
+            path = self$uri
           )
           TRUE
         },
@@ -57,24 +56,24 @@ Upload <- setRefClass(
     },
 
     delete = function() {
-      make_request(method = "DELETE", path = .self$uri)
+      make_request(method = "DELETE", path = self$uri)
       invisible(NULL)
     },
 
     variable = function(name) {
-      Variable$new(name = name, upload = .self)
+      Variable$new(name = name, upload = self)
     },
 
     list_variables = function(max_results) {
       variables <- make_paginated_request(
-        path = str_interp("${.self$uri}/variables"),
+        path = str_interp("${self$uri}/variables"),
         page_size = 100,
         max_results = max_results
       )
       purrr::map(variables, function(variable_properties) {
         Variable$new(
           name = variable_properties$name,
-          upload = .self,
+          upload = self,
           properties = variable_properties
         )
       })
@@ -91,7 +90,7 @@ Upload <- setRefClass(
 
       make_request(
         method = "POST",
-        path = str_interp("${.self$uri}/rows"),
+        path = str_interp("${self$uri}/rows"),
         payload = list(
           "rows" = rows,
           "updateSchema" = update_schema
@@ -129,8 +128,8 @@ Upload <- setRefClass(
       ## If `content` is a file path (a string) then open it as a binary connection
       if (is.character(content)) {
         if (base::file.exists(content)) {
-          if (.self$name == "") {
-            .self$name = basename(content)
+          if (self$name == "") {
+            self$name <- basename(content)
           }
           f <- base::file(content, open = "rb", blocking = FALSE)
           on.exit(close(f), add = TRUE)
@@ -147,21 +146,19 @@ Upload <- setRefClass(
           }
         }
       } else if (!is.null(content) && inherits(content, "connection")) {
-        if (.self$name == "") {
-          .self$name = basename(get_conn_name(content))
+        if (self$name == "") {
+          self$name <- basename(get_conn_name(content))
         }
       } else if (!is.null(content) && !is.raw(content)) {
         temp_file_path <- convert_data_to_parquet(content)
         f <- base::file(temp_file_path, open = "rb", blocking = FALSE)
         on.exit(close(f), add = TRUE)
         on.exit(base::file.remove(temp_file_path), add = TRUE)
-        type = "parquet"
+        type <- "parquet"
         content <- f
       }
 
       ## Check if content is large enough to need a temporary upload.
-      ## Here we check if content is a connection (a file-like object) and get its size;
-      ## otherwise, we use the length() to determine the size of a raw vector.
       if (
         !is.null(content) &&
           ((inherits(content, "connection") &&
@@ -170,21 +167,19 @@ Upload <- setRefClass(
             (!inherits(content, "connection") &&
               length(content) > MAX_SIMPLE_UPLOAD_SIZE))
       ) {
-        ## Determine the file size
         size <- if (inherits(content, "connection")) {
           file.info(get_conn_name(content))$size
         } else {
           length(content)
         }
 
-        ## Request a temporary upload (assumes make_request is defined)
         res <- make_request(
           method = "POST",
-          path = str_interp("${.self$table$uri}/tempUploads"),
+          path = str_interp("${self$table$uri}/tempUploads"),
           payload = list(
             tempUploads = list(list(
               size = size,
-              name = .self$name,
+              name = self$name,
               resumable = size >= MIN_RESUMABLE_UPLOAD_SIZE
             ))
           )
@@ -194,7 +189,6 @@ Upload <- setRefClass(
         pbar_bytes <- NULL
         on_progress <- NULL
         if (progress) {
-          ## Create a progress bar (using txtProgressBar from the utils package)
           pbar_bytes <- txtProgressBar(min = 0, max = size, style = 3)
           on_progress <- function(num_bytes) {
             setTxtProgressBar(pbar_bytes, num_bytes)
@@ -232,19 +226,18 @@ Upload <- setRefClass(
       }
 
       exists <- FALSE
-      if (.self$name != "") {
-        if (is.null(.self$properties$uri)) {
-          # Handles case when name has changed in this fn
-          escaped_name = gsub('\\.', '_', .self$name)
-          .self$uri <- str_interp(
-            "${.self$table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}"
+      if (self$name != "") {
+        if (is.null(self$properties$uri)) {
+          escaped_name <- gsub('\\.', '_', self$name)
+          self$uri <- str_interp(
+            "${self$table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}"
           )
         }
-        exists <- .self$exists()
+        exists <- self$exists()
       }
 
       if (if_not_exists && exists) {
-        return(.self)
+        return(self)
       }
 
       if (isTRUE(replace_on_conflict) && isTRUE(rename_on_conflict)) {
@@ -255,18 +248,18 @@ Upload <- setRefClass(
 
       if (exists) {
         if (isTRUE(replace_on_conflict)) {
-          .self$delete()
+          self$delete()
         } else if (!isTRUE(rename_on_conflict)) {
           abort_redivis_value_error(sprintf(
             "An upload with the name %s already exists on this version of the table. If you want to upload this file anyway, set the parameter rename_on_conflict=TRUE or replace_on_conflict=TRUE.",
-            .self$name
+            self$name
           ))
         }
       }
 
       files <- NULL
       payload <- list(
-        name = .self$name,
+        name = self$name,
         type = type,
         schema = schema,
         metadata = metadata,
@@ -308,13 +301,13 @@ Upload <- setRefClass(
 
       response <- make_request(
         method = "POST",
-        path = paste0(.self$table$uri, "/uploads"),
+        path = paste0(self$table$uri, "/uploads"),
         payload = payload,
         files = files
       )
 
-      .self$properties <- response
-      .self$uri <- .self$properties$uri
+      self$properties <- response
+      self$uri <- self$properties$uri
 
       ## Wait for the upload to finish if required
       tryCatch(
@@ -327,32 +320,30 @@ Upload <- setRefClass(
           ) {
             repeat {
               Sys.sleep(2)
-              .self$get()
-              status <- .self$properties$status
+              self$get()
+              status <- self$properties$status
               if (status == "completed" || status == "failed") {
                 if (status == "failed" && raise_on_fail) {
                   abort_redivis_job_error(
-                    message = .self$properties$errorMessage,
-                    kind = .self$properties$kind,
-                    status = .self$properties$status
+                    message = self$properties$errorMessage,
+                    kind = self$properties$kind,
+                    status = self$properties$status
                   )
                 }
                 break
-              } else {
-                # message("Upload is still in progress...")
               }
             }
           }
         },
         error = function(e) {
-          if (remove_on_fail && .self$properties$status == "failed") {
-            .self$delete()
+          if (remove_on_fail && self$properties$status == "failed") {
+            self$delete()
           }
           stop(e)
         }
       )
 
-      return(.self)
+      return(self)
     }
   )
 )

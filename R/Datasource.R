@@ -1,14 +1,11 @@
 #' @include Dataset.R Workflow.R api_request.R
-Datasource <- setRefClass(
+Datasource <- R6::R6Class(
   "Datasource",
-  fields = list(
-    source = "ANY",
-    workflow = "ANY",
-    properties = "list",
-    uri = "character"
-  ),
-
-  methods = list(
+  public = list(
+    source = NULL,
+    workflow = NULL,
+    properties = NULL,
+    uri = NULL,
     initialize = function(source = "", workflow = NULL, properties = list()) {
       parsed_source <- source
       parsed_workflow <- workflow
@@ -28,22 +25,23 @@ Datasource <- setRefClass(
         parsed_source <- source$qualified_reference
       }
 
-      callSuper(
-        source = parsed_source,
-        workflow = parsed_workflow,
-        uri = str_interp("${parsed_workflow$uri}/dataSources/${parsed_source}"),
-        properties = properties
+      self$source <- parsed_source
+      self$workflow <- parsed_workflow
+      self$uri <- str_interp(
+        "${parsed_workflow$uri}/dataSources/${parsed_source}"
       )
+      self$properties <- properties
     },
 
-    show = function() {
-      print(str_interp("<Datasource ${.self$uri}>"))
+    print = function(...) {
+      cat(str_interp("<Datasource ${self$uri}>\n"))
+      invisible(self)
     },
 
     get = function() {
-      .self$properties <- make_request(path = .self$uri)
-      .self$uri = .self$properties$uri
-      .self
+      self$properties <- make_request(path = self$uri)
+      self$uri <- self$properties$uri
+      self
     },
 
     exists = function() {
@@ -51,7 +49,7 @@ Datasource <- setRefClass(
         {
           make_request(
             method = "HEAD",
-            path = .self$uri
+            path = self$uri
           )
           TRUE
         },
@@ -62,22 +60,22 @@ Datasource <- setRefClass(
     },
 
     create = function() {
-      payload = list()
+      payload <- list()
 
-      if (Dataset$new(name = .self$source)$exists()) {
-        payload$sourceDataset = .self$source
+      if (Dataset$new(name = self$source)$exists()) {
+        payload$sourceDataset <- self$source
       } else {
-        payload$sourceWorkflow = .self$source
+        payload$sourceWorkflow <- self$source
       }
 
-      .self$properties <- make_request(
+      self$properties <- make_request(
         method = "POST",
-        path = str_interp("${.self$workflow$uri}/dataSources"),
+        path = str_interp("${self$workflow$uri}/dataSources"),
         payload = payload
       )
-      .self$uri <- .self$properties[["uri"]]
+      self$uri <- self$properties[["uri"]]
 
-      return(.self)
+      self
     },
 
     update = function(
@@ -112,8 +110,8 @@ Datasource <- setRefClass(
 
       if (!is.null(sample) || !is.null(version)) {
         if (is.null(source_dataset) && is.null(source_workflow)) {
-          .self$get()
-          sd <- .self$properties[["sourceDataset"]]
+          self$get()
+          sd <- self$properties[["sourceDataset"]]
           source_dataset <- if (!is.null(sd)) {
             sd[["qualifiedReference"]]
           } else {
@@ -148,25 +146,25 @@ Datasource <- setRefClass(
         source_dataset <- paste0(source_dataset, ":sample")
       }
 
-      .self$properties <- make_request(
+      self$properties <- make_request(
         method = "PATCH",
-        path = .self$uri,
+        path = self$uri,
         payload = list(
           sourceDataset = source_dataset,
           sourceWorkflow = source_workflow,
           mappedTables = mapped_tables
         )
       )
-      .self$uri <- .self$properties[["uri"]]
+      self$uri <- self$properties[["uri"]]
 
-      return(.self)
+      self
     },
 
     source_dataset = function() {
-      if (!("sourceDataset" %in% names(.self$properties))) {
-        .self$get()
+      if (!("sourceDataset" %in% names(self$properties))) {
+        self$get()
       }
-      source_dataset = .self$properties$sourceDataset
+      source_dataset <- self$properties$sourceDataset
       if (is.null(source_dataset)) {
         abort_redivis_value_error(
           "This datasource doesn't have a source dataset. Use the source_workflow() method instead."
@@ -179,10 +177,10 @@ Datasource <- setRefClass(
     },
 
     source_workflow = function() {
-      if (!("sourceWorkflow" %in% names(.self$properties))) {
-        .self$get()
+      if (!("sourceWorkflow" %in% names(self$properties))) {
+        self$get()
       }
-      source_workflow = .self$properties$sourceWorkflow
+      source_workflow <- self$properties$sourceWorkflow
       if (is.null(source_workflow)) {
         abort_redivis_value_error(
           "This datasource doesn't have a source workflow. Use the source_dataset() method instead."

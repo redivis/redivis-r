@@ -1,18 +1,15 @@
 #' @include Table.R User.R api_request.R util.R
-Notebook <- setRefClass(
+Notebook <- R6::R6Class(
   "Notebook",
-  fields = list(
-    name = "character",
-    workflow = "ANY",
-    properties = "list",
-    qualified_reference = "character",
-    scoped_reference = "character",
-    uri = "character"
-  ),
+  public = list(
+    name = NULL,
+    workflow = NULL,
+    properties = NULL,
+    qualified_reference = NULL,
+    scoped_reference = NULL,
+    uri = NULL,
 
-  methods = list(
     initialize = function(
-      ...,
       name = "",
       workflow = NULL,
       properties = list()
@@ -31,9 +28,7 @@ Notebook <- setRefClass(
           parsed_workflow <- Workflow$new(
             name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
           )
-        } else if (
-          name != "" # Need this check otherwise package won't build (?)
-        ) {
+        } else if (name != "") {
           abort_redivis_value_error(
             "Invalid notebook specifier, must be the fully qualified reference if no dataset or workflow is specified"
           )
@@ -50,19 +45,17 @@ Notebook <- setRefClass(
       } else {
         str_interp("${parent_reference}${parsed_name}")
       }
-      callSuper(
-        ...,
-        name = parsed_name,
-        workflow = parsed_workflow,
-        qualified_reference = qualified_reference_val,
-        scoped_reference = scoped_reference_val,
-        uri = str_interp("/notebooks/${URLencode(qualified_reference_val)}"),
-        properties = properties
-      )
+      self$name <- parsed_name
+      self$workflow <- parsed_workflow
+      self$qualified_reference <- qualified_reference_val
+      self$scoped_reference <- scoped_reference_val
+      self$uri <- str_interp("/notebooks/${URLencode(qualified_reference_val)}")
+      self$properties <- properties
     },
 
-    show = function() {
-      print(str_interp("<Notebook ${.self$qualified_reference}>"))
+    print = function(...) {
+      cat(str_interp("<Notebook ${self$qualified_reference}>\n"))
+      invisible(self)
     },
 
     exists = function() {
@@ -70,7 +63,7 @@ Notebook <- setRefClass(
         {
           make_request(
             method = "HEAD",
-            path = .self$uri
+            path = self$uri
           )
           TRUE
         },
@@ -81,32 +74,32 @@ Notebook <- setRefClass(
     },
 
     get = function() {
-      .self$properties = make_request(path = .self$uri)
-      .self$uri = .self$properties$uri
-      .self
+      self$properties <- make_request(path = self$uri)
+      self$uri <- self$properties$uri
+      self
     },
 
     update = function(name = NULL, source_table = NULL) {
-      payload = list()
+      payload <- list()
 
       if (!is.null(name)) {
-        payload$name = name
+        payload$name <- name
       }
 
       if (!is.null(source_table)) {
         if (is(source_table, "Table")) {
-          payload$sourceTable = source_table.qualified_reference
+          payload$sourceTable <- source_table$qualified_reference
         } else {
-          payload$sourceTable = source_table
+          payload$sourceTable <- source_table
         }
       }
-      .self$properties = make_request(
+      self$properties <- make_request(
         method = "PATCH",
-        path = .self$uri,
-        payload = payload,
+        path = self$uri,
+        payload = payload
       )
-      .self$uri <- .self$properties$uri
-      .self
+      self$uri <- self$properties$uri
+      self
     },
 
     source_tables = function() {
@@ -114,21 +107,21 @@ Notebook <- setRefClass(
         "Deprecation warning: The source_tables() method has been renamed to referenced_tables(); please use this instead. This method will be removed in the future.",
         call. = FALSE
       )
-      return(.self$referenced_tables())
+      return(self$referenced_tables())
     },
 
     source_table = function() {
-      .self$get()
+      self$get()
       Table$new(
-        name = .self$properties[["sourceTable"]],
-        properties = .self$properties[["sourceTable"]][["qualifiedReference"]]
+        name = self$properties[["sourceTable"]],
+        properties = self$properties[["sourceTable"]][["qualifiedReference"]]
       )
     },
 
     referenced_tables = function() {
-      .self$get()
+      self$get()
 
-      lapply(.self$properties[["referencedTables"]], function(source_table) {
+      lapply(self$properties[["referencedTables"]], function(source_table) {
         Table$new(
           name = source_table[["qualifiedReference"]],
           properties = source_table
@@ -137,9 +130,9 @@ Notebook <- setRefClass(
     },
 
     output_table = function() {
-      .self$get()
-      output_table_properties <- .self$properties[["outputTable"]]
-      if (is.null(.self$properties[["outputTable"]])) {
+      self$get()
+      output_table_properties <- self$properties[["outputTable"]]
+      if (is.null(self$properties[["outputTable"]])) {
         return(NULL)
       }
       Table$new(
@@ -149,21 +142,20 @@ Notebook <- setRefClass(
     },
 
     run = function(wait_for_finish = TRUE) {
-      .self$properties = make_request(
+      self$properties <- make_request(
         method = "POST",
-        path = str_interp("${.self$uri}/run")
+        path = str_interp("${self$uri}/run")
       )
-      .self$uri = .self$properties$uri
+      self$uri <- self$properties$uri
 
       if (wait_for_finish) {
         repeat {
           Sys.sleep(2)
-          .self$get()
+          self$get()
 
-          current_job <- .self$properties[["currentJob"]]
+          current_job <- self$properties[["currentJob"]]
           if (is.null(current_job)) {
-            # When the job finishes, we need to look at the lastRunJob for status
-            current_job <- .self$properties[["lastRunJob"]]
+            current_job <- self$properties[["lastRunJob"]]
           }
 
           if (
@@ -181,16 +173,16 @@ Notebook <- setRefClass(
           }
         }
       }
-      .self
+      self
     },
 
     stop = function() {
-      .self$properties = make_request(
+      self$properties <- make_request(
         method = "POST",
-        path = str_interp("${.self$uri}/stop")
+        path = str_interp("${self$uri}/stop")
       )
-      .self$uri = .self$properties$uri
-      .self
+      self$uri <- self$properties$uri
+      self
     },
 
     create_output_table = function(
@@ -199,21 +191,21 @@ Notebook <- setRefClass(
       geography_variables = NULL,
       append = FALSE
     ) {
-      payload = list()
+      payload <- list()
       if (!is.null(name)) {
-        payload = base::append(
+        payload <- base::append(
           payload,
           list("name" = name)
         )
       }
       if (!is.null(geography_variables)) {
-        payload = base::append(
+        payload <- base::append(
           payload,
           list("geographyVariables" = geography_variables)
         )
       }
       if (append) {
-        payload = base::append(
+        payload <- base::append(
           payload,
           list("append" = "TRUE")
         )
@@ -235,7 +227,7 @@ Notebook <- setRefClass(
         if (is(data, "sf")) {
           sf_column_name <- attr(data, "sf_column")
           if (is.null(geography_variables)) {
-            payload = base::append(
+            payload <- base::append(
               payload,
               list("geographyVariables" = list(sf_column_name))
             )
@@ -246,11 +238,11 @@ Notebook <- setRefClass(
 
       file_size <- base::file.info(temp_file_path)$size
 
-      if (is.null(.self$properties$currentJob)) {
-        .self$get()
+      if (is.null(self$properties$currentJob)) {
+        self$get()
       }
 
-      current_notebook_job_id = .self$properties[["currentJob"]][["id"]]
+      current_notebook_job_id <- self$properties[["currentJob"]][["id"]]
 
       res <- make_request(
         method = "POST",
@@ -265,7 +257,7 @@ Notebook <- setRefClass(
         )
       )
 
-      temp_upload = res$results[[1]]
+      temp_upload <- res$results[[1]]
 
       con <- base::file(temp_file_path, "rb")
       on.exit(close(con), add = TRUE)

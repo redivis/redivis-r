@@ -1,17 +1,15 @@
 #' @include Workflow.R api_request.R
-Parameter <- setRefClass(
+Parameter <- R6::R6Class(
   "Parameter",
-  fields = list(
-    name = "character",
-    workflow = "ANY",
-    properties = "list",
-    qualified_reference = "character",
-    scoped_reference = "character",
-    uri = "character"
-  ),
-  methods = list(
+  public = list(
+    name = NULL,
+    workflow = NULL,
+    properties = NULL,
+    qualified_reference = NULL,
+    scoped_reference = NULL,
+    uri = NULL,
+
     initialize = function(
-      ...,
       name = "",
       workflow = NULL,
       properties = list()
@@ -31,9 +29,7 @@ Parameter <- setRefClass(
           parsed_workflow <- Workflow$new(
             name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
           )
-        } else if (
-          name != "" # Need this check otherwise package won't build (?)
-        ) {
+        } else if (name != "") {
           abort_redivis_value_error(
             "Invalid parameter specifier, must be the fully qualified reference if no dataset or workflow is specified"
           )
@@ -56,18 +52,17 @@ Parameter <- setRefClass(
       } else {
         str_interp("${parent_reference}${parsed_name}")
       }
-      callSuper(
-        ...,
-        name = parsed_name,
-        workflow = parsed_workflow,
-        qualified_reference = qualified_reference_val,
-        scoped_reference = scoped_reference_val,
-        uri = uri_val,
-        properties = properties
-      )
+      self$name <- parsed_name
+      self$workflow <- parsed_workflow
+      self$qualified_reference <- qualified_reference_val
+      self$scoped_reference <- scoped_reference_val
+      self$uri <- uri_val
+      self$properties <- properties
     },
-    show = function() {
-      print(str_interp("<Parameter ${.self$qualified_reference}>"))
+
+    print = function(...) {
+      cat(str_interp("<Parameter ${self$qualified_reference}>\n"))
+      invisible(self)
     },
 
     exists = function() {
@@ -75,7 +70,7 @@ Parameter <- setRefClass(
         {
           make_request(
             method = "HEAD",
-            path = .self$uri
+            path = self$uri
           )
           TRUE
         },
@@ -86,59 +81,59 @@ Parameter <- setRefClass(
     },
 
     get = function() {
-      .self$properties = make_request(path = .self$uri)
-      .self$uri = .self$properties$uri
-      .self
+      self$properties <- make_request(path = self$uri)
+      self$uri <- self$properties$uri
+      self
     },
 
     get_values = function() {
-      .self$get()
-      .self$properties$values
+      self$get()
+      self$properties$values
     },
 
     update = function(name = NULL, type = NULL, values = NULL) {
-      payload = list()
+      payload <- list()
 
       if (!is.null(name)) {
-        payload$name = name
+        payload$name <- name
       }
       if (!is.null(type)) {
-        payload$type = type
+        payload$type <- type
       }
       if (!is.null(values)) {
-        payload$values = values
+        payload$values <- values
       }
 
-      .self$properties = make_request(
+      self$properties <- make_request(
         method = "PATCH",
-        path = .self$uri,
-        payload = payload,
+        path = self$uri,
+        payload = payload
       )
-      .self$uri <- .self$properties$uri
-      .self
+      self$uri <- self$properties$uri
+      self
     },
 
     create = function(type = NULL, values = NULL) {
-      payload = list(name = .self$name, values = values)
+      payload <- list(name = self$name, values = values)
       if (!is.null(type)) {
-        payload$type = type
+        payload$type <- type
       }
 
-      .self$properties = make_request(
+      self$properties <- make_request(
         method = "POST",
-        path = str_interp("${.self$workflow$uri}/parameters"),
-        payload = payload,
+        path = str_interp("${self$workflow$uri}/parameters"),
+        payload = payload
       )
-      .self$uri <- .self$properties$uri
-      .self
+      self$uri <- self$properties$uri
+      self
     },
 
     delete = function() {
       make_request(
         method = "DELETE",
-        path = .self$uri,
+        path = self$uri
       )
-      return(NULL)
+      invisible(NULL)
     }
   )
 )

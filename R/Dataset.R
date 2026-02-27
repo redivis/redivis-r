@@ -1,19 +1,17 @@
 #' @include Organization.R User.R Table.R Version.R api_request.R
-Dataset <- setRefClass(
+Dataset <- R6::R6Class(
   "Dataset",
-  fields = list(
-    name = "character",
-    version_tag = "ANY",
-    user = "ANY",
-    organization = "ANY",
-    uri = "character",
-    qualified_reference = "character",
-    scoped_reference = "character",
-    properties = "list"
-  ),
-  methods = list(
+  public = list(
+    name = NULL,
+    version_tag = NULL,
+    user = NULL,
+    organization = NULL,
+    uri = NULL,
+    qualified_reference = NULL,
+    scoped_reference = NULL,
+    properties = NULL,
+
     initialize = function(
-      ...,
       name = "",
       version = NULL,
       user = NULL,
@@ -104,35 +102,33 @@ Dataset <- setRefClass(
         str_interp("${owner_name}.${scoped_reference_val}")
       }
 
-      callSuper(
-        ...,
-        name = parsed_name,
-        version_tag = version_arg,
-        user = parsed_user,
-        organization = parsed_organization,
-        qualified_reference = qualified_reference_val,
-        scoped_reference = scoped_reference_val,
-        uri = str_interp("/datasets/${URLencode(qualified_reference_val)}"),
-        properties = properties
-      )
+      self$name <- parsed_name
+      self$version_tag <- version_arg
+      self$user <- parsed_user
+      self$organization <- parsed_organization
+      self$qualified_reference <- qualified_reference_val
+      self$scoped_reference <- scoped_reference_val
+      self$uri <- str_interp("/datasets/${URLencode(qualified_reference_val)}")
+      self$properties <- properties
     },
 
-    show = function() {
-      print(str_interp("<Dataset ${.self$qualified_reference}>"))
+    print = function(...) {
+      cat(str_interp("<Dataset ${self$qualified_reference}>\n"))
+      invisible(self)
     },
 
     create = function(public_access_level = "none", description = NULL) {
-      rectify_ambiguous_dataset_owner(.self)
-      if (is.null(.self$organization)) {
-        path <- str_interp("/users/${.self$user$name}/datasets")
+      rectify_ambiguous_dataset_owner(self)
+      if (is.null(self$organization)) {
+        path <- str_interp("/users/${self$user$name}/datasets")
       } else {
-        path <- str_interp("/organizations/${.self$organization$name}/datasets")
+        path <- str_interp("/organizations/${self$organization$name}/datasets")
       }
 
-      payload = list(name = .self$name, publicAccessLevel = public_access_level)
+      payload <- list(name = self$name, publicAccessLevel = public_access_level)
 
       if (!is.null(description)) {
-        payload$description = description
+        payload$description <- description
       }
 
       res <- make_request(
@@ -140,45 +136,45 @@ Dataset <- setRefClass(
         path = path,
         payload = payload
       )
-      update_dataset_properties(.self, res)
-      .self
+      update_dataset_properties(self, res)
+      self
     },
 
     create_next_version = function(if_not_exists = FALSE) {
       if (
-        is.null(.self$properties) ||
-          is.null(attr(.self$properties, "nextVersion"))
+        is.null(self$properties) ||
+          is.null(attr(self$properties, "nextVersion"))
       ) {
-        .self$get()
+        self$get()
       }
-      if (is.null(.self$properties$nextVersion)) {
+      if (is.null(self$properties$nextVersion)) {
         make_request(
           method = "POST",
-          path = str_interp("${.self$uri}/versions")
+          path = str_interp("${self$uri}/versions")
         )
       } else if (!if_not_exists) {
         abort_redivis_value_error(str_interp(
-          "Next version already exists at ${.self$properties$nextVersion$datasetUri}. To avoid this error, set argument if_not_exists to TRUE"
+          "Next version already exists at ${self$properties$nextVersion$datasetUri}. To avoid this error, set argument if_not_exists to TRUE"
         ))
       }
 
       Dataset$new(
-        name = .self$name,
-        user = .self$user,
-        organization = .self$organization,
+        name = self$name,
+        user = self$user,
+        organization = self$organization,
         version = "next"
       )$get()
     },
 
     delete = function() {
-      make_request(method = "DELETE", path = .self$uri)
+      make_request(method = "DELETE", path = self$uri)
       invisible(NULL)
     },
 
     get = function() {
-      res <- make_request(path = .self$uri)
-      update_dataset_properties(.self, res)
-      .self
+      res <- make_request(path = self$uri)
+      update_dataset_properties(self, res)
+      self
     },
 
     exists = function() {
@@ -186,7 +182,7 @@ Dataset <- setRefClass(
         {
           make_request(
             method = "HEAD",
-            path = .self$uri
+            path = self$uri
           )
           TRUE
         },
@@ -197,33 +193,33 @@ Dataset <- setRefClass(
     },
 
     version = function(tag = NULL) {
-      if (is.null(tag) && is.null(.self$version_tag)) {
-        .self$get()
+      if (is.null(tag) && is.null(self$version_tag)) {
+        self$get()
       }
       return(Version$new(
-        if (is.null(tag)) .self$version_tag else tag,
-        dataset = .self
+        if (is.null(tag)) self$version_tag else tag,
+        dataset = self
       ))
     },
 
     previous_version = function() {
-      return(.self$version()$previous_version()$dataset())
+      return(self$version()$previous_version()$dataset())
     },
 
     next_version = function() {
-      return(.self$version()$next_version()$dataset())
+      return(self$version()$next_version()$dataset())
     },
 
     list_versions = function(max_results = NULL) {
       versions <- make_paginated_request(
-        path = str_interp("${.self$uri}/versions"),
+        path = str_interp("${self$uri}/versions"),
         page_size = 100,
         max_results = max_results
       )
       purrr::map(versions, function(properties) {
         Version$new(
           tag = properties$tag,
-          dataset = .self,
+          dataset = self,
           properties = properties
         )
       })
@@ -231,46 +227,46 @@ Dataset <- setRefClass(
 
     list_tables = function(max_results = NULL) {
       tables <- make_paginated_request(
-        path = str_interp("${.self$uri}/tables"),
+        path = str_interp("${self$uri}/tables"),
         page_size = 100,
         max_results = max_results
       )
       purrr::map(tables, function(table_properties) {
         Table$new(
           name = table_properties$name,
-          dataset = .self,
+          dataset = self,
           properties = table_properties
         )
       })
     },
 
     query = function(query) {
-      redivis$query(query, default_dataset = .self$qualified_reference)
+      redivis$query(query, default_dataset = self$qualified_reference)
     },
 
     release = function(release_notes = NULL) {
       version_res <- make_request(
         method = "POST",
-        path = str_interp("${.self$uri}/versions/next/release"),
+        path = str_interp("${self$uri}/versions/next/release"),
         payload = list(release_notes = release_notes)
       )
-      .self$uri = version_res$datasetUri
-      .self$get()
-      .self
+      self$uri <- version_res$datasetUri
+      self$get()
+      self
     },
 
     unrelease = function() {
       version_res <- make_request(
         method = "POST",
-        path = str_interp("${.self$uri}/versions/current/release")
+        path = str_interp("${self$uri}/versions/current/release")
       )
-      .self$uri = version_res$datasetUri
-      .self$get()
-      .self
+      self$uri <- version_res$datasetUri
+      self$get()
+      self
     },
 
     table = function(name) {
-      Table$new(name = name, dataset = .self)
+      Table$new(name = name, dataset = self)
     },
 
     update = function(
@@ -293,22 +289,22 @@ Dataset <- setRefClass(
       }
       res <- make_request(
         method = "PATCH",
-        path = .self$uri,
+        path = self$uri,
         payload = payload,
       )
-      update_dataset_properties(.self, res)
-      .self
+      update_dataset_properties(self, res)
+      self
     },
 
     update_variables = function(variables) {
       make_request(
         method = "PATCH",
-        path = str_interp("${.self$uri}/variables"),
+        path = str_interp("${self$uri}/variables"),
         payload = list(
           "variables" = variables
         ),
       )
-      .self
+      self
     }
   )
 )
@@ -317,24 +313,24 @@ rectify_ambiguous_dataset_owner <- function(dataset) {
   if (!is.null(dataset$user) && !is.null(dataset$organization)) {
     if (!is.null(dataset$properties[['owner']])) {
       if (dataset$properties[['owner']][['kind']] == 'user') {
-        dataset$organization = NULL
+        dataset$organization <- NULL
       } else {
-        dataset$user = NULL
+        dataset$user <- NULL
       }
     } else if (dataset$organization$exists()) {
-      dataset$user = NULL
+      dataset$user <- NULL
     } else {
-      dataset$organization = NULL
+      dataset$organization <- NULL
     }
   }
 }
 
 update_dataset_properties <- function(instance, properties) {
-  instance$properties = properties
-  instance$qualified_reference = properties$qualifiedReference
-  instance$scoped_reference = properties$scopedReference
-  instance$name = properties$name
-  instance$uri = properties$uri
-  instance$version_tag = properties$version$tag
+  instance$properties <- properties
+  instance$qualified_reference <- properties$qualifiedReference
+  instance$scoped_reference <- properties$scopedReference
+  instance$name <- properties$name
+  instance$uri <- properties$uri
+  instance$version_tag <- properties$version$tag
   rectify_ambiguous_dataset_owner(instance)
 }

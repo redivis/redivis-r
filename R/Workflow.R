@@ -1,18 +1,16 @@
 #' @include User.R Organization.R Datasource.R Notebook.R Transform.R Table.R Parameter.R api_request.R
-Workflow <- setRefClass(
+Workflow <- R6::R6Class(
   "Workflow",
-  fields = list(
-    name = "character",
-    user = "ANY",
-    organization = "ANY",
-    uri = "character",
-    qualified_reference = "character",
-    scoped_reference = "character",
-    properties = "list"
-  ),
-  methods = list(
+  public = list(
+    name = NULL,
+    user = NULL,
+    organization = NULL,
+    uri = NULL,
+    qualified_reference = NULL,
+    scoped_reference = NULL,
+    properties = NULL,
+
     initialize = function(
-      ...,
       name = "",
       user = NULL,
       organization = NULL,
@@ -57,26 +55,24 @@ Workflow <- setRefClass(
         str_interp("${owner_name}.${scoped_reference_val}")
       }
 
-      callSuper(
-        ...,
-        name = parsed_name,
-        user = parsed_user,
-        organization = parsed_organization,
-        qualified_reference = qualified_reference_val,
-        scoped_reference = scoped_reference_val,
-        uri = str_interp("/workflows/${URLencode(qualified_reference_val)}"),
-        properties = properties
-      )
+      self$name <- parsed_name
+      self$user <- parsed_user
+      self$organization <- parsed_organization
+      self$qualified_reference <- qualified_reference_val
+      self$scoped_reference <- scoped_reference_val
+      self$uri <- str_interp("/workflows/${URLencode(qualified_reference_val)}")
+      self$properties <- properties
     },
 
-    show = function() {
-      print(str_interp("<Workflow ${.self$qualified_reference}>"))
+    print = function(...) {
+      cat(str_interp("<Workflow ${self$qualified_reference}>\n"))
+      invisible(self)
     },
 
     get = function() {
-      res <- make_request(path = .self$uri)
-      update_workflow_properties(.self, res)
-      .self
+      res <- make_request(path = self$uri)
+      update_workflow_properties(self, res)
+      self
     },
 
     exists = function() {
@@ -84,7 +80,7 @@ Workflow <- setRefClass(
         {
           make_request(
             method = "HEAD",
-            path = .self$uri
+            path = self$uri
           )
           TRUE
         },
@@ -95,39 +91,39 @@ Workflow <- setRefClass(
     },
 
     table = function(name) {
-      Table$new(name = name, workflow = .self)
+      Table$new(name = name, workflow = self)
     },
 
     notebook = function(name) {
-      Notebook$new(name = name, workflow = .self)
+      Notebook$new(name = name, workflow = self)
     },
 
     transform = function(name) {
-      Transform$new(name = name, workflow = .self)
+      Transform$new(name = name, workflow = self)
     },
 
     parameter = function(name) {
-      Parameter$new(name = name, workflow = .self)
+      Parameter$new(name = name, workflow = self)
     },
 
     datasource = function(source) {
-      Datasource$new(source = source, workflow = .self)
+      Datasource$new(source = source, workflow = self)
     },
 
     query = function(query) {
-      redivis$query(query, default_workflow = .self$qualified_reference)
+      redivis$query(query, default_workflow = self$qualified_reference)
     },
 
     list_tables = function(max_results = NULL) {
       tables <- make_paginated_request(
-        path = str_interp("${.self$uri}/tables"),
+        path = str_interp("${self$uri}/tables"),
         page_size = 100,
         max_results = max_results,
       )
       purrr::map(tables, function(table_properties) {
         Table$new(
           name = table_properties$name,
-          workflow = .self,
+          workflow = self,
           properties = table_properties
         )
       })
@@ -135,14 +131,14 @@ Workflow <- setRefClass(
 
     list_transforms = function(max_results = NULL) {
       transforms <- make_paginated_request(
-        path = str_interp("${.self$uri}/transforms"),
+        path = str_interp("${self$uri}/transforms"),
         page_size = 100,
         max_results = max_results,
       )
       purrr::map(transforms, function(transform_properties) {
         Transform$new(
           name = transform_properties$name,
-          workflow = .self,
+          workflow = self,
           properties = transform_properties
         )
       })
@@ -150,14 +146,14 @@ Workflow <- setRefClass(
 
     list_notebooks = function(max_results = NULL) {
       notebooks <- make_paginated_request(
-        path = str_interp("${.self$uri}/notebooks"),
+        path = str_interp("${self$uri}/notebooks"),
         page_size = 100,
         max_results = max_results,
       )
       purrr::map(notebooks, function(notebook_properties) {
         Notebook$new(
           name = notebook_properties$name,
-          workflow = .self,
+          workflow = self,
           properties = notebook_properties
         )
       })
@@ -165,14 +161,14 @@ Workflow <- setRefClass(
 
     list_parameters = function(max_results = NULL) {
       parameters <- make_paginated_request(
-        path = str_interp("${.self$uri}/parameters"),
+        path = str_interp("${self$uri}/parameters"),
         page_size = 100,
         max_results = max_results,
       )
       purrr::map(parameters, function(parameter_properties) {
         Parameter$new(
           name = parameter_properties$name,
-          workflow = .self,
+          workflow = self,
           properties = parameter_properties
         )
       })
@@ -180,14 +176,14 @@ Workflow <- setRefClass(
 
     list_datasources = function(max_results = NULL) {
       datasources <- make_paginated_request(
-        path = str_interp("${.self$uri}/dataSources"),
+        path = str_interp("${self$uri}/dataSources"),
         page_size = 100,
         max_results = max_results,
       )
       purrr::map(datasources, function(datasource_properties) {
         Datasource$new(
           source = datasource_properties$id,
-          workflow = .self,
+          workflow = self,
           properties = datasource_properties
         )
       })
@@ -196,20 +192,20 @@ Workflow <- setRefClass(
     update_variables = function(variables) {
       make_request(
         method = "PATCH",
-        path = str_interp("${.self$uri}/variables"),
+        path = str_interp("${self$uri}/variables"),
         payload = list(
           "variables" = variables
         ),
       )
-      .self
+      self
     }
   )
 )
 
 update_workflow_properties <- function(instance, properties) {
-  instance$properties = properties
-  instance$qualified_reference = properties$qualifiedReference
-  instance$scoped_reference = properties$scopedReference
-  instance$name = properties$name
-  instance$uri = properties$uri
+  instance$properties <- properties
+  instance$qualified_reference <- properties$qualifiedReference
+  instance$scoped_reference <- properties$scopedReference
+  instance$name <- properties$name
+  instance$uri <- properties$uri
 }

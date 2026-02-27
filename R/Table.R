@@ -1,27 +1,22 @@
-#' @include Dataset.R Workflow.R Variable.R Export.R util.R api_request.R tabular_reader.R
-Table <- setRefClass(
+#' @include Dataset.R Workflow.R Variable.R Export.R util.R api_request.R TabularReader.R
+Table <- R6::R6Class(
   "Table",
-  fields = list(
-    name = "character",
-    dataset = "ANY",
-    workflow = "ANY",
-    properties = "list",
-    qualified_reference = "character",
-    scoped_reference = "character",
-    uri = "character",
-    directory = "ANY",
-    cached_directory_timestamp = "ANY"
-  ),
+  inherit = TabularReader,
+  public = list(
+    name = NULL,
+    dataset = NULL,
+    workflow = NULL,
+    qualified_reference = NULL,
+    scoped_reference = NULL,
 
-  methods = c(
-    tabular_reader_methods,
     initialize = function(
-      ...,
       name = "",
       dataset = NULL,
       workflow = NULL,
       properties = list()
     ) {
+      super$initialize()
+
       parent_reference <- ""
       parsed_name <- name
       parsed_dataset <- dataset
@@ -46,46 +41,39 @@ Table <- setRefClass(
           parsed_dataset <- Dataset$new(
             name = Sys.getenv("REDIVIS_DEFAULT_DATASET")
           )
-        } else if (
-          name != "" # Need this check otherwise package won't build (?)
-        ) {
+        } else if (name != "") {
           abort_redivis_value_error(
             "Invalid table specifier, must be the fully qualified reference if no dataset or workflow is specified"
           )
         }
       }
-      scoped_reference_val <- if (length(properties$scopedReference)) {
+      self$name <- parsed_name
+      self$dataset <- parsed_dataset
+      self$workflow <- parsed_workflow
+
+      self$scoped_reference <- if (length(properties$scopedReference)) {
         properties$scopedReference
       } else {
         parsed_name
       }
-      qualified_reference_val <- if (length(properties$qualifiedReference)) {
+      self$qualified_reference <- if (length(properties$qualifiedReference)) {
         properties$qualifiedReference
       } else {
         str_interp("${parent_reference}${parsed_name}")
       }
-      callSuper(
-        ...,
-        name = parsed_name,
-        dataset = parsed_dataset,
-        workflow = parsed_workflow,
-        qualified_reference = qualified_reference_val,
-        scoped_reference = scoped_reference_val,
-        cached_directory_timestamp = NULL,
-        directory = NULL,
-        uri = str_interp("/tables/${URLencode(qualified_reference_val)}"),
-        properties = properties
-      )
+      self$uri <- str_interp("/tables/${URLencode(self$qualified_reference)}")
+      self$properties <- properties
     },
 
-    show = function() {
-      print(str_interp("<Table ${.self$qualified_reference}>"))
+    print = function(...) {
+      cat(str_interp("<Table ${self$qualified_reference}>\n"))
+      invisible(self)
     },
 
     get = function() {
-      res <- make_request(path = .self$uri)
-      update_table_properties(.self, res)
-      .self
+      res <- make_request(path = self$uri)
+      update_table_properties(self, res)
+      self
     },
 
     exists = function() {
@@ -93,7 +81,7 @@ Table <- setRefClass(
         {
           make_request(
             method = "HEAD",
-            path = .self$uri
+            path = self$uri
           )
           TRUE
         },
@@ -123,39 +111,39 @@ Table <- setRefClass(
       }
       res <- make_request(
         method = "PATCH",
-        path = .self$uri,
+        path = self$uri,
         payload = payload,
       )
-      update_table_properties(.self, res)
-      .self
+      update_table_properties(self, res)
+      self
     },
 
     update_variables = function(variables) {
       make_request(
         method = "PATCH",
-        path = str_interp("${.self$uri}/variables"),
+        path = str_interp("${self$uri}/variables"),
         payload = list(
           "variables" = variables
         ),
       )
-      .self
+      self
     },
 
     delete = function() {
-      make_request(method = "DELETE", path = .self$uri)
+      make_request(method = "DELETE", path = self$uri)
       invisible(NULL)
     },
 
     list_variables = function(max_results = NULL) {
       variables <- make_paginated_request(
-        path = str_interp("${.self$uri}/variables"),
+        path = str_interp("${self$uri}/variables"),
         page_size = 100,
         max_results = max_results
       )
       purrr::map(variables, function(variable_properties) {
         Variable$new(
           name = variable_properties$name,
-          table = .self,
+          table = self,
           properties = variable_properties
         )
       })
@@ -167,7 +155,7 @@ Table <- setRefClass(
       progress = TRUE,
       max_parallelization = parallelly::availableCores()
     ) {
-      dir <- directory # Rename to avoid confusion / warnings with table$directory field
+      dir <- directory # Rename to avoid confusion with self$directory field
       max_parallelization <- min(20, max_parallelization)
       add_table_files <- function() {
         # Ensure exactly one of files or directory is provided
@@ -185,29 +173,18 @@ Table <- setRefClass(
         if (!is.null(dir)) {
           dir <- normalizePath(dir)
           files_list <- list()
-          # Get all files recursively (full names)
           all_files <- list.files(
             path = dir,
             recursive = TRUE,
             full.names = TRUE,
             include.dirs = FALSE
           )
-          for (filename in all_files) {
-            # Check if it is a file (not a directory)
+          files_list <- lapply(all_files, function(filename) {
             size <- file.info(filename)$size
-            total_size <- total_size + size
-            # Compute the relative path by removing the directory prefix, including trailing slash
-            rel_path <- sub(
-              paste0("^", str_interp("${dir}/")),
-              "",
-              filename
-            )
-            files_list[[length(files_list) + 1]] <- list(
-              path = filename,
-              name = rel_path,
-              size = size
-            )
-          }
+            rel_path <- sub(paste0("^", str_interp("${dir}/")), "", filename)
+            list(path = filename, name = rel_path, size = size)
+          })
+          total_size <- sum(vapply(files_list, function(f) f$size, numeric(1)))
           files <- files_list
         } else {
           files <- lapply(files, map_file)
@@ -216,13 +193,9 @@ Table <- setRefClass(
           }
         }
 
-        # progressr takes up an insane amount of memory if a large number of steps are passed
-        # Instead, we normalize this to 100, and then compute the steps elswhere
         pb_bytes_multiplier <- 100 / total_size
-
         pb_bytes <- progressr::progressor(steps = 100)
 
-        # Initialize variables for batching uploads
         current_batch_timestamp <- as.numeric(Sys.time())
         uploaded_files <- list()
         current_batch_files <- list()
@@ -234,7 +207,6 @@ Table <- setRefClass(
         for (i in seq_along(files)) {
           file <- files[[i]]
 
-          # Every 1000 files, request a new batch of temporary uploads.
           if (((i - 1) %% 1000) == 0) {
             batch_end <- min(i + 999, length(files))
             batch <- files[i:batch_end]
@@ -249,14 +221,12 @@ Table <- setRefClass(
             )
             res <- make_request(
               method = "POST",
-              path = paste0(.self$uri, "/tempUploads"),
+              path = paste0(self$uri, "/tempUploads"),
               payload = payload
             )
             current_temp_uploads_batch <- res$results
           }
 
-          # Assign the corresponding temporary upload from the current batch.
-          # Adjust index to be 1-indexed.
           batch_index <- ((i - 1) %% 1000) + 1
           current_batch_files[[length(current_batch_files) + 1]] <- list(
             file = file,
@@ -264,10 +234,6 @@ Table <- setRefClass(
           )
           current_batch_size <- current_batch_size + file$size
 
-          # Check if the current batch should be processed:
-          # - when we have 1000 files, or
-          # - we are at the last file, or
-          # - the batch size exceeds the target.
           if (
             length(current_batch_files) >= 1000 ||
               i == length(files) ||
@@ -280,7 +246,6 @@ Table <- setRefClass(
               pb_bytes_multiplier = pb_bytes_multiplier
             )
 
-            # Adjust target batch size based on elapsed time
             elapsed <- as.numeric(Sys.time()) - current_batch_timestamp
             if (elapsed > 60) {
               target_batch_size <- target_batch_size / 2
@@ -288,7 +253,6 @@ Table <- setRefClass(
               target_batch_size <- target_batch_size * 2
             }
 
-            # Finalize upload by making a request with the batched file info.
             payload <- list(
               files = lapply(current_batch_files, function(batch_file) {
                 list(
@@ -299,17 +263,15 @@ Table <- setRefClass(
             )
             response <- make_request(
               method = "POST",
-              path = paste0(.self$uri, "/rawFiles"),
+              path = paste0(self$uri, "/rawFiles"),
               payload = payload
             )
 
-            # Assume File() is a constructor that creates a File object.
             new_files <- lapply(response$results, function(f) {
-              File$new(id = f$id, table = .self, properties = f)
+              File$new(id = f$id, table = self, properties = f)
             })
             uploaded_files <- c(uploaded_files, new_files)
 
-            # Reset batch variables for the next batch.
             current_batch_timestamp <- as.numeric(Sys.time())
             current_batch_files <- list()
             current_batch_size <- 0
@@ -327,25 +289,25 @@ Table <- setRefClass(
 
     list_uploads = function(max_results = NULL) {
       uploads <- make_paginated_request(
-        path = str_interp("${.self$uri}/uploads"),
+        path = str_interp("${self$uri}/uploads"),
         page_size = 100,
         max_results = max_results
       )
       purrr::map(uploads, function(upload_properties) {
         Upload$new(
           name = upload_properties$name,
-          table = .self,
+          table = self,
           properties = upload_properties
         )
       })
     },
 
     variable = function(name) {
-      Variable$new(name = name, table = .self)
+      Variable$new(name = name, table = self)
     },
 
     upload = function(name = "") {
-      Upload$new(name = name, table = .self)
+      Upload$new(name = name, table = self)
     },
 
     create = function(
@@ -353,9 +315,9 @@ Table <- setRefClass(
       upload_merge_strategy = "append",
       is_file_index = FALSE
     ) {
-      rectify_ambiguous_table_container(.self)
+      rectify_ambiguous_table_container(self)
       payload = list(
-        "name" = .self$name,
+        "name" = self$name,
         "uploadMergeStrategy" = upload_merge_strategy,
         "isFileIndex" = is_file_index
       )
@@ -364,11 +326,11 @@ Table <- setRefClass(
       }
       res <- make_request(
         method = "POST",
-        path = str_interp("${.self$dataset$uri}/tables"),
+        path = str_interp("${self$dataset$uri}/tables"),
         payload = payload
       )
-      update_table_properties(.self, res)
-      .self
+      update_table_properties(self, res)
+      self
     },
 
     download = function(
@@ -380,10 +342,10 @@ Table <- setRefClass(
     ) {
       res <- make_request(
         method = "POST",
-        path = paste0(.self$uri, "/exports"),
+        path = paste0(self$uri, "/exports"),
         payload = list(format = format)
       )
-      export_job <- Export$new(table = .self, properties = res)
+      export_job <- Export$new(table = self, properties = res)
 
       res <- export_job$download_files(
         path = path,
@@ -401,14 +363,14 @@ rectify_ambiguous_table_container <- function(table) {
   if (!is.null(table$dataset) && !is.null(table$workflow)) {
     if (!is.null(table$properties[['container']])) {
       if (table$properties[['container']][['kind']] == 'dataset') {
-        table$workflow = NULL
+        table$workflow <- NULL
       } else {
-        table$dataset = NULL
+        table$dataset <- NULL
       }
     } else if (table$dataset$exists()) {
-      table$workflow = NULL
+      table$workflow <- NULL
     } else {
-      table$dataset = NULL
+      table$dataset <- NULL
     }
   }
 }
@@ -423,14 +385,10 @@ perform_table_parallel_file_upload <- function(
     oplan <- future::plan(future::multicore, workers = max_parallelization)
   } else {
     oplan <- future::plan(future::multisession, workers = max_parallelization)
-    # Helpful for testing in dev
-    # oplan <- future::plan(future::sequential)
   }
 
-  # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
   on.exit(future::plan(oplan), add = TRUE)
 
-  # Need to do this to ensure the methods are available within multisession
   local_perform_resumable_upload <- perform_resumable_upload
   local_perform_standard_upload <- perform_standard_upload
 
@@ -438,8 +396,6 @@ perform_table_parallel_file_upload <- function(
     file_obj <- batch_file[["file"]]
     temp_upload <- batch_file[["temp_upload"]]
 
-    # If the file specification has a "path" key, open a connection in binary mode;
-    # otherwise, use the provided data.
     if ("path" %in% names(file_obj)) {
       data <- base::file(file_obj$path, "rb")
       on.exit(close(data), add = TRUE)
@@ -447,7 +403,6 @@ perform_table_parallel_file_upload <- function(
       data <- file_obj$data
     }
 
-    # Depending on whether the upload is resumable, call the appropriate function.
     if (isTRUE(temp_upload[["resumable"]])) {
       local_perform_resumable_upload(
         data = data,
@@ -474,23 +429,21 @@ perform_table_parallel_file_upload <- function(
 
 
 update_table_properties <- function(instance, properties) {
-  instance$properties = properties
-  instance$qualified_reference = properties$qualifiedReference
-  instance$scoped_reference = properties$scopedReference
-  instance$name = properties$name
-  instance$uri = properties$uri
+  instance$properties <- properties
+  instance$qualified_reference <- properties$qualifiedReference
+  instance$scoped_reference <- properties$scopedReference
+  instance$name <- properties$name
+  instance$uri <- properties$uri
   rectify_ambiguous_table_container(instance)
 }
 
 map_file <- function(file) {
-  # If file is a character string, create a list with a 'path' key.
   if (is.character(file)) {
     file <- list(path = file)
   } else {
     file <- as.list(file)
   }
 
-  # If 'name' is not specified in the list
   if (!("name" %in% names(file))) {
     if ("data" %in% names(file)) {
       abort_redivis_value_error(
@@ -500,7 +453,6 @@ map_file <- function(file) {
     file$name <- basename(file$path)
   }
 
-  # If 'data' is provided, convert character data to raw and compute size.
   if ("data" %in% names(file)) {
     if (is.character(file$data)) {
       file$data <- charToRaw(file$data)

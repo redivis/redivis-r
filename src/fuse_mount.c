@@ -32,7 +32,7 @@ struct fuse_conn_info;
 struct fuse_config {
     int set_gid;        int gid;
     int set_uid;        int uid;
-    int set_mode;       int umask;
+    int set_mode;       unsigned int umask;
     double entry_timeout;
     double negative_timeout;
     double attr_timeout;
@@ -47,6 +47,7 @@ struct fuse_config {
     int ac_attr_timeout_set;
     double ac_attr_timeout;
     int nullpath_ok;
+    int show_help;
 };
 
 /* FUSE 2 and FUSE 3 have different fuse_file_info layouts.
@@ -277,6 +278,8 @@ static struct fuse *(*dl_fuse3_new)(struct fuse_args *, const void *,
 static int  (*dl_fuse3_mount)(struct fuse *, const char *);
 static void (*dl_fuse3_unmount)(struct fuse *);
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
 static int load_fuse_library(void)
 {
     if (fuse_lib_handle) return fuse_api_version;
@@ -363,6 +366,7 @@ resolve:
     }
     return fuse_api_version;
 }
+#pragma GCC diagnostic pop
 
 /* ------------------------------------------------------------------ */
 /*  Constants & data structures                                       */
@@ -396,7 +400,11 @@ typedef struct redivis_mount_ctx {
     dir_entry_t *dirs; size_t n_dirs;
     struct fuse *fuse; struct fuse_chan *chan;
     int api_version; pthread_t thread; int running;
-    char error_msg[512];  /* diagnostic message if FUSE fails to start */
+    char error_msg[512];
+    /* Condition variable to signal mount success/failure without polling */
+    pthread_mutex_t startup_mutex;
+    pthread_cond_t  startup_cond;
+    int startup_done;  /* 1 once the thread has set running or error_msg */
 } redivis_mount_ctx_t;
 
 typedef struct redivis_fh {
@@ -749,18 +757,33 @@ static void *fuse_thread_func(void *arg) {
         ctx->chan = dl_fuse2_mount(ctx->mount_point, &fargs);
         if (!ctx->chan) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "fuse2_mount(\"%s\") returned NULL", ctx->mount_point);
-            dl_fuse_opt_free_args(&fargs); ctx->running = 0; return NULL;
+                     "fuse_mount(\"%s\") returned NULL — check that the FUSE "
+                     "library is working correctly", ctx->mount_point);
+            dl_fuse_opt_free_args(&fargs);
+            pthread_mutex_lock(&ctx->startup_mutex);
+            ctx->running = 0; ctx->startup_done = 1;
+            pthread_cond_signal(&ctx->startup_cond);
+            pthread_mutex_unlock(&ctx->startup_mutex);
+            return NULL;
         }
         ctx->fuse = dl_fuse2_new(ctx->chan, &fargs, ops, ops_size, ctx);
         if (!ctx->fuse) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "fuse2_new() returned NULL");
+                     "fuse_new() returned NULL — the FUSE operations struct "
+                     "may be incompatible with the installed FUSE library");
             dl_fuse2_unmount(ctx->mount_point, ctx->chan);
             ctx->chan = NULL; dl_fuse_opt_free_args(&fargs);
-            ctx->running = 0; return NULL;
+            pthread_mutex_lock(&ctx->startup_mutex);
+            ctx->running = 0; ctx->startup_done = 1;
+            pthread_cond_signal(&ctx->startup_cond);
+            pthread_mutex_unlock(&ctx->startup_mutex);
+            return NULL;
         }
-        ctx->running = 1;
+        pthread_mutex_lock(&ctx->startup_mutex);
+        ctx->running = 1; ctx->startup_done = 1;
+        pthread_cond_signal(&ctx->startup_cond);
+        pthread_mutex_unlock(&ctx->startup_mutex);
+
         dl_fuse_loop(ctx->fuse);
         dl_fuse2_unmount(ctx->mount_point, ctx->chan);
         dl_fuse_destroy(ctx->fuse);
@@ -776,19 +799,34 @@ static void *fuse_thread_func(void *arg) {
         ctx->fuse = dl_fuse3_new(&fargs, ops, ops_size, ctx);
         if (!ctx->fuse) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "fuse3_new() returned NULL (api_version=%d, ops_size=%zu)",
-                     ctx->api_version, ops_size);
-            dl_fuse_opt_free_args(&fargs); ctx->running = 0; return NULL;
+                     "fuse_new() returned NULL (ops_size=%zu) — the FUSE "
+                     "operations struct may be incompatible with the installed "
+                     "FUSE library version", ops_size);
+            dl_fuse_opt_free_args(&fargs);
+            pthread_mutex_lock(&ctx->startup_mutex);
+            ctx->running = 0; ctx->startup_done = 1;
+            pthread_cond_signal(&ctx->startup_cond);
+            pthread_mutex_unlock(&ctx->startup_mutex);
+            return NULL;
         }
         int mount_rc = dl_fuse3_mount(ctx->fuse, ctx->mount_point);
         if (mount_rc != 0) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
-                     "fuse3_mount(\"%s\") failed with rc=%d, errno=%d (%s)",
+                     "fuse_mount(\"%s\") failed (rc=%d, errno=%d: %s)",
                      ctx->mount_point, mount_rc, errno, strerror(errno));
             dl_fuse_destroy(ctx->fuse); ctx->fuse = NULL;
-            dl_fuse_opt_free_args(&fargs); ctx->running = 0; return NULL;
+            dl_fuse_opt_free_args(&fargs);
+            pthread_mutex_lock(&ctx->startup_mutex);
+            ctx->running = 0; ctx->startup_done = 1;
+            pthread_cond_signal(&ctx->startup_cond);
+            pthread_mutex_unlock(&ctx->startup_mutex);
+            return NULL;
         }
-        ctx->running = 1;
+        pthread_mutex_lock(&ctx->startup_mutex);
+        ctx->running = 1; ctx->startup_done = 1;
+        pthread_cond_signal(&ctx->startup_cond);
+        pthread_mutex_unlock(&ctx->startup_mutex);
+
         dl_fuse_loop(ctx->fuse);
         dl_fuse3_unmount(ctx->fuse);
         dl_fuse_destroy(ctx->fuse);
@@ -812,6 +850,8 @@ static void fuse_mount_finalizer(SEXP ptr) {
             dl_fuse2_unmount(ctx->mount_point, ctx->chan);
         pthread_join(ctx->thread, NULL);
     }
+    pthread_mutex_destroy(&ctx->startup_mutex);
+    pthread_cond_destroy(&ctx->startup_cond);
     for (size_t i = 0; i < ctx->n_entries; i++) {
         pthread_mutex_destroy(&ctx->entries[i].mutex);
         free(ctx->entries[i].rel_path); free(ctx->entries[i].file_id);
@@ -921,44 +961,69 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
 
     mkdirs(mount_point);
 
+    pthread_mutex_init(&ctx->startup_mutex, NULL);
+    pthread_cond_init(&ctx->startup_cond, NULL);
+    ctx->startup_done = 0;
+
     int rc = pthread_create(&ctx->thread, NULL, fuse_thread_func, ctx);
     if (rc != 0) {
+        pthread_mutex_destroy(&ctx->startup_mutex);
+        pthread_cond_destroy(&ctx->startup_cond);
         fuse_mount_finalizer(R_MakeExternalPtr(ctx, R_NilValue, R_NilValue));
         Rf_error("fuse_mount: pthread_create failed (errno=%d)", rc);
     }
 
-    usleep(300000);
+    /* Wait for the FUSE thread to report success or failure */
+    pthread_mutex_lock(&ctx->startup_mutex);
+    while (!ctx->startup_done) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += 10;  /* 10 second timeout */
+        int wait_rc = pthread_cond_timedwait(&ctx->startup_cond,
+                                              &ctx->startup_mutex, &ts);
+        if (wait_rc != 0) break;  /* timeout or error */
+    }
+    pthread_mutex_unlock(&ctx->startup_mutex);
+
     if (!ctx->running) {
-        /* Collect diagnostic info before freeing ctx */
-        int dev_fuse_exists = (access("/dev/fuse", F_OK) == 0);
-        int dev_fuse_readable = (access("/dev/fuse", R_OK | W_OK) == 0);
         char detail[512];
         strncpy(detail, ctx->error_msg, sizeof(detail));
         detail[sizeof(detail) - 1] = '\0';
 
         pthread_join(ctx->thread, NULL);
+        pthread_mutex_destroy(&ctx->startup_mutex);
+        pthread_cond_destroy(&ctx->startup_cond);
         fuse_mount_finalizer(R_MakeExternalPtr(ctx, R_NilValue, R_NilValue));
+
+#ifdef __APPLE__
+        Rf_error("fuse_mount: FUSE failed to start.\n"
+                 "  - Ensure FUSE-T or macFUSE is installed and working\n"
+                 "  - Is the mount point '%s' accessible?\n"
+                 "  - Detail: %s",
+                 mount_point, detail);
+#else
+        int dev_fuse_exists = (access("/dev/fuse", F_OK) == 0);
+        int dev_fuse_readable = (access("/dev/fuse", R_OK | W_OK) == 0);
 
         if (!dev_fuse_exists) {
             Rf_error("fuse_mount: FUSE failed to start — /dev/fuse does not exist.\n"
-                     "  - Load the FUSE kernel module: sudo modprobe fuse\n"
-                     "  - In Docker, run with: --device /dev/fuse --cap-add SYS_ADMIN\n"
+                     "  - Load the kernel module: sudo modprobe fuse\n"
+                     "  - In Docker: run with --device /dev/fuse --cap-add SYS_ADMIN\n"
                      "  - Detail: %s", detail);
         } else if (!dev_fuse_readable) {
-            Rf_error("fuse_mount: FUSE failed to start — /dev/fuse is not accessible "
-                     "(permission denied).\n"
-                     "  - Check permissions: ls -la /dev/fuse\n"
-                     "  - Add your user to the 'fuse' group, or run as root.\n"
-                     "  - In Docker, run with: --device /dev/fuse --cap-add SYS_ADMIN\n"
+            Rf_error("fuse_mount: FUSE failed to start — /dev/fuse permission denied.\n"
+                     "  - Check: ls -la /dev/fuse\n"
+                     "  - Add your user to the 'fuse' group, or run as root\n"
+                     "  - In Docker: run with --device /dev/fuse --cap-add SYS_ADMIN\n"
                      "  - Detail: %s", detail);
         } else {
             Rf_error("fuse_mount: FUSE failed to start.\n"
-                     "  - /dev/fuse exists and is accessible\n"
-                     "  - Is the mount point '%s' on a filesystem that supports FUSE?\n"
-                     "  - Check 'dmesg | tail' for kernel-level FUSE errors.\n"
+                     "  - Is the mount point '%s' accessible?\n"
+                     "  - Check 'dmesg | tail' for kernel FUSE errors\n"
                      "  - Detail: %s",
                      mount_point, detail);
         }
+#endif
     }
 
     SEXP ptr = PROTECT(R_MakeExternalPtr(ctx, R_NilValue, R_NilValue));

@@ -1,22 +1,21 @@
 #' @include api_request.R util.R retryable_download.R
 #' @useDynLib redivis, .registration = TRUE
-File <- setRefClass(
+#' @importFrom R6 R6Class
+File <- R6::R6Class(
   "File",
-  fields = list(
-    id = "character",
-    path = "character",
-    name = "character",
-    size = "ANY",
-    hash = "ANY",
-    added_at = "ANY",
-    properties = "list",
-    table = "ANY",
-    query = "ANY",
-    directory = "ANY"
-  ),
-  methods = list(
+  public = list(
+    id = NULL,
+    path = NULL,
+    name = NULL,
+    size = NULL,
+    hash = NULL,
+    added_at = NULL,
+    properties = NULL,
+    table = NULL,
+    query = NULL,
+    directory = NULL,
+
     initialize = function(
-      ...,
       id = "",
       name = "",
       properties = list(),
@@ -24,37 +23,27 @@ File <- setRefClass(
       query = NULL,
       directory = NULL
     ) {
-      if (is.null(table) && is.null(query)) {
-        abort_redivis_value_error(
-          "All files must either belong to a table or query."
-        )
+      self$id <- id
+      self$path <- name
+      self$name <- basename(name)
+      self$table <- table
+      self$query <- query
+      self$directory <- directory
+      self$properties <- properties
+      self$size <- properties[["size"]]
+      added <- properties[["added_at"]]
+      if (!is.null(added)) {
+        self$added_at <- as.POSIXct(added, origin = "1970-01-01", tz = "UTC")
       }
-
-      id <<- id
-      path <<- name
-      name <<- basename(name)
-      table <<- table
-      query <<- query
-      directory <<- directory
-      properties <<- properties
-
-      size <<- properties[["size"]]
-      added_at <<- as.POSIXct(
-        properties[["added_at"]],
-        origin = "1970-01-01",
-        tz = "UTC"
-      )
-
       file_hash <- properties[["md5_hash"]]
       if (!is.null(file_hash)) {
-        hash <<- base64enc::base64decode(file_hash)
+        self$hash <- base64enc::base64decode(file_hash)
       }
     },
 
-    show = function() {
-      print(str_interp(
-        "<File ${.self$path}>"
-      ))
+    print = function(...) {
+      cat(str_interp("<File ${self$path}>\n"))
+      invisible(self)
     },
 
     get = function() {
@@ -62,7 +51,7 @@ File <- setRefClass(
         "This method is deprecated. Nothing to fetch; all file metadata already exists at file.properties",
         call. = FALSE
       )
-      .self
+      self
     },
 
     download = function(
@@ -71,7 +60,7 @@ File <- setRefClass(
       progress = TRUE
     ) {
       download_path <- path
-      is_dir = FALSE
+      is_dir <- FALSE
 
       if (is.null(download_path)) {
         download_path <- getwd()
@@ -82,23 +71,23 @@ File <- setRefClass(
           download_path,
           1,
           nchar(download_path) - 1
-        ) # remove trailing "/", as this screws up file.path()
+        )
       } else if (dir.exists(download_path)) {
         is_dir <- TRUE
       }
 
       if (is_dir) {
-        file_name <- file.path(download_path, .self$name)
+        file_name <- file.path(download_path, self$name)
       } else {
         file_name <- download_path
       }
 
-      args = list(
-        uri = str_interp("/rawFiles/${.self$id}"),
+      args <- list(
+        uri = str_interp("/rawFiles/${self$id}"),
         download_path = file_name,
         overwrite = overwrite,
-        size = .self$size,
-        md5_hash = .self$hash
+        size = self$size,
+        md5_hash = self$hash
       )
       if (progress) {
         progressr::with_progress(do.call(perform_retryable_download, args))
@@ -110,7 +99,7 @@ File <- setRefClass(
     read = function(as_text = FALSE, start_byte = 0, end_byte = NULL) {
       res <- make_request(
         method = "GET",
-        path = str_interp("/rawFiles/${.self$id}"),
+        path = str_interp("/rawFiles/${self$id}"),
         parse_response = FALSE,
         start_byte = start_byte,
         end_byte = end_byte
@@ -121,7 +110,7 @@ File <- setRefClass(
     stream = function(callback, start_byte = 0, end_byte = NULL) {
       make_request(
         method = "GET",
-        path = str_interp("/rawFiles/${.self$id}"),
+        path = str_interp("/rawFiles/${self$id}"),
         parse_response = FALSE,
         stream_callback = callback,
         start_byte = start_byte,
@@ -130,8 +119,6 @@ File <- setRefClass(
     },
 
     open = function(mode = "rb") {
-      # Normalize mode: "r" -> "r", "rb" -> "rb", "rt" -> "r"
-      # Only read modes are supported
       if (!mode %in% c("r", "rb", "rt")) {
         abort_redivis_error(
           str_interp(
@@ -139,23 +126,20 @@ File <- setRefClass(
           )
         )
       }
-      # Normalize: "rt" is just text mode "r"
       if (mode == "rt") {
         mode <- "r"
       }
-      file_size <- .self$size
-      file_id <- .self$id
-      file_path <- .self$path
+      file_size <- self$size
+      file_id <- self$id
+      file_path <- self$path
 
-      # Mutable state for the streaming HTTP connection
       env <- new.env(parent = emptyenv())
-      env$stream_con <- NULL # the httr2 streaming response object
-      env$buffer <- raw(0) # leftover bytes from last chunk
-      env$idle_timer <- NULL # handle from later::later()
+      env$stream_con <- NULL
+      env$buffer <- raw(0)
+      env$idle_timer <- NULL
       env$last_timer_reset <- NULL
-      env$IDLE_TIMEOUT_SECS <- 30 # close stream after 30s
+      env$IDLE_TIMEOUT_SECS <- 30
 
-      # Cancel any pending idle-timeout timer
       env$cancel_timer <- function() {
         if (!is.null(env$idle_timer)) {
           env$idle_timer()
@@ -163,7 +147,6 @@ File <- setRefClass(
         }
       }
 
-      # Schedule (or reschedule) the idle-timeout timer
       env$reset_timer <- function() {
         now <- proc.time()[["elapsed"]]
         if (
@@ -183,7 +166,6 @@ File <- setRefClass(
       }
 
       env$open_stream <- function(start_byte) {
-        # Close any existing stream first
         if (!is.null(env$stream_con)) {
           try(close(env$stream_con), silent = TRUE)
         }
@@ -199,20 +181,17 @@ File <- setRefClass(
       }
 
       env$read_stream <- function(n) {
-        # Read from the HTTP stream until we have n bytes (or EOF)
         tryCatch(
           {
             while (length(env$buffer) < n) {
               chunk <- httr2::resp_stream_raw(env$stream_con, kb = 64)
               if (length(chunk) == 0) {
                 break
-              } # EOF
+              }
               env$buffer <- c(env$buffer, chunk)
             }
           },
           error = function(e) {
-            # Connection broken (network drop, server timeout, etc.)
-            # Close the dead stream so the C layer will re-open on retry
             env$close_stream()
           }
         )
@@ -261,6 +240,6 @@ File <- setRefClass(
 #' @param ... Ignored (present for compatibility with the generic)
 #' @return A readable connection backed by HTTP range requests
 #' @export
-setMethod("open", "File", function(con, mode = "rb", ...) {
+open.File <- function(con, mode = "rb", ...) {
   con$open(mode)
-})
+}
