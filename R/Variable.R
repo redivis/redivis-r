@@ -42,17 +42,9 @@ Variable <- setRefClass(
       )
     },
     show = function() {
-      if (!is.null(.self$table)) {
-        print(str_interp(
-          "<Variable `${.self$table$qualified_reference}`.${.self$name}>"
-        ))
-      } else if (!is.null(.self$upload)) {
-        print(str_interp(
-          "<Variable `${.self$table$qualified_reference}.${.self$upload$name}`.${.self$name}>"
-        ))
-      } else {
-        print(str_interp("<Variable `${.self$query$uri}`.${.self$name}>"))
-      }
+      print(str_interp(
+        "<Variable ${.self$name} (${.self$properties$type})>"
+      ))
     },
     get = function(wait_for_statistics = FALSE) {
       if (wait_for_statistics) {

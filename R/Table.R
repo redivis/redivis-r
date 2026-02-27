@@ -130,6 +130,17 @@ Table <- setRefClass(
       .self
     },
 
+    update_variables = function(variables) {
+      make_request(
+        method = "PATCH",
+        path = str_interp("${.self$uri}/variables"),
+        payload = list(
+          "variables" = variables
+        ),
+      )
+      .self
+    },
+
     delete = function() {
       make_request(method = "DELETE", path = .self$uri)
       invisible(NULL)

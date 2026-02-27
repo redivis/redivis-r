@@ -1,11 +1,14 @@
 /*
- * fuse_mount.c — FUSE3 read-only filesystem for Redivis Directory objects
+ * fuse_mount.c — FUSE read-only filesystem for Redivis Directory objects
  *
  * Exposes a directory tree of Redivis files as a local FUSE mount.
  * File contents are lazily fetched from Redivis via HTTP Range requests
  * on a per-block basis and cached on disk. Once a block is fetched it is
  * never re-downloaded. The FUSE event loop runs on a background pthread
  * so that R remains interactive.
+ *
+ * The directory tree structure is pre-computed in R and passed to C as
+ * flat vectors, avoiding the need to rebuild it in C.
  *
  * If HAVE_FUSE is not defined at compile time, this file provides stub
  * implementations of C_fuse_mount / C_fuse_unmount that error out with
@@ -22,6 +25,9 @@
 
 SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
                   SEXP s_rel_paths, SEXP s_sizes, SEXP s_file_ids,
+                  SEXP s_added_ats,
+                  SEXP s_dir_paths, SEXP s_dir_child_names,
+                  SEXP s_dir_child_is_dir,
                   SEXP s_api_base_url, SEXP s_auth_token)
 {
     Rf_error("FUSE support was not available when the package was compiled. "
@@ -38,15 +44,6 @@ SEXP C_fuse_unmount(SEXP ext_ptr)
 
 #else /* HAVE_FUSE */
 
-/*
- * FUSE API selection:
- *   - HAVE_FUSE3 is defined by Makevars when libfuse3 or FUSE-T is detected
- *     via `pkg-config fuse3`. This provides the FUSE 3.x API.
- *   - Otherwise we fall back to the FUSE 2.x API (macFUSE on macOS).
- *
- * FUSE-T (macOS) provides a native FUSE 3 API without a kernel extension,
- * so it uses the same code path as Linux libfuse3.
- */
 #ifdef HAVE_FUSE3
   #define FUSE_USE_VERSION 31
   #include <fuse3/fuse.h>
@@ -71,7 +68,6 @@ SEXP C_fuse_unmount(SEXP ext_ptr)
 /*  Constants                                                         */
 /* ------------------------------------------------------------------ */
 
-/* Block size for sparse cache: 4 MiB */
 #define BLOCK_SIZE (4 * 1024 * 1024)
 
 /* ------------------------------------------------------------------ */
@@ -79,20 +75,38 @@ SEXP C_fuse_unmount(SEXP ext_ptr)
 /* ------------------------------------------------------------------ */
 
 typedef struct redivis_file_entry {
-    char   *rel_path;       /* e.g. "sub/file.h5"                     */
-    size_t  size;           /* file size in bytes                      */
-    char   *file_id;        /* Redivis file id for API calls           */
-    char   *cache_path;     /* absolute path to on-disk cache file     */
-    char   *bitmap_path;    /* absolute path to block bitmap file      */
-    int     fully_cached;   /* 1 once every block has been downloaded  */
-
-    /* Block bitmap: 1 bit per block, 1 = cached */
+    char   *rel_path;
+    size_t  size;
+    char   *file_id;
+    char   *cache_path;
+    char   *bitmap_path;
+    int     fully_cached;
     unsigned char *bitmap;
     size_t  n_blocks;
-
-    /* Mutex for per-file download serialisation */
+    time_t  added_at;
     pthread_mutex_t mutex;
 } redivis_file_entry_t;
+
+/* Hash table node */
+typedef struct hash_node {
+    const char       *key;
+    void             *value;
+    struct hash_node *next;
+} hash_node_t;
+
+/* Dynamically sized hash table */
+typedef struct hash_table {
+    hash_node_t **buckets;
+    size_t        size;
+} hash_table_t;
+
+/* Pre-computed directory entry (built in R, passed to C) */
+typedef struct dir_entry {
+    char   *path;           /* relative path, "" for root */
+    char  **child_names;    /* immediate child names */
+    int    *child_is_dir;   /* 1 = directory, 0 = file */
+    size_t  n_children;
+} dir_entry_t;
 
 typedef struct redivis_mount_ctx {
     char                  *mount_point;
@@ -101,6 +115,15 @@ typedef struct redivis_mount_ctx {
     char                  *auth_token;
     redivis_file_entry_t  *entries;
     size_t                 n_entries;
+
+    /* Hash table: rel_path -> redivis_file_entry_t* */
+    hash_table_t           file_ht;
+
+    /* Hash table: dir_path -> dir_entry_t* */
+    hash_table_t           dir_ht;
+    dir_entry_t           *dirs;
+    size_t                 n_dirs;
+
     struct fuse           *fuse;
 #if REDIVIS_FUSE2
     struct fuse_chan       *chan;
@@ -109,11 +132,85 @@ typedef struct redivis_mount_ctx {
     int                    running;
 } redivis_mount_ctx_t;
 
-/* Per-open-file handle: keeps an fd to the cache file */
 typedef struct redivis_fh {
     redivis_file_entry_t *entry;
     int                   fd;
 } redivis_fh_t;
+
+/* ------------------------------------------------------------------ */
+/*  Hash table helpers                                                */
+/* ------------------------------------------------------------------ */
+
+static unsigned int hash_str(const char *s)
+{
+    unsigned int h = 5381;
+    while (*s) {
+        h = ((h << 5) + h) ^ (unsigned char)*s++;
+    }
+    return h;
+}
+
+static int is_prime(size_t n)
+{
+    if (n < 2) return 0;
+    if (n < 4) return 1;
+    if (n % 2 == 0 || n % 3 == 0) return 0;
+    for (size_t i = 5; i * i <= n; i += 6) {
+        if (n % i == 0 || n % (i + 2) == 0) return 0;
+    }
+    return 1;
+}
+
+static size_t next_prime(size_t n)
+{
+    if (n <= 2) return 2;
+    if (n % 2 == 0) n++;
+    while (!is_prime(n)) n += 2;
+    return n;
+}
+
+static void ht_init(hash_table_t *ht, size_t n_entries)
+{
+    /* Target load factor ~0.5 for fast lookups */
+    ht->size = next_prime(n_entries < 16 ? 31 : n_entries * 2);
+    ht->buckets = calloc(ht->size, sizeof(hash_node_t *));
+}
+
+static void ht_insert(hash_table_t *ht, const char *key, void *value)
+{
+    unsigned int idx = hash_str(key) % ht->size;
+    hash_node_t *node = malloc(sizeof(hash_node_t));
+    node->key   = key;
+    node->value = value;
+    node->next  = ht->buckets[idx];
+    ht->buckets[idx] = node;
+}
+
+static void *ht_lookup(hash_table_t *ht, const char *key)
+{
+    unsigned int idx = hash_str(key) % ht->size;
+    for (hash_node_t *n = ht->buckets[idx]; n; n = n->next) {
+        if (strcmp(n->key, key) == 0)
+            return n->value;
+    }
+    return NULL;
+}
+
+static void ht_free(hash_table_t *ht)
+{
+    if (!ht->buckets) return;
+    for (size_t i = 0; i < ht->size; i++) {
+        hash_node_t *n = ht->buckets[i];
+        while (n) {
+            hash_node_t *next = n->next;
+            free(n);
+            n = next;
+        }
+    }
+    free(ht->buckets);
+    ht->buckets = NULL;
+    ht->size = 0;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Bitmap helpers                                                    */
@@ -138,7 +235,6 @@ static int all_blocks_cached(const unsigned char *bm, size_t n_blocks) {
     return 1;
 }
 
-/* Persist bitmap to disk so cache survives across sessions */
 static void bitmap_save(redivis_file_entry_t *entry) {
     FILE *fp = fopen(entry->bitmap_path, "wb");
     if (fp) {
@@ -147,12 +243,10 @@ static void bitmap_save(redivis_file_entry_t *entry) {
     }
 }
 
-/* Load bitmap from disk; returns 1 if loaded, 0 otherwise */
 static int bitmap_load(redivis_file_entry_t *entry) {
     size_t nb = bitmap_bytes(entry->n_blocks);
     FILE *fp = fopen(entry->bitmap_path, "rb");
     if (!fp) return 0;
-
     size_t rd = fread(entry->bitmap, 1, nb, fp);
     fclose(fp);
     if (rd != nb) {
@@ -171,28 +265,9 @@ static redivis_file_entry_t *find_entry(redivis_mount_ctx_t *ctx,
 {
     const char *rel = path;
     while (*rel == '/') rel++;
-
-    for (size_t i = 0; i < ctx->n_entries; i++) {
-        if (strcmp(ctx->entries[i].rel_path, rel) == 0)
-            return &ctx->entries[i];
-    }
-    return NULL;
+    return (redivis_file_entry_t *)ht_lookup(&ctx->file_ht, rel);
 }
 
-static int is_directory(redivis_mount_ctx_t *ctx, const char *prefix)
-{
-    size_t plen = strlen(prefix);
-    if (plen == 0) return 1;
-
-    for (size_t i = 0; i < ctx->n_entries; i++) {
-        const char *rp = ctx->entries[i].rel_path;
-        if (strncmp(rp, prefix, plen) == 0 && rp[plen] == '/')
-            return 1;
-    }
-    return 0;
-}
-
-/* Recursive mkdir -p */
 static void mkdirs(const char *dir)
 {
     char tmp[4096];
@@ -339,7 +414,7 @@ static void *fuse_init_cb(struct fuse_conn_info *conn,
     cfg->auto_cache   = 1;
     cfg->entry_timeout    = 86400;
     cfg->attr_timeout     = 86400;
-    cfg->negative_timeout = 0;
+    cfg->negative_timeout = 86400;
     return fuse_get_context()->private_data;
 }
 
@@ -362,15 +437,20 @@ static int fuse_getattr_cb(const char *path, struct stat *stbuf,
         return 0;
     }
 
+    /* O(1) file lookup */
     redivis_file_entry_t *entry = find_entry(ctx, path);
     if (entry) {
         stbuf->st_mode  = S_IFREG | 0444;
         stbuf->st_nlink = 1;
         stbuf->st_size  = (off_t)entry->size;
+        stbuf->st_mtime = entry->added_at;
+        stbuf->st_atime = entry->added_at;
+        stbuf->st_ctime = entry->added_at;
         return 0;
     }
 
-    if (is_directory(ctx, rel)) {
+    /* O(1) directory lookup */
+    if (ht_lookup(&ctx->dir_ht, rel)) {
         stbuf->st_mode  = S_IFDIR | 0555;
         stbuf->st_nlink = 2;
         return 0;
@@ -390,51 +470,17 @@ static int fuse_readdir_cb(const char *path, void *buf,
 
     const char *rel = path;
     while (*rel == '/') rel++;
-    size_t plen = strlen(rel);
+
+    dir_entry_t *d = ht_lookup(&ctx->dir_ht, rel);
+    if (!d) return -ENOENT;
 
     filler(buf, ".",  NULL, 0);
     filler(buf, "..", NULL, 0);
 
-    char **added = NULL;
-    size_t n_added = 0;
-
-    for (size_t i = 0; i < ctx->n_entries; i++) {
-        const char *rp = ctx->entries[i].rel_path;
-
-        if (plen > 0) {
-            if (strncmp(rp, rel, plen) != 0 || rp[plen] != '/') continue;
-            rp += plen + 1;
-        }
-
-        const char *slash = strchr(rp, '/');
-        size_t name_len = slash ? (size_t)(slash - rp) : strlen(rp);
-        if (name_len == 0) continue;
-
-        int found = 0;
-        for (size_t j = 0; j < n_added; j++) {
-            if (strlen(added[j]) == name_len &&
-                strncmp(added[j], rp, name_len) == 0) {
-                found = 1;
-                break;
-            }
-        }
-
-        if (!found) {
-            char name[1024];
-            if (name_len >= sizeof(name)) name_len = sizeof(name) - 1;
-            memcpy(name, rp, name_len);
-            name[name_len] = '\0';
-
-            filler(buf, name, NULL, 0);
-
-            added = realloc(added, (n_added + 1) * sizeof(char *));
-            added[n_added] = strdup(name);
-            n_added++;
-        }
+    for (size_t i = 0; i < d->n_children; i++) {
+        filler(buf, d->child_names[i], NULL, 0);
     }
 
-    for (size_t j = 0; j < n_added; j++) free(added[j]);
-    free(added);
     return 0;
 }
 
@@ -450,51 +496,16 @@ static int fuse_readdir_cb(const char *path, void *buf,
 
     const char *rel = path;
     while (*rel == '/') rel++;
-    size_t plen = strlen(rel);
+
+    dir_entry_t *d = ht_lookup(&ctx->dir_ht, rel);
+    if (!d) return -ENOENT;
 
     filler(buf, ".",  NULL, 0, 0);
     filler(buf, "..", NULL, 0, 0);
 
-    char **added = NULL;
-    size_t n_added = 0;
-
-    for (size_t i = 0; i < ctx->n_entries; i++) {
-        const char *rp = ctx->entries[i].rel_path;
-
-        if (plen > 0) {
-            if (strncmp(rp, rel, plen) != 0 || rp[plen] != '/') continue;
-            rp += plen + 1;
-        }
-
-        const char *slash = strchr(rp, '/');
-        size_t name_len = slash ? (size_t)(slash - rp) : strlen(rp);
-        if (name_len == 0) continue;
-
-        int found = 0;
-        for (size_t j = 0; j < n_added; j++) {
-            if (strlen(added[j]) == name_len &&
-                strncmp(added[j], rp, name_len) == 0) {
-                found = 1;
-                break;
-            }
-        }
-
-        if (!found) {
-            char name[1024];
-            if (name_len >= sizeof(name)) name_len = sizeof(name) - 1;
-            memcpy(name, rp, name_len);
-            name[name_len] = '\0';
-
-            filler(buf, name, NULL, 0, 0);
-
-            added = realloc(added, (n_added + 1) * sizeof(char *));
-            added[n_added] = strdup(name);
-            n_added++;
-        }
+    for (size_t i = 0; i < d->n_children; i++) {
+        filler(buf, d->child_names[i], NULL, 0, 0);
     }
-
-    for (size_t j = 0; j < n_added; j++) free(added[j]);
-    free(added);
     return 0;
 }
 
@@ -586,7 +597,7 @@ static void *fuse_thread_func(void *arg)
     struct fuse_args fargs = FUSE_ARGS_INIT(0, NULL);
     fuse_opt_add_arg(&fargs, "redivis");
 #if !REDIVIS_FUSE2
-    fuse_opt_add_arg(&fargs, "-f");          /* foreground — FUSE 2 / FUSE-T doesn't need this */
+    fuse_opt_add_arg(&fargs, "-f");
 #endif
 
 #if REDIVIS_FUSE2
@@ -612,8 +623,6 @@ static void *fuse_thread_func(void *arg)
 
     fuse_unmount(ctx->mount_point, ctx->chan);
     fuse_destroy(ctx->fuse);
-
-    /* Remove the empty mount point directory */
     rmdir(ctx->mount_point);
 
     ctx->fuse = NULL;
@@ -641,12 +650,10 @@ static void *fuse_thread_func(void *arg)
     }
 
     ctx->running = 1;
-    fuse_loop(ctx->fuse);              /* blocks until unmount */
+    fuse_loop(ctx->fuse);
 
     fuse_unmount(ctx->fuse);
     fuse_destroy(ctx->fuse);
-
-    /* Remove the empty mount point directory */
     rmdir(ctx->mount_point);
 
     ctx->fuse = NULL;
@@ -685,6 +692,19 @@ static void fuse_mount_finalizer(SEXP ptr)
         free(ctx->entries[i].bitmap);
     }
     free(ctx->entries);
+
+    for (size_t i = 0; i < ctx->n_dirs; i++) {
+        free(ctx->dirs[i].path);
+        for (size_t j = 0; j < ctx->dirs[i].n_children; j++) {
+            free(ctx->dirs[i].child_names[j]);
+        }
+        free(ctx->dirs[i].child_names);
+        free(ctx->dirs[i].child_is_dir);
+    }
+    free(ctx->dirs);
+    ht_free(&ctx->dir_ht);
+    ht_free(&ctx->file_ht);
+
     free(ctx->mount_point);
     free(ctx->cache_dir);
     free(ctx->api_base_url);
@@ -694,8 +714,16 @@ static void fuse_mount_finalizer(SEXP ptr)
     R_ClearExternalPtr(ptr);
 }
 
+/*
+ * C_fuse_mount(mount_point, cache_dir, rel_paths, sizes, file_ids,
+ *              added_ats, dir_paths, dir_child_names, dir_child_is_dir,
+ *              api_base_url, auth_token)
+ */
 SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
                   SEXP s_rel_paths, SEXP s_sizes, SEXP s_file_ids,
+                  SEXP s_added_ats,
+                  SEXP s_dir_paths, SEXP s_dir_child_names,
+                  SEXP s_dir_child_is_dir,
                   SEXP s_api_base_url, SEXP s_auth_token)
 {
     const char *mount_point  = CHAR(STRING_ELT(s_mount_point, 0));
@@ -703,6 +731,7 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
     const char *api_base_url = CHAR(STRING_ELT(s_api_base_url, 0));
     const char *auth_token   = CHAR(STRING_ELT(s_auth_token, 0));
     R_xlen_t n = XLENGTH(s_rel_paths);
+    R_xlen_t n_dirs = XLENGTH(s_dir_paths);
 
     redivis_mount_ctx_t *ctx = calloc(1, sizeof(redivis_mount_ctx_t));
     if (!ctx) Rf_error("fuse_mount: allocation failed");
@@ -713,6 +742,8 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
     ctx->auth_token   = strdup(auth_token);
     ctx->n_entries    = (size_t)n;
     ctx->entries      = calloc((size_t)n, sizeof(redivis_file_entry_t));
+    ht_init(&ctx->file_ht, (size_t)n);
+    ht_init(&ctx->dir_ht, (size_t)n_dirs);
 
     if (!ctx->entries) {
         free(ctx->mount_point); free(ctx->cache_dir);
@@ -721,6 +752,7 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
         Rf_error("fuse_mount: allocation failed");
     }
 
+    /* Populate file entries and file hash table */
     for (R_xlen_t i = 0; i < n; i++) {
         const char *rp = CHAR(STRING_ELT(s_rel_paths, i));
         const char *fid = CHAR(STRING_ELT(s_file_ids, i));
@@ -732,6 +764,7 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
         entry->file_id    = strdup(fid);
         entry->size       = (size_t)fsize;
         entry->fully_cached = 0;
+        entry->added_at   = (time_t)REAL(s_added_ats)[i];
 
         char cp[4096];
         snprintf(cp, sizeof(cp), "%s/%s", cache_dir, rp);
@@ -747,6 +780,8 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
 
         pthread_mutex_init(&entry->mutex, NULL);
 
+        ht_insert(&ctx->file_ht, entry->rel_path, entry);
+
         if (bitmap_load(entry)) {
             struct stat st;
             if (stat(entry->cache_path, &st) == 0 &&
@@ -760,22 +795,35 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
         }
     }
 
+    /* Populate directory entries from R-provided tree */
+    ctx->n_dirs = (size_t)n_dirs;
+    ctx->dirs   = calloc((size_t)n_dirs, sizeof(dir_entry_t));
+
+    for (R_xlen_t i = 0; i < n_dirs; i++) {
+        dir_entry_t *d = &ctx->dirs[i];
+        d->path = strdup(CHAR(STRING_ELT(s_dir_paths, i)));
+
+        SEXP child_names_vec = VECTOR_ELT(s_dir_child_names, i);
+        SEXP child_is_dir_vec = VECTOR_ELT(s_dir_child_is_dir, i);
+        R_xlen_t nc = XLENGTH(child_names_vec);
+
+        d->n_children  = (size_t)nc;
+        d->child_names = calloc((size_t)nc, sizeof(char *));
+        d->child_is_dir = calloc((size_t)nc, sizeof(int));
+
+        for (R_xlen_t j = 0; j < nc; j++) {
+            d->child_names[j] = strdup(CHAR(STRING_ELT(child_names_vec, j)));
+            d->child_is_dir[j] = LOGICAL(child_is_dir_vec)[j];
+        }
+
+        ht_insert(&ctx->dir_ht, d->path, d);
+    }
+
     mkdirs(mount_point);
 
     int rc = pthread_create(&ctx->thread, NULL, fuse_thread_func, ctx);
     if (rc != 0) {
-        for (size_t i = 0; i < ctx->n_entries; i++) {
-            pthread_mutex_destroy(&ctx->entries[i].mutex);
-            free(ctx->entries[i].rel_path);
-            free(ctx->entries[i].file_id);
-            free(ctx->entries[i].cache_path);
-            free(ctx->entries[i].bitmap_path);
-            free(ctx->entries[i].bitmap);
-        }
-        free(ctx->entries);
-        free(ctx->mount_point); free(ctx->cache_dir);
-        free(ctx->api_base_url); free(ctx->auth_token);
-        free(ctx);
+        fuse_mount_finalizer(R_MakeExternalPtr(ctx, R_NilValue, R_NilValue));
         Rf_error("fuse_mount: pthread_create failed (errno=%d)", rc);
     }
 
@@ -783,20 +831,10 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
 
     if (!ctx->running) {
         pthread_join(ctx->thread, NULL);
-        for (size_t i = 0; i < ctx->n_entries; i++) {
-            pthread_mutex_destroy(&ctx->entries[i].mutex);
-            free(ctx->entries[i].rel_path);
-            free(ctx->entries[i].file_id);
-            free(ctx->entries[i].cache_path);
-            free(ctx->entries[i].bitmap_path);
-            free(ctx->entries[i].bitmap);
-        }
-        free(ctx->entries);
-        free(ctx->mount_point); free(ctx->cache_dir);
-        free(ctx->api_base_url); free(ctx->auth_token);
-        free(ctx);
+        fuse_mount_finalizer(R_MakeExternalPtr(ctx, R_NilValue, R_NilValue));
         Rf_error("fuse_mount: FUSE failed to start. "
-                 "Is libfuse3 installed? Is the mount point accessible?");
+                 "Is libfuse3 / FUSE-T / macFUSE installed? "
+                 "Is the mount point accessible?");
     }
 
     SEXP ptr = PROTECT(R_MakeExternalPtr(ctx, R_NilValue, R_NilValue));

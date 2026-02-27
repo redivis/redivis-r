@@ -27,7 +27,9 @@ Upload <- setRefClass(
       )
     },
     show = function() {
-      print(str_interp("<Upload ${.self$uri}>"))
+      print(str_interp(
+        "<Upload ${.self$table.qualified_reference}.${.self$name}>"
+      ))
     },
     get = function() {
       if (.self$name == "" && is.null(.self$properties$uri)) {

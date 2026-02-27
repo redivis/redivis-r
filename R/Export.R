@@ -7,7 +7,9 @@ Export <- setRefClass(
       callSuper(..., uri = properties$uri, properties = properties)
     },
     show = function() {
-      print(str_interp("<Export `${.self$uri}` on ${.self$table}>"))
+      print(str_interp(
+        "<Export `${.self$uri}` on ${.self$table$qualified_reference}>"
+      ))
     },
 
     get = function(wait_for_statistics = FALSE) {

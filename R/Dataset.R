@@ -298,6 +298,17 @@ Dataset <- setRefClass(
       )
       update_dataset_properties(.self, res)
       .self
+    },
+
+    update_variables = function(variables) {
+      make_request(
+        method = "PATCH",
+        path = str_interp("${.self$uri}/variables"),
+        payload = list(
+          "variables" = variables
+        ),
+      )
+      .self
     }
   )
 )

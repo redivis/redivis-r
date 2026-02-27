@@ -100,8 +100,6 @@ Directory <- setRefClass(
       }
       cache_dir <- normalizePath(cache_dir, mustWork = FALSE)
       dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
-      # Create parent directories, then the mount point itself.
-      # FUSE requires the mount point directory to exist.
       parent_dir <- dirname(mount_path)
       dir.create(parent_dir, recursive = TRUE, showWarnings = FALSE)
       dir.create(mount_path, showWarnings = FALSE)
@@ -144,10 +142,64 @@ Directory <- setRefClass(
         character(1)
       )
 
+      added_ats <- vapply(
+        files,
+        function(f) {
+          if (is.null(f$added_at) || length(f$added_at) == 0 || is.na(f$added_at)) {
+            0
+          } else {
+            as.double(f$added_at)
+          }
+        },
+        double(1)
+      )
+
+      # Build directory tree from the R Directory tree (already computed).
+      # Walk the tree and collect each dir's immediate children.
+      # Use an environment to accumulate results, avoiding <<- which
+      # triggers spurious warnings from R5 class field checking.
+      tree_env <- new.env(parent = emptyenv())
+      tree_env$dir_paths <- character(0)
+      tree_env$dir_child_names <- base::list()
+      tree_env$dir_child_is_dir <- base::list()
+
+      walk_dir <- function(node, rel_prefix, env) {
+        child_names_vec <- character(0)
+        child_is_dir_vec <- logical(0)
+
+        for (child_name in names(node$children)) {
+          child <- node$children[[child_name]]
+          child_names_vec <- c(child_names_vec, child_name)
+          child_is_dir_vec <- c(child_is_dir_vec, inherits(child, "Directory"))
+        }
+
+        idx <- length(env$dir_paths) + 1L
+        env$dir_paths[[idx]] <- rel_prefix
+        env$dir_child_names[[idx]] <- child_names_vec
+        env$dir_child_is_dir[[idx]] <- child_is_dir_vec
+
+        # Recurse into subdirectories
+        for (child_name in names(node$children)) {
+          child <- node$children[[child_name]]
+          if (inherits(child, "Directory")) {
+            child_rel <- if (nchar(rel_prefix) == 0) {
+              child_name
+            } else {
+              paste0(rel_prefix, "/", child_name)
+            }
+            walk_dir(child, child_rel, env)
+          }
+        }
+      }
+
+      walk_dir(.self, "", tree_env)
+
+      dir_paths <- tree_env$dir_paths
+      dir_child_names <- tree_env$dir_child_names
+      dir_child_is_dir <- tree_env$dir_child_is_dir
+
       # Get auth info
       api_base_url <- generate_api_url("")
-      # Strip the trailing path portion to get just the base
-      # generate_api_url("") gives e.g. "https://redivis.com/api/v1"
       auth_token <- get_auth_token()
 
       .mount_ptr <<- .Call(
@@ -157,6 +209,10 @@ Directory <- setRefClass(
         as.character(rel_paths),
         as.double(sizes),
         as.character(file_ids),
+        as.double(added_ats),
+        as.character(dir_paths),
+        dir_child_names,
+        dir_child_is_dir,
         as.character(api_base_url),
         as.character(auth_token)
       )

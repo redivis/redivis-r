@@ -191,6 +191,17 @@ Workflow <- setRefClass(
           properties = datasource_properties
         )
       })
+    },
+
+    update_variables = function(variables) {
+      make_request(
+        method = "PATCH",
+        path = str_interp("${.self$uri}/variables"),
+        payload = list(
+          "variables" = variables
+        ),
+      )
+      .self
     }
   )
 )

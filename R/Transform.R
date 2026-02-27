@@ -60,7 +60,7 @@ Transform <- setRefClass(
       )
     },
     show = function() {
-      print(str_interp("<Transform `${.self$qualified_reference}`>"))
+      print(str_interp("<Transform ${.self$qualified_reference}>"))
     },
 
     exists = function() {

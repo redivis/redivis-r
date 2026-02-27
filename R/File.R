@@ -8,6 +8,7 @@ File <- setRefClass(
     name = "character",
     size = "ANY",
     hash = "ANY",
+    added_at = "ANY",
     properties = "list",
     table = "ANY",
     query = "ANY",
@@ -38,6 +39,12 @@ File <- setRefClass(
       properties <<- properties
 
       size <<- properties[["size"]]
+      added_at <<- as.POSIXct(
+        properties[["added_at"]],
+        origin = "1970-01-01",
+        tz = "UTC"
+      )
+
       file_hash <- properties[["md5_hash"]]
       if (!is.null(file_hash)) {
         hash <<- base64enc::base64decode(file_hash)
