@@ -49,9 +49,15 @@ struct fuse_config {
     int nullpath_ok;
 };
 
-struct fuse_file_info {
+/* FUSE 2 and FUSE 3 have different fuse_file_info layouts.
+ * FUSE 2 has an extra `fh_old` (unsigned long) and `writepage` (int) field
+ * before the bitfields. FUSE 3 removed fh_old and made writepage a bitfield.
+ * Since FUSE passes this struct into our callbacks, we must match the
+ * library's layout exactly. We define both and use accessors at runtime. */
+
+struct fuse_file_info_v2 {
     int           flags;
-    unsigned long fh_old;       /* FUSE 2: old-style file handle (deprecated) */
+    unsigned long fh_old;
     int           writepage;
     unsigned int  direct_io : 1;
     unsigned int  keep_cache : 1;
@@ -64,6 +70,58 @@ struct fuse_file_info {
     uint64_t      lock_owner;
     uint32_t      poll_events;
 };
+
+struct fuse_file_info_v3 {
+    int           flags;
+    unsigned int  writepage : 1;
+    unsigned int  direct_io : 1;
+    unsigned int  keep_cache : 1;
+    unsigned int  flush : 1;
+    unsigned int  nonseekable : 1;
+    unsigned int  flock_release : 1;
+    unsigned int  cache_readdir : 1;
+    unsigned int  padding : 25;
+    unsigned int  padding2 : 32;
+    uint64_t      fh;
+    uint64_t      lock_owner;
+    uint32_t      poll_events;
+};
+
+/* Forward-declare fuse_api_version so inline accessors can reference it.
+ * The actual initialization (= 0) happens in the dlopen section below. */
+static int fuse_api_version = 0;
+
+/* Runtime accessors for fuse_file_info fields. */
+
+static inline uint64_t fi_get_fh(void *fi) {
+    if (fuse_api_version == 3)
+        return ((struct fuse_file_info_v3 *)fi)->fh;
+    else
+        return ((struct fuse_file_info_v2 *)fi)->fh;
+}
+
+static inline void fi_set_fh(void *fi, uint64_t val) {
+    if (fuse_api_version == 3)
+        ((struct fuse_file_info_v3 *)fi)->fh = val;
+    else
+        ((struct fuse_file_info_v2 *)fi)->fh = val;
+}
+
+static inline void fi_set_keep_cache(void *fi, unsigned int val) {
+    if (fuse_api_version == 3)
+        ((struct fuse_file_info_v3 *)fi)->keep_cache = val;
+    else
+        ((struct fuse_file_info_v2 *)fi)->keep_cache = val;
+}
+
+static inline int fi_get_flags(void *fi) {
+    /* flags is at offset 0 in both versions */
+    return ((struct fuse_file_info_v2 *)fi)->flags;
+}
+
+/* Use void* for fuse_file_info in all callback signatures,
+ * since the actual struct layout depends on the API version. */
+typedef void fuse_file_info_t;
 
 typedef int (*fuse_fill_dir_v2_t)(void *buf, const char *name,
                                   const struct stat *stbuf, off_t off);
@@ -96,49 +154,49 @@ struct fuse_operations_v2 {
     int (*chown)(const char *, uid_t, gid_t);
     int (*truncate)(const char *, off_t);
     void *__deprecated2;
-    int (*open)(const char *, struct fuse_file_info *);
-    int (*read)(const char *, char *, size_t, off_t, struct fuse_file_info *);
-    int (*write)(const char *, const char *, size_t, off_t, struct fuse_file_info *);
+    int (*open)(const char *, fuse_file_info_t *);
+    int (*read)(const char *, char *, size_t, off_t, fuse_file_info_t *);
+    int (*write)(const char *, const char *, size_t, off_t, fuse_file_info_t *);
     int (*statfs)(const char *, void *);
-    int (*flush)(const char *, struct fuse_file_info *);
-    int (*release)(const char *, struct fuse_file_info *);
-    int (*fsync)(const char *, int, struct fuse_file_info *);
+    int (*flush)(const char *, fuse_file_info_t *);
+    int (*release)(const char *, fuse_file_info_t *);
+    int (*fsync)(const char *, int, fuse_file_info_t *);
     int (*setxattr)(const char *, const char *, const char *, size_t, int);
     int (*getxattr)(const char *, const char *, char *, size_t);
     int (*listxattr)(const char *, char *, size_t);
     int (*removexattr)(const char *, const char *);
-    int (*opendir)(const char *, struct fuse_file_info *);
+    int (*opendir)(const char *, fuse_file_info_t *);
     int (*readdir)(const char *, void *, fuse_fill_dir_v2_t, off_t,
-                   struct fuse_file_info *);
-    int (*releasedir)(const char *, struct fuse_file_info *);
-    int (*fsyncdir)(const char *, int, struct fuse_file_info *);
+                   fuse_file_info_t *);
+    int (*releasedir)(const char *, fuse_file_info_t *);
+    int (*fsyncdir)(const char *, int, fuse_file_info_t *);
     void *(*init)(struct fuse_conn_info *);
     void (*destroy)(void *);
     int (*access)(const char *, int);
-    int (*create)(const char *, mode_t, struct fuse_file_info *);
-    int (*ftruncate)(const char *, off_t, struct fuse_file_info *);
-    int (*fgetattr)(const char *, struct stat *, struct fuse_file_info *);
-    int (*lock)(const char *, struct fuse_file_info *, int, void *);
+    int (*create)(const char *, mode_t, fuse_file_info_t *);
+    int (*ftruncate)(const char *, off_t, fuse_file_info_t *);
+    int (*fgetattr)(const char *, struct stat *, fuse_file_info_t *);
+    int (*lock)(const char *, fuse_file_info_t *, int, void *);
     int (*utimens)(const char *, const void *);
     int (*bmap)(const char *, size_t, uint64_t *);
     unsigned int flag_nullpath_ok : 1;
     unsigned int flag_nopath : 1;
     unsigned int flag_utime_omit_ok : 1;
     unsigned int flag_reserved : 29;
-    int (*ioctl)(const char *, int, void *, struct fuse_file_info *,
+    int (*ioctl)(const char *, int, void *, fuse_file_info_t *,
                  unsigned int, void *);
-    int (*poll)(const char *, struct fuse_file_info *, void *, unsigned *);
-    int (*write_buf)(const char *, void *, off_t, struct fuse_file_info *);
+    int (*poll)(const char *, fuse_file_info_t *, void *, unsigned *);
+    int (*write_buf)(const char *, void *, off_t, fuse_file_info_t *);
     int (*read_buf)(const char *, void **, size_t, off_t,
-                    struct fuse_file_info *);
-    int (*flock)(const char *, struct fuse_file_info *, int);
+                    fuse_file_info_t *);
+    int (*flock)(const char *, fuse_file_info_t *, int);
     int (*fallocate)(const char *, int, off_t, off_t,
-                     struct fuse_file_info *);
+                     fuse_file_info_t *);
 };
 
 /* FUSE 3 operations struct */
 struct fuse_operations_v3 {
-    int (*getattr)(const char *, struct stat *, struct fuse_file_info *);
+    int (*getattr)(const char *, struct stat *, fuse_file_info_t *);
     int (*readlink)(const char *, char *, size_t);
     int (*mknod)(const char *, mode_t, dev_t);
     int (*mkdir)(const char *, mode_t);
@@ -147,46 +205,46 @@ struct fuse_operations_v3 {
     int (*symlink)(const char *, const char *);
     int (*rename)(const char *, const char *, unsigned int);
     int (*link)(const char *, const char *);
-    int (*chmod)(const char *, mode_t, struct fuse_file_info *);
-    int (*chown)(const char *, uid_t, gid_t, struct fuse_file_info *);
-    int (*truncate)(const char *, off_t, struct fuse_file_info *);
-    int (*open)(const char *, struct fuse_file_info *);
-    int (*read)(const char *, char *, size_t, off_t, struct fuse_file_info *);
+    int (*chmod)(const char *, mode_t, fuse_file_info_t *);
+    int (*chown)(const char *, uid_t, gid_t, fuse_file_info_t *);
+    int (*truncate)(const char *, off_t, fuse_file_info_t *);
+    int (*open)(const char *, fuse_file_info_t *);
+    int (*read)(const char *, char *, size_t, off_t, fuse_file_info_t *);
     int (*write)(const char *, const char *, size_t, off_t,
-                 struct fuse_file_info *);
+                 fuse_file_info_t *);
     int (*statfs)(const char *, void *);
-    int (*flush)(const char *, struct fuse_file_info *);
-    int (*release)(const char *, struct fuse_file_info *);
-    int (*fsync)(const char *, int, struct fuse_file_info *);
+    int (*flush)(const char *, fuse_file_info_t *);
+    int (*release)(const char *, fuse_file_info_t *);
+    int (*fsync)(const char *, int, fuse_file_info_t *);
     int (*setxattr)(const char *, const char *, const char *, size_t, int);
     int (*getxattr)(const char *, const char *, char *, size_t);
     int (*listxattr)(const char *, char *, size_t);
     int (*removexattr)(const char *, const char *);
-    int (*opendir)(const char *, struct fuse_file_info *);
+    int (*opendir)(const char *, fuse_file_info_t *);
     int (*readdir)(const char *, void *, fuse_fill_dir_v3_t, off_t,
-                   struct fuse_file_info *, int);
-    int (*releasedir)(const char *, struct fuse_file_info *);
-    int (*fsyncdir)(const char *, int, struct fuse_file_info *);
+                   fuse_file_info_t *, int);
+    int (*releasedir)(const char *, fuse_file_info_t *);
+    int (*fsyncdir)(const char *, int, fuse_file_info_t *);
     void *(*init)(struct fuse_conn_info *, struct fuse_config *);
     void (*destroy)(void *);
     int (*access)(const char *, int);
-    int (*create)(const char *, mode_t, struct fuse_file_info *);
-    int (*lock)(const char *, struct fuse_file_info *, int, void *);
-    int (*utimens)(const char *, const void *, struct fuse_file_info *);
+    int (*create)(const char *, mode_t, fuse_file_info_t *);
+    int (*lock)(const char *, fuse_file_info_t *, int, void *);
+    int (*utimens)(const char *, const void *, fuse_file_info_t *);
     int (*bmap)(const char *, size_t, uint64_t *);
-    int (*ioctl)(const char *, unsigned int, void *, struct fuse_file_info *,
+    int (*ioctl)(const char *, unsigned int, void *, fuse_file_info_t *,
                  unsigned int, void *);
-    int (*poll)(const char *, struct fuse_file_info *, void *, unsigned *);
-    int (*write_buf)(const char *, void *, off_t, struct fuse_file_info *);
+    int (*poll)(const char *, fuse_file_info_t *, void *, unsigned *);
+    int (*write_buf)(const char *, void *, off_t, fuse_file_info_t *);
     int (*read_buf)(const char *, void **, size_t, off_t,
-                    struct fuse_file_info *);
-    int (*flock)(const char *, struct fuse_file_info *, int);
+                    fuse_file_info_t *);
+    int (*flock)(const char *, fuse_file_info_t *, int);
     int (*fallocate)(const char *, int, off_t, off_t,
-                     struct fuse_file_info *);
-    int (*copy_file_range)(const char *, struct fuse_file_info *, off_t,
-                           const char *, struct fuse_file_info *, off_t,
+                     fuse_file_info_t *);
+    int (*copy_file_range)(const char *, fuse_file_info_t *, off_t,
+                           const char *, fuse_file_info_t *, off_t,
                            size_t, int);
-    off_t (*lseek)(const char *, off_t, int, struct fuse_file_info *);
+    off_t (*lseek)(const char *, off_t, int, fuse_file_info_t *);
 };
 
 struct fuse_args {
@@ -200,7 +258,6 @@ struct fuse_args {
 /*  dlopen function pointer table                                     */
 /* ================================================================== */
 
-static int fuse_api_version = 0;
 static void *fuse_lib_handle = NULL;
 
 static int  (*dl_fuse_opt_add_arg)(struct fuse_args *, const char *);
@@ -558,13 +615,13 @@ static int fuse2_getattr_cb(const char *path, struct stat *stbuf) {
     return getattr_impl(path, stbuf);
 }
 static int fuse3_getattr_cb(const char *path, struct stat *stbuf,
-                            struct fuse_file_info *fi) {
+                            fuse_file_info_t *fi) {
     (void)fi; return getattr_impl(path, stbuf);
 }
 
 static int fuse2_readdir_cb(const char *path, void *buf,
                             fuse_fill_dir_v2_t filler, off_t offset,
-                            struct fuse_file_info *fi) {
+                            fuse_file_info_t *fi) {
     (void)offset; (void)fi;
     redivis_mount_ctx_t *ctx = dl_fuse_get_context()->private_data;
     const char *rel = path;
@@ -580,7 +637,7 @@ static int fuse2_readdir_cb(const char *path, void *buf,
 
 static int fuse3_readdir_cb(const char *path, void *buf,
                             fuse_fill_dir_v3_t filler, off_t offset,
-                            struct fuse_file_info *fi, int flags) {
+                            fuse_file_info_t *fi, int flags) {
     (void)offset; (void)fi; (void)flags;
     redivis_mount_ctx_t *ctx = dl_fuse_get_context()->private_data;
     const char *rel = path;
@@ -606,11 +663,11 @@ static void *fuse3_init_cb(struct fuse_conn_info *conn,
     return dl_fuse_get_context()->private_data;
 }
 
-static int fuse_open_cb(const char *path, struct fuse_file_info *fi) {
+static int fuse_open_cb(const char *path, fuse_file_info_t *fi) {
     redivis_mount_ctx_t *ctx = dl_fuse_get_context()->private_data;
     redivis_file_entry_t *entry = find_entry(ctx, path);
     if (!entry) return -ENOENT;
-    if ((fi->flags & O_ACCMODE) != O_RDONLY) return -EACCES;
+    if ((fi_get_flags(fi) & O_ACCMODE) != O_RDONLY) return -EACCES;
     { char *dup = strdup(entry->cache_path);
       char *sl = strrchr(dup, '/');
       if (sl) { *sl = '\0'; mkdirs(dup); } free(dup); }
@@ -624,14 +681,15 @@ static int fuse_open_cb(const char *path, struct fuse_file_info *fi) {
     redivis_fh_t *fh = malloc(sizeof(redivis_fh_t));
     if (!fh) { close(fd); return -ENOMEM; }
     fh->entry = entry; fh->fd = fd;
-    fi->fh = (uint64_t)(uintptr_t)fh; fi->keep_cache = 1;
+    fi_set_fh(fi, (uint64_t)(uintptr_t)fh);
+    fi_set_keep_cache(fi, 1);
     return 0;
 }
 
 static int fuse_read_cb(const char *path, char *buf, size_t size,
-                        off_t offset, struct fuse_file_info *fi) {
+                        off_t offset, fuse_file_info_t *fi) {
     (void)path;
-    redivis_fh_t *fh = (redivis_fh_t *)(uintptr_t)fi->fh;
+    redivis_fh_t *fh = (redivis_fh_t *)(uintptr_t)fi_get_fh(fi);
     redivis_file_entry_t *entry = fh->entry;
     redivis_mount_ctx_t *ctx = dl_fuse_get_context()->private_data;
     if ((size_t)offset >= entry->size) return 0;
@@ -647,9 +705,9 @@ static int fuse_read_cb(const char *path, char *buf, size_t size,
     return (int)n;
 }
 
-static int fuse_release_cb(const char *path, struct fuse_file_info *fi) {
+static int fuse_release_cb(const char *path, fuse_file_info_t *fi) {
     (void)path;
-    redivis_fh_t *fh = (redivis_fh_t *)(uintptr_t)fi->fh;
+    redivis_fh_t *fh = (redivis_fh_t *)(uintptr_t)fi_get_fh(fi);
     close(fh->fd); free(fh); return 0;
 }
 
