@@ -41,7 +41,7 @@ Collate:
     'api_request.R'
     'retryable_download.R'
     'retryable_upload.R'
-    'list_rows.R'
+    'read_rows.R'
     'Version.R'
     'TabularReader.R'
     'Export.R'

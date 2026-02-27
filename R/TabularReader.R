@@ -1,4 +1,4 @@
-#' @include list_rows.R Directory.R api_request.R
+#' @include read_rows.R Directory.R api_request.R
 TabularReader <- R6::R6Class(
   "TabularReader",
   public = list(
