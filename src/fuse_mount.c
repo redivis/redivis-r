@@ -841,11 +841,30 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
 
     usleep(300000);
     if (!ctx->running) {
+        /* Collect diagnostic info for the error message */
+        int dev_fuse_exists = (access("/dev/fuse", F_OK) == 0);
+        int dev_fuse_readable = (access("/dev/fuse", R_OK | W_OK) == 0);
+
         pthread_join(ctx->thread, NULL);
         fuse_mount_finalizer(R_MakeExternalPtr(ctx, R_NilValue, R_NilValue));
-        Rf_error("fuse_mount: FUSE failed to start. "
-                 "Is the mount point accessible? "
-                 "Check that /dev/fuse exists and is accessible.");
+
+        if (!dev_fuse_exists) {
+            Rf_error("fuse_mount: FUSE failed to start — /dev/fuse does not exist.\n"
+                     "  - Load the FUSE kernel module: sudo modprobe fuse\n"
+                     "  - In Docker, run with: --device /dev/fuse --cap-add SYS_ADMIN");
+        } else if (!dev_fuse_readable) {
+            Rf_error("fuse_mount: FUSE failed to start — /dev/fuse is not accessible "
+                     "(permission denied).\n"
+                     "  - Check permissions: ls -la /dev/fuse\n"
+                     "  - Add your user to the 'fuse' group, or run as root.\n"
+                     "  - In Docker, run with: --device /dev/fuse --cap-add SYS_ADMIN");
+        } else {
+            Rf_error("fuse_mount: FUSE failed to start.\n"
+                     "  - /dev/fuse exists and is accessible\n"
+                     "  - Is the mount point '%s' on a filesystem that supports FUSE?\n"
+                     "  - Check 'dmesg | tail' for kernel-level FUSE errors.",
+                     mount_point);
+        }
     }
 
     SEXP ptr = PROTECT(R_MakeExternalPtr(ctx, R_NilValue, R_NilValue));
