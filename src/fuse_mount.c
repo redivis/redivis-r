@@ -702,7 +702,10 @@ static void *fuse_thread_func(void *arg) {
         dl_fuse_opt_free_args(&fargs);
         return NULL;
     } else {
-        dl_fuse_opt_add_arg(&fargs, "-f");
+        /* Note: do NOT pass -f here. In FUSE 3, fuse_new() does not
+         * accept -f (foreground); it's handled by fuse_daemonize().
+         * We call fuse_loop() directly in this thread, so -f is
+         * unnecessary and would cause fuse_new() to return NULL. */
         ctx->fuse = dl_fuse3_new(&fargs, ops, ops_size, ctx);
         if (!ctx->fuse) {
             snprintf(ctx->error_msg, sizeof(ctx->error_msg),
