@@ -223,6 +223,11 @@ static int load_fuse_library(void)
 
     const char *fuse3_names[] = {
         "libfuse3.so.3", "libfuse3.so", "libfuse3.dylib",
+        "/usr/lib/x86_64-linux-gnu/libfuse3.so.3",
+        "/usr/lib/aarch64-linux-gnu/libfuse3.so.3",
+        "/usr/lib64/libfuse3.so.3",
+        "/usr/lib/libfuse3.so.3",
+        "/usr/local/lib/libfuse3.so.3",
         "/usr/local/lib/libfuse3.dylib",
         "/opt/homebrew/lib/libfuse3.dylib",
         NULL
@@ -331,6 +336,7 @@ typedef struct redivis_mount_ctx {
     dir_entry_t *dirs; size_t n_dirs;
     struct fuse *fuse; struct fuse_chan *chan;
     int api_version; pthread_t thread; int running;
+    char error_msg[512];  /* diagnostic message if FUSE fails to start */
 } redivis_mount_ctx_t;
 
 typedef struct redivis_fh {
@@ -665,6 +671,7 @@ static const void *build_fuse_ops(int version, size_t *ops_size) {
 
 static void *fuse_thread_func(void *arg) {
     redivis_mount_ctx_t *ctx = (redivis_mount_ctx_t *)arg;
+    ctx->error_msg[0] = '\0';
     struct fuse_args fargs = FUSE_ARGS_INIT(0, NULL);
     dl_fuse_opt_add_arg(&fargs, "redivis");
 
@@ -674,10 +681,14 @@ static void *fuse_thread_func(void *arg) {
     if (ctx->api_version == 2) {
         ctx->chan = dl_fuse2_mount(ctx->mount_point, &fargs);
         if (!ctx->chan) {
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                     "fuse2_mount(\"%s\") returned NULL", ctx->mount_point);
             dl_fuse_opt_free_args(&fargs); ctx->running = 0; return NULL;
         }
         ctx->fuse = dl_fuse2_new(ctx->chan, &fargs, ops, ops_size, ctx);
         if (!ctx->fuse) {
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                     "fuse2_new() returned NULL");
             dl_fuse2_unmount(ctx->mount_point, ctx->chan);
             ctx->chan = NULL; dl_fuse_opt_free_args(&fargs);
             ctx->running = 0; return NULL;
@@ -694,9 +705,16 @@ static void *fuse_thread_func(void *arg) {
         dl_fuse_opt_add_arg(&fargs, "-f");
         ctx->fuse = dl_fuse3_new(&fargs, ops, ops_size, ctx);
         if (!ctx->fuse) {
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                     "fuse3_new() returned NULL (api_version=%d, ops_size=%zu)",
+                     ctx->api_version, ops_size);
             dl_fuse_opt_free_args(&fargs); ctx->running = 0; return NULL;
         }
-        if (dl_fuse3_mount(ctx->fuse, ctx->mount_point) != 0) {
+        int mount_rc = dl_fuse3_mount(ctx->fuse, ctx->mount_point);
+        if (mount_rc != 0) {
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                     "fuse3_mount(\"%s\") failed with rc=%d, errno=%d (%s)",
+                     ctx->mount_point, mount_rc, errno, strerror(errno));
             dl_fuse_destroy(ctx->fuse); ctx->fuse = NULL;
             dl_fuse_opt_free_args(&fargs); ctx->running = 0; return NULL;
         }
@@ -841,9 +859,12 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
 
     usleep(300000);
     if (!ctx->running) {
-        /* Collect diagnostic info for the error message */
+        /* Collect diagnostic info before freeing ctx */
         int dev_fuse_exists = (access("/dev/fuse", F_OK) == 0);
         int dev_fuse_readable = (access("/dev/fuse", R_OK | W_OK) == 0);
+        char detail[512];
+        strncpy(detail, ctx->error_msg, sizeof(detail));
+        detail[sizeof(detail) - 1] = '\0';
 
         pthread_join(ctx->thread, NULL);
         fuse_mount_finalizer(R_MakeExternalPtr(ctx, R_NilValue, R_NilValue));
@@ -851,19 +872,22 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
         if (!dev_fuse_exists) {
             Rf_error("fuse_mount: FUSE failed to start — /dev/fuse does not exist.\n"
                      "  - Load the FUSE kernel module: sudo modprobe fuse\n"
-                     "  - In Docker, run with: --device /dev/fuse --cap-add SYS_ADMIN");
+                     "  - In Docker, run with: --device /dev/fuse --cap-add SYS_ADMIN\n"
+                     "  - Detail: %s", detail);
         } else if (!dev_fuse_readable) {
             Rf_error("fuse_mount: FUSE failed to start — /dev/fuse is not accessible "
                      "(permission denied).\n"
                      "  - Check permissions: ls -la /dev/fuse\n"
                      "  - Add your user to the 'fuse' group, or run as root.\n"
-                     "  - In Docker, run with: --device /dev/fuse --cap-add SYS_ADMIN");
+                     "  - In Docker, run with: --device /dev/fuse --cap-add SYS_ADMIN\n"
+                     "  - Detail: %s", detail);
         } else {
             Rf_error("fuse_mount: FUSE failed to start.\n"
                      "  - /dev/fuse exists and is accessible\n"
                      "  - Is the mount point '%s' on a filesystem that supports FUSE?\n"
-                     "  - Check 'dmesg | tail' for kernel-level FUSE errors.",
-                     mount_point);
+                     "  - Check 'dmesg | tail' for kernel-level FUSE errors.\n"
+                     "  - Detail: %s",
+                     mount_point, detail);
         }
     }
 
