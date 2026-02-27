@@ -1,75 +1,24 @@
-# Makevars for redivis — conditionally link libfuse3 if available
+# Makevars for redivis
 #
-# The FUSE mount feature requires libfuse3 (Linux), FUSE-T, or macFUSE (macOS).
-# If none is found, fuse_mount.c compiles to stubs and the package
-# works normally without mount support.
+# FUSE libraries are loaded at runtime via dlopen — no FUSE headers,
+# dev packages, or compile-time detection needed.
+# Only libcurl is required at compile time (for HTTP range requests).
 
 PKG_CFLAGS =
 PKG_LIBS =
 
-# --- Detect FUSE ---
-# Try pkg-config for fuse3 (Linux libfuse3 or FUSE-T via Homebrew on macOS)
-FUSE3_CFLAGS := $(shell pkg-config --cflags fuse3 2>/dev/null)
-FUSE3_LIBS   := $(shell pkg-config --libs   fuse3 2>/dev/null)
+# --- Detect libcurl ---
+CURL_CFLAGS := $(shell pkg-config --cflags libcurl 2>/dev/null)
+CURL_LIBS   := $(shell pkg-config --libs   libcurl 2>/dev/null)
 
-ifneq ($(FUSE3_LIBS),)
-  PKG_CFLAGS += -DHAVE_FUSE -DHAVE_FUSE3 $(FUSE3_CFLAGS)
-  PKG_LIBS   += $(FUSE3_LIBS)
+ifneq ($(CURL_LIBS),)
+  PKG_CFLAGS += $(CURL_CFLAGS)
+  PKG_LIBS   += $(CURL_LIBS)
 else
-  # FUSE-T standalone installer (macOS) — uses FUSE 2 header layout at
-  # /usr/local/include/fuse/fuse.h but library is libfuse-t.dylib
-  FUSET_HDR = /usr/local/include/fuse/fuse.h
-  FUSET_LIB = /usr/local/lib/libfuse-t.dylib
-  ifeq ($(wildcard $(FUSET_HDR)),$(FUSET_HDR))
-    ifeq ($(wildcard $(FUSET_LIB)),$(FUSET_LIB))
-      PKG_CFLAGS += -DHAVE_FUSE -I/usr/local/include -D_FILE_OFFSET_BITS=64
-      PKG_LIBS   += -L/usr/local/lib -lfuse-t -Wl,-rpath,/usr/local/lib
-    endif
-  endif
-
-  # If FUSE-T wasn't found above, try macFUSE
-  ifeq ($(findstring -DHAVE_FUSE,$(PKG_CFLAGS)),)
-    MACFUSE_CFLAGS := $(shell pkg-config --cflags fuse 2>/dev/null)
-    MACFUSE_LIBS   := $(shell pkg-config --libs   fuse 2>/dev/null)
-
-    ifneq ($(MACFUSE_LIBS),)
-      PKG_CFLAGS += -DHAVE_FUSE $(MACFUSE_CFLAGS)
-      PKG_LIBS   += $(MACFUSE_LIBS)
-    else
-      # Fallback: check macFUSE framework path (common on Apple Silicon)
-      MACFUSE_FW = /Library/Frameworks/macFUSE.framework
-      ifeq ($(wildcard $(MACFUSE_FW)),$(MACFUSE_FW))
-        PKG_CFLAGS += -DHAVE_FUSE -I$(MACFUSE_FW)/Headers -D_FILE_OFFSET_BITS=64
-        PKG_LIBS   += -L$(MACFUSE_FW)/Libraries -lfuse
-      else
-        # Last resort: /usr/local paths for macFUSE
-        MACFUSE_INC = /usr/local/include/fuse
-        MACFUSE_LIB = /usr/local/lib/libfuse.dylib
-        ifeq ($(wildcard $(MACFUSE_INC)),$(MACFUSE_INC))
-          ifeq ($(wildcard $(MACFUSE_LIB)),$(MACFUSE_LIB))
-            PKG_CFLAGS += -DHAVE_FUSE -I/usr/local/include -D_FILE_OFFSET_BITS=64
-            PKG_LIBS   += -L/usr/local/lib -lfuse
-          endif
-        endif
-      endif
-    endif
-  endif
+  CURL_CFLAGS := $(shell curl-config --cflags 2>/dev/null)
+  CURL_LIBS   := $(shell curl-config --libs   2>/dev/null)
+  PKG_CFLAGS += $(CURL_CFLAGS)
+  PKG_LIBS   += $(CURL_LIBS)
 endif
 
-# --- Detect libcurl (only needed when FUSE is available) ---
-ifneq ($(findstring -DHAVE_FUSE,$(PKG_CFLAGS)),)
-  CURL_CFLAGS := $(shell pkg-config --cflags libcurl 2>/dev/null)
-  CURL_LIBS   := $(shell pkg-config --libs   libcurl 2>/dev/null)
-
-  ifneq ($(CURL_LIBS),)
-    PKG_CFLAGS += $(CURL_CFLAGS)
-    PKG_LIBS   += $(CURL_LIBS)
-  else
-    CURL_CFLAGS := $(shell curl-config --cflags 2>/dev/null)
-    CURL_LIBS   := $(shell curl-config --libs   2>/dev/null)
-    PKG_CFLAGS += $(CURL_CFLAGS)
-    PKG_LIBS   += $(CURL_LIBS)
-  endif
-
-  PKG_LIBS += -lpthread
-endif
+PKG_LIBS += -lpthread -ldl

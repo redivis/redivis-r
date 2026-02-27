@@ -67,7 +67,7 @@ Parameter <- setRefClass(
       )
     },
     show = function() {
-      print(str_interp("<Parameter `${.self$qualified_reference}`>"))
+      print(str_interp("<Parameter ${.self$qualified_reference}>"))
     },
 
     exists = function() {

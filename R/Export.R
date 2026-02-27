@@ -8,7 +8,7 @@ Export <- setRefClass(
     },
     show = function() {
       print(str_interp(
-        "<Export `${.self$uri}` on ${.self$table$qualified_reference}>"
+        "<Export ${.self$uri} on ${.self$table$qualified_reference}>"
       ))
     },
 
