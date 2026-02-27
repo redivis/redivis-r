@@ -65,8 +65,11 @@ struct fuse_file_info {
     uint32_t      poll_events;
 };
 
-typedef int (*fuse_fill_dir_t)(void *buf, const char *name,
-                               const struct stat *stbuf, off_t off, ...);
+typedef int (*fuse_fill_dir_v2_t)(void *buf, const char *name,
+                                  const struct stat *stbuf, off_t off);
+typedef int (*fuse_fill_dir_v3_t)(void *buf, const char *name,
+                                  const struct stat *stbuf, off_t off,
+                                  int fill_dir_flags);
 
 struct fuse_context {
     struct fuse *fuse;
@@ -105,7 +108,7 @@ struct fuse_operations_v2 {
     int (*listxattr)(const char *, char *, size_t);
     int (*removexattr)(const char *, const char *);
     int (*opendir)(const char *, struct fuse_file_info *);
-    int (*readdir)(const char *, void *, fuse_fill_dir_t, off_t,
+    int (*readdir)(const char *, void *, fuse_fill_dir_v2_t, off_t,
                    struct fuse_file_info *);
     int (*releasedir)(const char *, struct fuse_file_info *);
     int (*fsyncdir)(const char *, int, struct fuse_file_info *);
@@ -160,7 +163,7 @@ struct fuse_operations_v3 {
     int (*listxattr)(const char *, char *, size_t);
     int (*removexattr)(const char *, const char *);
     int (*opendir)(const char *, struct fuse_file_info *);
-    int (*readdir)(const char *, void *, fuse_fill_dir_t, off_t,
+    int (*readdir)(const char *, void *, fuse_fill_dir_v3_t, off_t,
                    struct fuse_file_info *, int);
     int (*releasedir)(const char *, struct fuse_file_info *);
     int (*fsyncdir)(const char *, int, struct fuse_file_info *);
@@ -559,7 +562,10 @@ static int fuse3_getattr_cb(const char *path, struct stat *stbuf,
     (void)fi; return getattr_impl(path, stbuf);
 }
 
-static int readdir_impl(const char *path, void *buf, fuse_fill_dir_t filler) {
+static int fuse2_readdir_cb(const char *path, void *buf,
+                            fuse_fill_dir_v2_t filler, off_t offset,
+                            struct fuse_file_info *fi) {
+    (void)offset; (void)fi;
     redivis_mount_ctx_t *ctx = dl_fuse_get_context()->private_data;
     const char *rel = path;
     while (*rel == '/') rel++;
@@ -572,17 +578,20 @@ static int readdir_impl(const char *path, void *buf, fuse_fill_dir_t filler) {
     return 0;
 }
 
-static int fuse2_readdir_cb(const char *path, void *buf,
-                            fuse_fill_dir_t filler, off_t offset,
-                            struct fuse_file_info *fi) {
-    (void)offset; (void)fi;
-    return readdir_impl(path, buf, filler);
-}
 static int fuse3_readdir_cb(const char *path, void *buf,
-                            fuse_fill_dir_t filler, off_t offset,
+                            fuse_fill_dir_v3_t filler, off_t offset,
                             struct fuse_file_info *fi, int flags) {
     (void)offset; (void)fi; (void)flags;
-    return readdir_impl(path, buf, filler);
+    redivis_mount_ctx_t *ctx = dl_fuse_get_context()->private_data;
+    const char *rel = path;
+    while (*rel == '/') rel++;
+    dir_entry_t *d = ht_lookup(&ctx->dir_ht, rel);
+    if (!d) return -ENOENT;
+    filler(buf, ".", NULL, 0, 0);
+    filler(buf, "..", NULL, 0, 0);
+    for (size_t i = 0; i < d->n_children; i++)
+        filler(buf, d->child_names[i], NULL, 0, 0);
+    return 0;
 }
 
 static void *fuse2_init_cb(struct fuse_conn_info *conn) {
@@ -651,14 +660,14 @@ static const void *build_fuse_ops(int version, size_t *ops_size) {
     if (version == 3) {
         memset(&ops_v3, 0, sizeof(ops_v3));
         ops_v3.init = fuse3_init_cb; ops_v3.getattr = fuse3_getattr_cb;
-        ops_v3.readdir = (void *)fuse3_readdir_cb;
+        ops_v3.readdir = fuse3_readdir_cb;
         ops_v3.open = fuse_open_cb; ops_v3.read = fuse_read_cb;
         ops_v3.release = fuse_release_cb;
         *ops_size = sizeof(ops_v3); return &ops_v3;
     } else {
         memset(&ops_v2, 0, sizeof(ops_v2));
         ops_v2.init = fuse2_init_cb; ops_v2.getattr = fuse2_getattr_cb;
-        ops_v2.readdir = (void *)fuse2_readdir_cb;
+        ops_v2.readdir = fuse2_readdir_cb;
         ops_v2.open = fuse_open_cb; ops_v2.read = fuse_read_cb;
         ops_v2.release = fuse_release_cb;
         *ops_size = sizeof(ops_v2); return &ops_v2;
