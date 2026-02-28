@@ -351,8 +351,10 @@ parallel_stream_arrow <- function(
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
   on.exit(future::plan(oplan), add = TRUE)
 
+  # Need a local variable for parallelization to work
+  .process_arrow_stream <- process_arrow_stream
   results <- furrr::future_map(streams, function(stream) {
-    process_arrow_stream(
+    .process_arrow_stream(
       stream,
       folder,
       variables,

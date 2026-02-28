@@ -62,3 +62,4 @@ Collate:
     'Upload.R'
     'ReadStream.R'
     'index.R'
+    'zzz.R'
