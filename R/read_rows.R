@@ -564,7 +564,6 @@ process_arrow_stream <- function(
             # Yield to R's event loop to check for pending interrupts. Only need to do if on the main thread
             # This only sort of works - need to hit the Jupyter "stop" button many times, but better than nothing
             if (!is_subprocess) {
-              flush.console()
               Sys.sleep(0.001)
             }
 
