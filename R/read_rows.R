@@ -154,7 +154,7 @@ make_rows_request <- function(
   use_export_api = FALSE,
   max_parallelization = parallelly::availableCores()
 ) {
-  print('v1')
+  print('v2')
   if (inherits(instance, "ReadStream")) {
     read_session <- list(
       streams = list(instance),
@@ -476,7 +476,7 @@ process_arrow_stream <- function(
         # Yield to R's event loop to check for pending interrupts (e.g.,
         # Jupyter's stop button). This is a no-op in terms of delay but
         # allows R_CheckUserInterrupt to fire.
-        Sys.sleep(0)
+        Sys.sleep(0.1)
 
         batch <- stream_reader$read_next_batch()
         if (is.null(batch)) {
