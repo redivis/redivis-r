@@ -353,16 +353,28 @@ parallel_stream_arrow <- function(
 
   # Need a local variable for parallelization to work
   .process_arrow_stream <- process_arrow_stream
-  results <- furrr::future_map(streams, function(stream) {
-    .process_arrow_stream(
-      stream,
-      folder,
-      variables,
-      coerce_schema,
-      batch_preprocessor,
-      pb,
-      pb_multiplier
-    )
+  futures <- lapply(streams, function(stream) {
+    future::future({
+      .process_arrow_stream(
+        stream,
+        folder,
+        variables,
+        coerce_schema,
+        batch_preprocessor,
+        pb,
+        pb_multiplier
+      )
+    })
+  })
+
+  # Resolve futures with interrupt checking — Sys.sleep is an interrupt point
+  # in R, allowing Jupyter's stop button (which sends SIGINT to the main
+  # process) to actually cancel execution.
+  results <- lapply(futures, function(f) {
+    while (!future::resolved(f)) {
+      Sys.sleep(0.1)
+    }
+    future::value(f)
   })
 
   if (is.null(folder)) {
