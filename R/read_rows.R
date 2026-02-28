@@ -568,7 +568,8 @@ process_arrow_stream <- function(
               in_memory_batches <- c(in_memory_batches, batch)
             }
           }
-          Sys.sleep(0.01)
+          later::run_now(0)
+          # Sys.sleep(0.01)
 
           if (proc.time()[3] - last_measured_time > 0.2) {
             # Yield to R's event loop to check for pending interrupts (e.g.,
