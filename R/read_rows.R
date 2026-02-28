@@ -154,7 +154,7 @@ make_rows_request <- function(
   use_export_api = FALSE,
   max_parallelization = parallelly::availableCores()
 ) {
-  print('v7')
+  print('v8')
   if (inherits(instance, "ReadStream")) {
     read_session <- list(
       streams = list(instance),
@@ -358,28 +358,17 @@ parallel_stream_arrow <- function(
 
   # Need a local variable for parallelization to work
   .process_arrow_stream <- process_arrow_stream
-  futures <- lapply(streams, function(stream) {
-    future::future({
-      .process_arrow_stream(
-        stream,
-        folder,
-        variables,
-        coerce_schema,
-        batch_preprocessor,
-        pb,
-        pb_multiplier
-      )
-    })
-  })
-
-  # Resolve futures with interrupt checking — Sys.sleep is an interrupt point
-  # in R, allowing Jupyter's stop button (which sends SIGINT to the main
-  # process) to actually cancel execution.
-  results <- lapply(futures, function(f) {
-    while (!future::resolved(f)) {
-      Sys.sleep(0.1)
-    }
-    future::value(f)
+  results <- furrr::future_map(streams, function(stream) {
+    .process_arrow_stream(
+      stream,
+      folder,
+      variables,
+      coerce_schema,
+      batch_preprocessor,
+      pb,
+      pb_multiplier,
+      is_subprocess = length(streams) > 1
+    )
   })
 
   if (is.null(folder)) {
@@ -395,6 +384,7 @@ process_arrow_stream <- function(
   batch_preprocessor,
   pb,
   pb_multiplier,
+  is_subprocess,
   in_memory_batches = c(),
   stream_writer = NULL,
   output_file = NULL,
@@ -569,12 +559,11 @@ process_arrow_stream <- function(
             }
           }
 
-          if (proc.time()[3] - last_measured_time > 0.2) {
-            # Yield to R's event loop to check for pending interrupts (e.g.,
-            # Jupyter's stop button). later::run_now(0) processes pending
-            # callbacks and checks R_CheckUserInterrupt with near-zero overhead.
-            Sys.sleep(0.01)
-            # later::run_now(0.001)
+          if (proc.time()[3] - last_measured_time > 0.1) {
+            # Yield to R's event loop to check for pending interrupts. Only need to do if on the main thread
+            if (!is_subprocess) {
+              Sys.sleep(0.01)
+            }
 
             if (!is.null(pb)) {
               pb(amount = current_progress_rows * pb_multiplier)
@@ -617,6 +606,7 @@ process_arrow_stream <- function(
           batch_preprocessor,
           pb,
           pb_multiplier,
+          is_subprocess,
           in_memory_batches,
           stream_writer,
           output_file,
