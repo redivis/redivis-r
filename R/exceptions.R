@@ -102,13 +102,19 @@ abort_redivis_network_error <- function(
 # (Avoid naming collision with base::ValueError; use redivis_value_error)
 
 abort_redivis_value_error <- function(message, call = rlang::caller_env()) {
+  # cli::cli_abort(
+  #   message = message,
+  #   class = c("redivis_value_error", "redivis_error"),
+  #   call = NULL
+  # )
   rlang::abort(
     message = message,
     class = c(
       "redivis_value_error",
       "redivis_error"
     ),
-    call = call
+    .trace_bottom = rlang::caller_env(3),
+    call = rlang::caller_env(3)
   )
 }
 
