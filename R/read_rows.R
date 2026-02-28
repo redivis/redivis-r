@@ -340,7 +340,11 @@ parallel_stream_arrow <- function(
 
   # Parallely is returning True here in positron for Mac, but multicore still doesn't work
   # TODO: resolve / validate at a later point
-  if (parallelly::supportsMulticore() && Sys.info()[["sysname"]] != "Darwin") {
+  if (
+    parallelly::supportsMulticore() &&
+      Sys.info()[["sysname"]] != "Darwin" &&
+      FALSE
+  ) {
     oplan <- future::plan(future::multicore, workers = worker_count)
   } else {
     oplan <- future::plan(future::multisession, workers = worker_count)
@@ -468,6 +472,11 @@ process_arrow_stream <- function(
       current_progress_rows <- 0
 
       while (TRUE) {
+        # Yield to R's event loop to check for pending interrupts (e.g.,
+        # Jupyter's stop button). This is a no-op in terms of delay but
+        # allows R_CheckUserInterrupt to fire.
+        Sys.sleep(0)
+
         batch <- stream_reader$read_next_batch()
         if (is.null(batch)) {
           break
