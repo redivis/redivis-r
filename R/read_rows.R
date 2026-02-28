@@ -568,7 +568,7 @@ process_arrow_stream <- function(
               in_memory_batches <- c(in_memory_batches, batch)
             }
           }
-          later::run_now(0)
+          later::run_now(0.01)
           # Sys.sleep(0.01)
 
           if (proc.time()[3] - last_measured_time > 0.2) {
