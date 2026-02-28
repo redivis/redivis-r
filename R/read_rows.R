@@ -355,6 +355,9 @@ parallel_stream_arrow <- function(
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
   on.exit(future::plan(oplan), add = TRUE)
 
+  print('v1')
+  print(length(streams))
+
   # Need a local variable for parallelization to work
   .process_arrow_stream <- process_arrow_stream
   futures <- lapply(streams, function(stream) {
