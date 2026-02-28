@@ -141,7 +141,7 @@ make_request <- function(
   if (!is.null(download_path)) {
     if (!download_overwrite && file.exists(download_path)) {
       abort_redivis_error(
-        str_interp("File already exists: ${download_path}")
+        str_interp("File already exists: ${download_path}"),
       )
     }
     res <- httr2::req_perform(req, path = download_path)
@@ -251,9 +251,15 @@ handle_error_response <- function(res, resp_body, method, args) {
   }
 
   if (is_json) {
-    raise_api_error(response_json = response_content, response = res)
+    raise_api_error(
+      response_json = response_content,
+      response = res
+    )
   } else {
-    raise_api_error(response_text = response_content, response = res)
+    raise_api_error(
+      response_text = response_content,
+      response = res
+    )
   }
 }
 

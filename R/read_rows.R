@@ -222,7 +222,6 @@ make_rows_request <- function(
   use_export_api = FALSE,
   max_parallelization = parallelly::availableCores()
 ) {
-  print('v8')
   if (inherits(instance, "ReadStream")) {
     read_session <- list(
       streams = list(instance),
