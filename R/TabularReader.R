@@ -23,6 +23,11 @@ TabularReader <- R6::R6Class(
           "Listing files on uploads is not currently supported."
         )
       }
+      if (inherits(self, "ReadStream")) {
+        abort_redivis_value_error(
+          "Listing files on ReadStreams is not currently supported."
+        )
+      }
 
       is_query <- inherits(self, "Query")
       is_table <- inherits(self, "Table")
@@ -118,7 +123,7 @@ TabularReader <- R6::R6Class(
 
       make_rows_request(
         uri = params$uri,
-        table = self,
+        instance = self,
         max_results = params$max_results,
         selected_variable_names = params$selected_variable_names,
         type = 'arrow_dataset',
@@ -143,7 +148,7 @@ TabularReader <- R6::R6Class(
 
       make_rows_request(
         uri = params$uri,
-        table = self,
+        instance = self,
         max_results = params$max_results,
         selected_variable_names = params$selected_variable_names,
         type = 'arrow_table',
@@ -166,7 +171,7 @@ TabularReader <- R6::R6Class(
 
       make_rows_request(
         uri = params$uri,
-        table = self,
+        instance = self,
         max_results = params$max_results,
         selected_variable_names = params$selected_variable_names,
         type = 'arrow_stream',
@@ -189,7 +194,7 @@ TabularReader <- R6::R6Class(
 
       df <- make_rows_request(
         uri = params$uri,
-        table = self,
+        instance = self,
         max_results = params$max_results,
         selected_variable_names = params$selected_variable_names,
         type = 'tibble',
@@ -234,7 +239,7 @@ TabularReader <- R6::R6Class(
 
       df <- make_rows_request(
         uri = params$uri,
-        table = self,
+        instance = self,
         max_results = params$max_results,
         selected_variable_names = params$selected_variable_names,
         type = 'tibble',
@@ -261,7 +266,7 @@ TabularReader <- R6::R6Class(
 
       make_rows_request(
         uri = params$uri,
-        table = self,
+        instance = self,
         max_results = params$max_results,
         selected_variable_names = params$selected_variable_names,
         type = 'data_frame',
@@ -286,7 +291,7 @@ TabularReader <- R6::R6Class(
 
       make_rows_request(
         uri = params$uri,
-        table = self,
+        instance = self,
         max_results = params$max_results,
         selected_variable_names = params$selected_variable_names,
         type = 'data_table',
@@ -297,6 +302,47 @@ TabularReader <- R6::R6Class(
         use_export_api = params$use_export_api,
         max_parallelization = max_parallelization
       )
+    },
+
+    to_read_streams = function(
+      target_count = parallelly::availableCores(),
+      variables = NULL
+    ) {
+      if (inherits(self, "ReadStream")) {
+        abort_redivis_value_error(
+          "Cannot call $to_read_stream() on a ReadStream."
+        )
+      }
+      check_is_ready(self)
+      params <- get_table_request_params(self, variables = variables)
+      payload = list(
+        "requestedStreamCount" = target_count,
+        format = "arrow"
+      )
+
+      if (!is.null(params$selected_variable_names)) {
+        payload$selectedVariables = params$selected_variable_names
+      }
+
+      read_session <- make_request(
+        method = "post",
+        path = str_interp("${self$uri}/readSessions"),
+        parse_response = TRUE,
+        payload = payload
+      )
+      read_streams <- lapply(
+        read_session$streams,
+        function(stream) {
+          ReadStream$new(
+            id = stream$id,
+            table = if (inherits(self, "Table")) self else NULL,
+            query = if (inherits(self, "Query")) self else NULL,
+            upload = if (inherits(self, "Upload")) self else NULL,
+            properties = stream
+          )
+        }
+      )
+      read_streams
     },
 
     file = function(path) {
@@ -343,11 +389,11 @@ TabularReader <- R6::R6Class(
       progress = TRUE,
       max_parallelization = NULL
     ) {
+      self$to_directory(file_id_variable = file_id_variable)
       warning(
         "This method is deprecated. Please use to_directory()$download() instead",
         call. = FALSE
       )
-      self$to_directory(file_id_variable = file_id_variable)
       self$directory$download(
         path = path,
         overwrite = overwrite,
@@ -372,10 +418,26 @@ check_is_ready = function(instance) {
 
 get_table_request_params = function(
   instance,
-  max_results,
+  max_results = NULL,
   variables,
   geography_variable = NULL
 ) {
+  if (inherits(instance, "ReadStream")) {
+    res <- get_table_request_params(
+      if (!is.null(instance$table)) {
+        instance$table
+      } else if (!is.null(instance$upload)) {
+        instance$upload
+      } else {
+        instance$query
+      },
+      max_results = max_results,
+      variables = variables,
+      geography_variable = geography_variable
+    )
+    res$use_export_api <- FALSE
+    return(res)
+  }
   # IMPORTANT: note that this is also called by the upload$to_* methods
   all_variables <- make_paginated_request(
     path = str_interp("${instance$uri}/variables"),

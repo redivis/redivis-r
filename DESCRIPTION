@@ -60,4 +60,5 @@ Collate:
     'Directory.R'
     'Query.R'
     'Upload.R'
+    'ReadStream.R'
     'index.R'

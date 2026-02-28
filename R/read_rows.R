@@ -1,94 +1,105 @@
-RedivisBatchReader <- setRefClass(
+RedivisBatchReader <- R6::R6Class(
   "RedivisBatchReader",
-  fields = list(
-    streams = "list",
-    current_offset = "numeric",
-    coerce_schema = "logical",
-    retry_count = "numeric",
-    # Can't figure out how to pass non-built-in classes here, so just pass as list
-    custom_classes = "list",
-    current_stream_index = "numeric",
-    time_variables = "list"
-  ),
+  public = list(
+    streams = NULL,
+    current_offset = 0,
+    coerce_schema = FALSE,
+    retry_count = 0,
+    current_stream_index = 1,
+    time_variables = NULL,
+    schema = NULL,
+    writer_schema = NULL,
+    current_record_batch_reader = NULL,
+    current_connection = NULL,
 
-  methods = list(
+    initialize = function(
+      streams,
+      coerce_schema,
+      current_stream_index,
+      schema
+    ) {
+      self$streams <- streams
+      self$coerce_schema <- coerce_schema
+      self$current_stream_index <- current_stream_index
+      self$schema <- schema
+      self$time_variables <- list()
+    },
+
     get_next_reader__ = function(offset = 0) {
-      .self$current_offset = offset
-      base_url = generate_api_url('/readStreams')
+      self$current_offset <- offset
+      base_url <- generate_api_url('/readStreams')
       options(timeout = 3600)
       headers <- get_authorization_header()
       tryCatch(
         {
           con <- url(
             str_interp(
-              '${base_url}/${streams[[.self$current_stream_index]]$id}?offset=${.self$current_offset}'
+              '${base_url}/${self$streams[[self$current_stream_index]]$id}?offset=${self$current_offset}'
             ),
             open = "rb",
             headers = headers,
             blocking = FALSE
           )
-          stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace(
-            "arrow"
-          )$MakeRConnectionInputStream(con))
+          stream_reader <- arrow::RecordBatchStreamReader$create(
+            getNamespace("arrow")$MakeRConnectionInputStream(con)
+          )
 
           writer_schema_fields <- list()
 
-          # Make sure to only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
+          # Only get the fields in the reader, to handle when reading from an
+          # unreleased table made up of uploads with inconsistent variables
           for (field_name in stream_reader$schema$names) {
             writer_schema_fields <- append(
               writer_schema_fields,
-              .self$custom_classes$schema$GetFieldByName(field_name)
+              self$schema$GetFieldByName(field_name)
             )
           }
 
-          if (coerce_schema) {
+          if (self$coerce_schema) {
             for (field in writer_schema_fields) {
               if (is(field$type, "Time64")) {
-                .self$time_variables <- append(.self$time_variables, field$name)
+                self$time_variables <- append(self$time_variables, field$name)
               }
             }
           }
 
-          .self$custom_classes = list(
-            current_record_batch_reader = stream_reader,
-            writer_schema = arrow::schema(writer_schema_fields),
-            schema = .self$custom_classes$schema,
-            current_connection = con
-          )
+          self$writer_schema <- arrow::schema(writer_schema_fields)
+          self$current_record_batch_reader <- stream_reader
+          self$current_connection <- con
         },
         warning = function(w) {},
         error = function(e) {
-          .self$retry_count = .self$retry_count + 1
-          if (.self$retry_count > 10) {
+          self$retry_count <- self$retry_count + 1
+          if (self$retry_count > 10) {
             message(
               "Download connection failed after too many retries, giving up."
             )
             abort_redivis_network_error(conditionMessage(e))
           }
-          Sys.sleep(.self$retry_count)
-
-          return(.self$get_next_reader__(.self$current_offset))
+          Sys.sleep(self$retry_count)
+          return(self$get_next_reader__(self$current_offset))
         }
       )
     },
+
     read_next_batch = function() {
       tryCatch(
         {
-          batch <- .self$custom_classes$current_record_batch_reader$read_next_batch()
+          batch <- self$current_record_batch_reader$read_next_batch()
 
           if (is.null(batch)) {
-            if (.self$current_stream_index == length(.self$streams)) {
+            if (self$current_stream_index == length(self$streams)) {
               return(NULL)
             } else {
-              .self$current_stream_index = .self$current_stream_index + 1
-              .self$get_next_reader__()
-              return(.self$read_next_batch())
+              self$current_stream_index <- self$current_stream_index + 1
+              self$get_next_reader__()
+              return(self$read_next_batch())
             }
           } else {
-            if (.self$coerce_schema) {
+            if (self$coerce_schema) {
               # Note: this approach is much more performant than using %>% mutate(across())
               # TODO: in the future, Arrow may support native conversion from time string to their type
-              for (time_variable in .self$time_variables) {
+              for (time_variable in self$time_variables) {
                 if (!is(batch[[time_variable]]$type, 'Time64')) {
                   batch[[time_variable]] <- arrow::arrow_array(stringr::str_c(
                     '2000-01-01T',
@@ -97,32 +108,33 @@ RedivisBatchReader <- setRefClass(
                 }
               }
 
-              batch <- (arrow::as_record_batch(
+              batch <- arrow::as_record_batch(
                 batch,
-                schema = .self$custom_classes$writer_schema
-              ))
+                schema = self$writer_schema
+              )
             }
-            .self$current_offset <- .self$current_offset + batch$num_rows
-            .self$retry_count <- 0
+            self$current_offset <- self$current_offset + batch$num_rows
+            self$retry_count <- 0
             return(batch)
           }
         },
         error = function(e) {
-          .self$retry_count = .self$retry_count + 1
-          if (.self$retry_count > 10) {
+          self$retry_count <- self$retry_count + 1
+          if (self$retry_count > 10) {
             message(
               "Download connection failed after too many retries, giving up."
             )
             abort_redivis_network_error(conditionMessage(e))
           }
-          Sys.sleep(.self$retry_count)
-          .self$get_next_reader__(.self$current_offset)
-          return(.self$read_next_batch())
+          Sys.sleep(self$retry_count)
+          self$get_next_reader__(self$current_offset)
+          return(self$read_next_batch())
         }
       )
     },
+
     close = function() {
-      base::close(.self$custom_classes$current_connection)
+      base::close(self$current_connection)
     }
   )
 )
@@ -138,43 +150,49 @@ make_rows_request <- function(
   progress = TRUE,
   coerce_schema = FALSE,
   batch_preprocessor = NULL,
-  table = NULL,
+  instance = NULL,
   use_export_api = FALSE,
   max_parallelization = parallelly::availableCores()
 ) {
-  payload = list(
-    "requestedStreamCount" = if (type == 'arrow_stream') {
-      1
-    } else {
-      min(8, max_parallelization)
-    },
-    format = "arrow"
-  )
-
-  if (!is.null(max_results)) {
-    payload$maxResults = max_results
-  }
-  if (!is.null(selected_variable_names)) {
-    payload$selectedVariables = selected_variable_names
-  }
-
-  arrow::set_cpu_count(max_parallelization)
-  arrow::set_io_thread_count(max(max_parallelization, 2))
-
-  use_export_api <- use_export_api &&
-    !is.null(table) &&
-    type != 'arrow_stream' &&
-    is.null(selected_variable_names) &&
-    is.null(batch_preprocessor) &&
-    is.null(max_results)
-
-  if (!use_export_api) {
-    read_session <- make_request(
-      method = "post",
-      path = str_interp("${uri}/readSessions"),
-      parse_response = TRUE,
-      payload = payload
+  if (inherits(instance, "ReadStream")) {
+    read_session <- list(
+      streams = list(instance),
+      numRows = instance$properties$estimatedRows
     )
+  } else {
+    payload = list(
+      "requestedStreamCount" = if (type == 'arrow_stream') {
+        1
+      } else {
+        min(8, max_parallelization)
+      },
+      format = "arrow"
+    )
+
+    if (!is.null(max_results)) {
+      payload$maxResults = max_results
+    }
+    if (!is.null(selected_variable_names)) {
+      payload$selectedVariables = selected_variable_names
+    }
+
+    arrow::set_cpu_count(max_parallelization)
+    arrow::set_io_thread_count(max(max_parallelization, 2))
+    use_export_api <- use_export_api &&
+      inherits(instance, "table") &&
+      type != 'arrow_stream' &&
+      is.null(selected_variable_names) &&
+      is.null(batch_preprocessor) &&
+      is.null(max_results)
+
+    if (!use_export_api) {
+      read_session <- make_request(
+        method = "post",
+        path = str_interp("${uri}/readSessions"),
+        parse_response = TRUE,
+        payload = payload
+      )
+    }
   }
 
   if (type == 'arrow_stream') {
@@ -182,8 +200,7 @@ make_rows_request <- function(
       streams = read_session$streams,
       coerce_schema = coerce_schema,
       current_stream_index = 1,
-      custom_classes = list(schema = get_arrow_schema(variables)),
-      time_variables = list()
+      schema = get_arrow_schema(variables)
     )
     reader$get_next_reader__()
 
@@ -191,8 +208,14 @@ make_rows_request <- function(
   }
 
   folder <- NULL
-  # Always write to disk for now to improve memory efficiency
-  if (type == 'arrow_dataset' || TRUE) {
+  if (
+    type == 'arrow_dataset' ||
+      use_export_api ||
+      # We need to always write to disk if we're doing things in parallel,
+      # because we can't efficiently copy results between processes when working in parallel
+      (length(read_session$streams) > 1 &&
+        max_parallelization > 1)
+  ) {
     folder <- str_interp('${get_temp_dir()}/tables/${uuid::UUIDgenerate()}')
     dir.create(folder, recursive = TRUE)
 
@@ -202,17 +225,19 @@ make_rows_request <- function(
   }
 
   if (use_export_api) {
-    table$download(folder, format = 'parquet', progress = progress)
+    instance$download(folder, format = 'parquet', progress = progress)
   } else if (progress) {
-    result <- progressr::with_progress(parallel_stream_arrow(
-      folder,
-      read_session$streams,
-      max_results = read_session$numRows,
-      variables,
-      coerce_schema,
-      batch_preprocessor,
-      max_parallelization
-    ))
+    result <- progressr::with_progress(
+      parallel_stream_arrow(
+        folder,
+        read_session$streams,
+        max_results = read_session$numRows,
+        variables,
+        coerce_schema,
+        batch_preprocessor,
+        max_parallelization
+      )
+    )
   } else {
     result <- parallel_stream_arrow(
       folder,
@@ -225,28 +250,63 @@ make_rows_request <- function(
     )
   }
 
-  ds <- arrow::open_dataset(
-    folder,
-    format = if (use_export_api) "parquet" else "feather",
-    schema = if (is.null(batch_preprocessor) && !use_export_api) {
-      get_arrow_schema(variables)
-    } else {
-      NULL
-    }
-  )
+  if (!is.null(folder)) {
+    ds <- arrow::open_dataset(
+      folder,
+      format = if (use_export_api) "parquet" else "feather",
+      schema = if (is.null(batch_preprocessor) && !use_export_api) {
+        get_arrow_schema(variables)
+      } else {
+        NULL
+      }
+    )
 
-  if (type == 'arrow_dataset') {
-    return(ds)
+    if (type == 'arrow_dataset') {
+      return(ds)
+    } else {
+      if (type == 'arrow_table') {
+        arrow::as_arrow_table(ds)
+      } else if (type == 'tibble') {
+        tibble::as_tibble(ds)
+      } else if (type == 'data_frame') {
+        as.data.frame(ds)
+      } else if (type == 'data_table') {
+        data.table::as.data.table(ds)
+      }
+    }
   } else {
     if (type == 'arrow_table') {
-      arrow::as_arrow_table(ds)
+      return(result)
     } else if (type == 'tibble') {
-      tibble::as_tibble(ds)
+      return(tibble::as_tibble(result))
     } else if (type == 'data_frame') {
-      as.data.frame(ds)
+      return(as.data.frame(result))
     } else if (type == 'data_table') {
-      data.table::as.data.table(ds)
+      return(data.table::as.data.table(result))
     }
+  }
+}
+
+get_on_progress_callback <- function(total) {
+  if (is.null(total)) {
+    return(function(amount, final = FALSE) {})
+  }
+  if (FALSE) {} else {
+    multiplier <- 100 / total
+    pb <- progressr::progressor(steps = 100)
+    cached_amount <- 0
+    last_timestamp <- proc.time()[3]
+    return(
+      function(amount, final = FALSE) {
+        if (proc.time()[3] - last_timestamp > 0.2 || final) {
+          pb(amount = (cached_amount + amount) * multiplier)
+          cached_amount <<- 0
+          last_timestamp <<- proc.time()[3]
+        } else {
+          cached_amount <<- cached_amount + amount
+        }
+      }
+    )
   }
 }
 
@@ -262,15 +322,20 @@ parallel_stream_arrow <- function(
   if (!length(streams)) {
     return()
   }
+  pb <- NULL
+  if (!is.null(max_results)) {
+    pb_multiplier <- 100 / max_results
+    pb <- progressr::progressor(steps = 100)
+  }
 
-  pb_multiplier <- 100 / max_results
-  pb <- progressr::progressor(steps = 100)
-
-  worker_count <- min(
-    8,
-    length(streams),
-    parallelly::availableCores(),
-    max_parallelization
+  worker_count <- max(
+    1,
+    min(
+      8,
+      length(streams),
+      parallelly::availableCores(),
+      max_parallelization
+    )
   )
 
   # Parallely is returning True here in positron for Mac, but multicore still doesn't work
@@ -299,12 +364,7 @@ parallel_stream_arrow <- function(
   })
 
   if (is.null(folder)) {
-    return(do.call(
-      arrow::concat_tables,
-      sapply(results, function(x) {
-        arrow::read_ipc_stream(x, as_data_frame = FALSE)
-      })
-    ))
+    return(do.call(arrow::arrow_table, unlist(results, recursive = FALSE)))
   }
 }
 
@@ -390,7 +450,7 @@ process_arrow_stream <- function(
         should_reorder_fields <- TRUE
       }
 
-      last_measured_time <- Sys.time()
+      last_measured_time <- proc.time()[3]
       current_progress_rows <- 0
 
       while (TRUE) {
@@ -415,69 +475,50 @@ process_arrow_stream <- function(
               }
             }
 
-            # TODO: this is a significant bottleneck. Can we make it faster, maybe call all at once?
-            for (field in fields_to_add) {
-              if (is(field$type, "Date32")) {
-                batch <- batch$AddColumn(
-                  0,
-                  field,
+            # Add all missing fields at once to avoid repeated AddColumn copies
+            if (length(fields_to_add) > 0) {
+              null_columns <- lapply(fields_to_add, function(field) {
+                if (is(field$type, "Date32")) {
                   arrow::arrow_array(rep(
                     NA_integer_,
                     batch$num_rows
                   ))$cast(arrow::date32())
-                )
-              } else if (is(field$type, "Time64")) {
-                batch <- batch$AddColumn(
-                  0,
-                  field,
+                } else if (is(field$type, "Time64")) {
                   arrow::arrow_array(rep(
                     NA_integer_,
                     batch$num_rows
                   ))$cast(arrow::int64())$cast(arrow::time64())
-                )
-              } else if (is(field$type, "Float64")) {
-                batch <- batch$AddColumn(
-                  0,
-                  field,
+                } else if (is(field$type, "Float64")) {
                   arrow::arrow_array(rep(NA_real_, batch$num_rows))
-                )
-              } else if (is(field$type, "Boolean")) {
-                batch <- batch$AddColumn(
-                  0,
-                  field,
+                } else if (is(field$type, "Boolean")) {
                   arrow::arrow_array(rep(NA, batch$num_rows))
-                )
-              } else if (is(field$type, "Int64")) {
-                batch <- batch$AddColumn(
-                  0,
-                  field,
+                } else if (is(field$type, "Int64")) {
                   arrow::arrow_array(rep(
                     NA_integer_,
                     batch$num_rows
                   ))$cast(arrow::int64())
-                )
-              } else if (is(field$type, "Timestamp")) {
-                batch <- batch$AddColumn(
-                  0,
-                  field,
+                } else if (is(field$type, "Timestamp")) {
                   arrow::arrow_array(rep(
                     NA_integer_,
                     batch$num_rows
-                  ))$cast(arrow::int64())$cast(arrow::timestamp(
-                    unit = "us",
-                    timezone = ""
-                  ))
-                )
-              } else {
-                batch <- batch$AddColumn(
-                  0,
-                  field,
+                  ))$cast(arrow::int64())$cast(
+                    arrow::timestamp(unit = "us", timezone = "")
+                  )
+                } else {
                   arrow::arrow_array(rep(NA_character_, batch$num_rows))
-                )
-              }
-            }
-
-            if (should_reorder_fields) {
+                }
+              })
+              names(null_columns) <- sapply(fields_to_add, function(f) f$name)
+              existing_columns <- setNames(
+                lapply(batch$schema$names, function(name) batch[[name]]),
+                batch$schema$names
+              )
+              all_columns <- c(existing_columns, null_columns)
+              batch <- do.call(
+                arrow::record_batch,
+                all_columns[names(schema)]
+              )
+            } else if (should_reorder_fields) {
               batch <- batch[, names(schema)] # reorder fields
             }
 
@@ -509,21 +550,23 @@ process_arrow_stream <- function(
             }
           }
 
-          if (Sys.time() - last_measured_time > 0.2) {
-            pb(amount = current_progress_rows * pb_multiplier)
+          if (proc.time()[3] - last_measured_time > 0.2) {
+            if (!is.null(pb)) {
+              pb(amount = current_progress_rows * pb_multiplier)
+            }
+
             current_progress_rows <- 0
-            last_measured_time = Sys.time()
+            last_measured_time <- proc.time()[3]
           }
         }
       }
 
-      pb(amount = current_progress_rows * pb_multiplier)
+      if (!is.null(pb)) {
+        pb(amount = current_progress_rows * pb_multiplier)
+      }
 
       if (is.null(output_file)) {
-        # Need to serialize the table to pass between threads
-        table <- do.call(arrow::arrow_table, in_memory_batches)
-        serialized <- arrow::write_to_raw(table, format = "stream") # stream is much faster to read
-        return(serialized)
+        return(in_memory_batches)
       } else {
         if (!is.null(stream_writer)) {
           stream_writer$close()
