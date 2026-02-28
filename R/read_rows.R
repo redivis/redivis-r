@@ -568,16 +568,11 @@ process_arrow_stream <- function(
               in_memory_batches <- c(in_memory_batches, batch)
             }
           }
-          later::run_now(0.01)
-          # Sys.sleep(0.01)
+          # Check for pending interrupts (e.g., Jupyter's stop button).
+          # Calls R_CheckUserInterrupt() at the C level with near-zero overhead.
+          .Call("C_check_interrupt")
 
           if (proc.time()[3] - last_measured_time > 0.2) {
-            # Yield to R's event loop to check for pending interrupts (e.g.,
-            # Jupyter's stop button). later::run_now(0) processes pending
-            # callbacks and checks R_CheckUserInterrupt with near-zero overhead.
-            # Sys.sleep(0.1)
-            # later::run_now(0.001)
-
             if (!is.null(pb)) {
               pb(amount = current_progress_rows * pb_multiplier)
             }
