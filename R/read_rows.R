@@ -154,7 +154,7 @@ make_rows_request <- function(
   use_export_api = FALSE,
   max_parallelization = parallelly::availableCores()
 ) {
-  print('v2')
+  print('v3')
   if (inherits(instance, "ReadStream")) {
     read_session <- list(
       streams = list(instance),
@@ -473,11 +473,6 @@ process_arrow_stream <- function(
       current_progress_rows <- 0
 
       while (TRUE) {
-        # Yield to R's event loop to check for pending interrupts (e.g.,
-        # Jupyter's stop button). This is a no-op in terms of delay but
-        # allows R_CheckUserInterrupt to fire.
-        Sys.sleep(0.1)
-
         batch <- stream_reader$read_next_batch()
         if (is.null(batch)) {
           break
@@ -575,6 +570,11 @@ process_arrow_stream <- function(
           }
 
           if (proc.time()[3] - last_measured_time > 0.2) {
+            # Yield to R's event loop to check for pending interrupts (e.g.,
+            # Jupyter's stop button). later::run_now(0) processes pending
+            # callbacks and checks R_CheckUserInterrupt with near-zero overhead.
+            later::run_now(0)
+
             if (!is.null(pb)) {
               pb(amount = current_progress_rows * pb_multiplier)
             }
