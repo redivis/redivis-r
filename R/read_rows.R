@@ -574,6 +574,7 @@ process_arrow_stream <- function(
             # Jupyter's stop button). later::run_now(0) processes pending
             # callbacks and checks R_CheckUserInterrupt with near-zero overhead.
             Sys.sleep(0.001)
+            later::run_now(0.001)
 
             if (!is.null(pb)) {
               pb(amount = current_progress_rows * pb_multiplier)
