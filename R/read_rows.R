@@ -228,7 +228,8 @@ make_rows_request <- function(
   if (use_export_api) {
     instance$download(folder, format = 'parquet', progress = progress)
   } else if (progress) {
-    result <- progressr::with_progress(
+    # avoid any progressr warnings
+    result <- suppressWarnings(progressr::with_progress(
       parallel_stream_arrow(
         folder,
         read_session$streams,
@@ -238,7 +239,7 @@ make_rows_request <- function(
         batch_preprocessor,
         max_parallelization
       )
-    )
+    ))
   } else {
     result <- parallel_stream_arrow(
       folder,
@@ -559,10 +560,12 @@ process_arrow_stream <- function(
             }
           }
 
-          if (proc.time()[3] - last_measured_time > 0.1) {
+          if (proc.time()[3] - last_measured_time > 0.2) {
             # Yield to R's event loop to check for pending interrupts. Only need to do if on the main thread
+            # This only sort of works - need to hit the Jupyter "stop" button many times, but better than nothing
             if (!is_subprocess) {
-              Sys.sleep(0.01)
+              flush.console()
+              Sys.sleep(0.001)
             }
 
             if (!is.null(pb)) {
