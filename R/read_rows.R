@@ -570,7 +570,7 @@ process_arrow_stream <- function(
           }
           # Check for pending interrupts (e.g., Jupyter's stop button).
           # Calls R_CheckUserInterrupt() at the C level with near-zero overhead.
-          .Call("C_check_interrupt", PACKAGE = "redivis")
+          .Call("C_check_interrupt")
 
           if (proc.time()[3] - last_measured_time > 0.2) {
             if (!is.null(pb)) {
