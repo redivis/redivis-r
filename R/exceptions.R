@@ -8,11 +8,13 @@ abort_redivis_error <- function(
   ...,
   call = rlang::caller_env()
 ) {
+  info <- redivis_stack_depth("redivis")
   rlang::abort(
     message = message,
     class = class,
     ...,
-    call = call
+    trace = rlang::trace_back(bottom = sys.frame(info$first_in_pkg)),
+    call = rlang::caller_env(info$last_in_pkg - info$first_in_pkg - 1)
   )
 }
 
@@ -24,6 +26,7 @@ abort_redivis_api_error <- function(
   description = "",
   call = rlang::caller_env()
 ) {
+  info <- redivis_stack_depth("redivis")
   display_msg <- str_interp(
     "[${status_code} ${message}] ${description}"
   )
@@ -32,7 +35,8 @@ abort_redivis_api_error <- function(
     class = c("redivis_api_error", "redivis_error"),
     status_code = status_code,
     description = description,
-    call = call
+    trace = rlang::trace_back(bottom = sys.frame(info$first_in_pkg)),
+    call = rlang::caller_env(info$last_in_pkg - info$first_in_pkg - 1)
   )
 }
 
@@ -44,13 +48,15 @@ abort_redivis_not_found_error <- function(
   description = "",
   call = rlang::caller_env()
 ) {
+  info <- redivis_stack_depth("redivis")
   display_msg <- description
   rlang::abort(
     message = display_msg,
     class = c("redivis_not_found_error", "redivis_api_error", "redivis_error"),
     status_code = status_code,
     description = description,
-    call = call
+    trace = rlang::trace_back(bottom = sys.frame(info$first_in_pkg)),
+    call = rlang::caller_env(info$last_in_pkg - info$first_in_pkg - 1)
   )
 }
 
@@ -62,6 +68,7 @@ abort_redivis_authorization_error <- function(
   description = "",
   call = rlang::caller_env()
 ) {
+  info <- redivis_stack_depth("redivis")
   display_msg <- paste0("[", status_code, " ", message, "] ", description)
   rlang::abort(
     message = display_msg,
@@ -72,7 +79,8 @@ abort_redivis_authorization_error <- function(
     ),
     status_code = status_code,
     description = description,
-    call = call
+    trace = rlang::trace_back(bottom = sys.frame(info$first_in_pkg)),
+    call = rlang::caller_env(info$last_in_pkg - info$first_in_pkg - 1)
   )
 }
 
@@ -83,6 +91,7 @@ abort_redivis_network_error <- function(
   original_exception = NULL,
   call = rlang::caller_env()
 ) {
+  info <- redivis_stack_depth("redivis")
   display_msg <- if (!is.null(original_exception)) {
     paste0(message, ": ", conditionMessage(original_exception))
   } else {
@@ -94,27 +103,26 @@ abort_redivis_network_error <- function(
       "redivis_network_error",
       "redivis_error"
     ),
-    call = call
+    trace = rlang::trace_back(bottom = sys.frame(info$first_in_pkg)),
+    call = rlang::caller_env(info$last_in_pkg - info$first_in_pkg - 1)
   )
 }
+
 
 # ---- ValueError ----
 # (Avoid naming collision with base::ValueError; use redivis_value_error)
 
 abort_redivis_value_error <- function(message, call = rlang::caller_env()) {
-  # cli::cli_abort(
-  #   message = message,
-  #   class = c("redivis_value_error", "redivis_error"),
-  #   call = NULL
-  # )
+  info <- redivis_stack_depth("redivis")
+
   rlang::abort(
     message = message,
     class = c(
       "redivis_value_error",
       "redivis_error"
     ),
-    .trace_bottom = rlang::caller_env(3),
-    call = rlang::caller_env(3)
+    trace = rlang::trace_back(bottom = sys.frame(info$first_in_pkg)),
+    call = rlang::caller_env(info$last_in_pkg - info$first_in_pkg - 1)
   )
 }
 
@@ -126,6 +134,7 @@ abort_redivis_job_error <- function(
   status = "status unknown",
   call = rlang::caller_env()
 ) {
+  info <- redivis_stack_depth("redivis")
   final_message <- message %||% paste0("Job finished with status: ", status)
   display_msg <- paste0("[", kind, " ", status, "] ", final_message)
   rlang::abort(
@@ -136,7 +145,8 @@ abort_redivis_job_error <- function(
     ),
     kind = kind,
     status = status,
-    call = call
+    trace = rlang::trace_back(bottom = sys.frame(info$first_in_pkg)),
+    call = rlang::caller_env(info$last_in_pkg - info$first_in_pkg - 1)
   )
 }
 
@@ -146,13 +156,52 @@ abort_redivis_deprecation_error <- function(
   message,
   call = rlang::caller_env()
 ) {
+  info <- redivis_stack_depth("redivis")
   rlang::abort(
     message = message,
     class = c(
       "redivis_deprecation_error",
       "redivis_error"
     ),
-    call = call
+    trace = rlang::trace_back(bottom = sys.frame(info$first_in_pkg)),
+    call = rlang::caller_env(info$last_in_pkg - info$first_in_pkg - 1)
+  )
+}
+
+redivis_stack_depth <- function(pkg = "redivis") {
+  calls <- sys.calls()
+  frames <- sys.frames()
+
+  # Identify namespace for each frame, if any
+  ns <- vapply(
+    frames,
+    function(env) {
+      nsenv <- tryCatch(getNamespaceName(env), error = function(e) {
+        NA_character_
+      })
+      # getNamespaceName() works for namespace envs; many frames aren't namespace envs
+      if (is.na(nsenv)) {
+        # fall back: where is this frame located?
+        # (tends to return "redivis" for functions defined in your namespace)
+        tryCatch(environmentName(topenv(env)), error = function(e) {
+          NA_character_
+        })
+      } else {
+        nsenv
+      }
+    },
+    character(1)
+  )
+
+  in_pkg <- which(ns == pkg)
+  last_in_pkg <- if (length(in_pkg)) max(in_pkg) else 0L
+  first_in_pkg <- if (length(in_pkg)) min(in_pkg) else 0L
+
+  list(
+    calls = calls,
+    namespaces = ns,
+    last_in_pkg = last_in_pkg,
+    first_in_pkg = first_in_pkg
   )
 }
 
