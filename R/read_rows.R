@@ -8,9 +8,10 @@ RedivisBatchReader <- R6::R6Class(
     current_stream_index = 1,
     time_variables = NULL,
     schema = NULL,
-    writer_schema = NULL,
     current_record_batch_reader = NULL,
     current_connection = NULL,
+    fields_to_add = NULL,
+    should_reorder_fields = FALSE,
 
     initialize = function(
       streams,
@@ -23,6 +24,8 @@ RedivisBatchReader <- R6::R6Class(
       self$current_stream_index <- current_stream_index
       self$schema <- schema
       self$time_variables <- list()
+      self$fields_to_add <- list()
+      self$should_reorder_fields <- FALSE
     },
 
     get_next_reader__ = function(offset = 0) {
@@ -44,26 +47,42 @@ RedivisBatchReader <- R6::R6Class(
             getNamespace("arrow")$MakeRConnectionInputStream(con)
           )
 
-          writer_schema_fields <- list()
-
-          # Only get the fields in the reader, to handle when reading from an
-          # unreleased table made up of uploads with inconsistent variables
-          for (field_name in stream_reader$schema$names) {
-            writer_schema_fields <- append(
-              writer_schema_fields,
-              self$schema$GetFieldByName(field_name)
-            )
-          }
-
           if (self$coerce_schema) {
-            for (field in writer_schema_fields) {
+            for (field in self$schema$fields) {
               if (is(field$type, "Time64")) {
                 self$time_variables <- append(self$time_variables, field$name)
               }
             }
           }
 
-          self$writer_schema <- arrow::schema(writer_schema_fields)
+          # Determine fields missing from the stream that exist in the full schema
+          self$fields_to_add <- list()
+          self$should_reorder_fields <- FALSE
+
+          i <- 0
+          for (field in stream_reader$schema$fields) {
+            i <- i + 1
+            if (
+              !self$should_reorder_fields &&
+                i != match(field$name, names(self$schema))
+            ) {
+              self$should_reorder_fields <- TRUE
+            }
+          }
+
+          for (field_name in self$schema$names) {
+            if (is.null(stream_reader$schema$GetFieldByName(field_name))) {
+              self$fields_to_add <- append(
+                self$fields_to_add,
+                self$schema$GetFieldByName(field_name)
+              )
+            }
+          }
+
+          if (!self$should_reorder_fields && length(self$fields_to_add)) {
+            self$should_reorder_fields <- TRUE
+          }
+
           self$current_record_batch_reader <- stream_reader
           self$current_connection <- con
         },
@@ -108,9 +127,58 @@ RedivisBatchReader <- R6::R6Class(
                 }
               }
 
+              # Add all missing fields at once to avoid repeated AddColumn copies
+              if (length(self$fields_to_add) > 0) {
+                null_columns <- lapply(self$fields_to_add, function(field) {
+                  if (is(field$type, "Date32")) {
+                    arrow::arrow_array(rep(
+                      NA_integer_,
+                      batch$num_rows
+                    ))$cast(arrow::date32())
+                  } else if (is(field$type, "Time64")) {
+                    arrow::arrow_array(rep(
+                      NA_integer_,
+                      batch$num_rows
+                    ))$cast(arrow::int64())$cast(arrow::time64())
+                  } else if (is(field$type, "Float64")) {
+                    arrow::arrow_array(rep(NA_real_, batch$num_rows))
+                  } else if (is(field$type, "Boolean")) {
+                    arrow::arrow_array(rep(NA, batch$num_rows))
+                  } else if (is(field$type, "Int64")) {
+                    arrow::arrow_array(rep(
+                      NA_integer_,
+                      batch$num_rows
+                    ))$cast(arrow::int64())
+                  } else if (is(field$type, "Timestamp")) {
+                    arrow::arrow_array(rep(
+                      NA_integer_,
+                      batch$num_rows
+                    ))$cast(arrow::int64())$cast(
+                      arrow::timestamp(unit = "us", timezone = "")
+                    )
+                  } else {
+                    arrow::arrow_array(rep(NA_character_, batch$num_rows))
+                  }
+                })
+                names(null_columns) <- sapply(self$fields_to_add, function(f) {
+                  f$name
+                })
+                existing_columns <- setNames(
+                  lapply(batch$schema$names, function(name) batch[[name]]),
+                  batch$schema$names
+                )
+                all_columns <- c(existing_columns, null_columns)
+                batch <- do.call(
+                  arrow::record_batch,
+                  all_columns[names(self$schema)]
+                )
+              } else if (self$should_reorder_fields) {
+                batch <- batch[, names(self$schema)]
+              }
+
               batch <- arrow::as_record_batch(
                 batch,
-                schema = self$writer_schema
+                schema = self$schema
               )
             }
             self$current_offset <- self$current_offset + batch$num_rows
@@ -563,9 +631,11 @@ process_arrow_stream <- function(
           if (proc.time()[3] - last_measured_time > 0.2) {
             # Yield to R's event loop to check for pending interrupts. Only need to do if on the main thread
             # This only sort of works - need to hit the Jupyter "stop" button many times, but better than nothing
-            if (!is_subprocess) {
-              Sys.sleep(0.001)
-            }
+            # TODO: This doesn't really work right now, and adds overhead. A longer Sys.sleep improves it, but adds more overhead.
+            #       Disabling for now, only relevant for single-stream downloads, which only meaningfully happens with max_results set
+            # if (!is_subprocess) {
+            #   Sys.sleep(0.01)
+            # }
 
             if (!is.null(pb)) {
               pb(amount = current_progress_rows * pb_multiplier)

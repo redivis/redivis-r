@@ -6,7 +6,7 @@ abort_redivis_error <- function(
   message,
   class = "redivis_error",
   ...,
-  call = rlang::caller_env()
+  call = NULL
 ) {
   rlang::abort(
     message = message,
@@ -22,7 +22,7 @@ abort_redivis_api_error <- function(
   message,
   status_code,
   description = "",
-  call = rlang::caller_env()
+  call = NULL
 ) {
   display_msg <- str_interp(
     "[${status_code} ${message}] ${description}"
@@ -42,7 +42,7 @@ abort_redivis_not_found_error <- function(
   message = "",
   status_code = 404L,
   description = "",
-  call = rlang::caller_env()
+  call = NULL
 ) {
   display_msg <- description
   rlang::abort(
@@ -60,7 +60,7 @@ abort_redivis_authorization_error <- function(
   message,
   status_code,
   description = "",
-  call = rlang::caller_env()
+  call = NULL
 ) {
   display_msg <- paste0("[", status_code, " ", message, "] ", description)
   rlang::abort(
@@ -81,7 +81,7 @@ abort_redivis_authorization_error <- function(
 abort_redivis_network_error <- function(
   message = "A network error occurred",
   original_exception = NULL,
-  call = rlang::caller_env()
+  call = NULL
 ) {
   display_msg <- if (!is.null(original_exception)) {
     paste0(message, ": ", conditionMessage(original_exception))
@@ -101,7 +101,7 @@ abort_redivis_network_error <- function(
 # ---- ValueError ----
 # (Avoid naming collision with base::ValueError; use redivis_value_error)
 
-abort_redivis_value_error <- function(message, call = rlang::caller_env()) {
+abort_redivis_value_error <- function(message, call = NULL) {
   rlang::abort(
     message = message,
     class = c(
@@ -118,7 +118,7 @@ abort_redivis_job_error <- function(
   message = NULL,
   kind = NULL,
   status = "status unknown",
-  call = rlang::caller_env()
+  call = NULL
 ) {
   final_message <- message %||% paste0("Job finished with status: ", status)
   display_msg <- paste0("[", kind, " ", status, "] ", final_message)
@@ -138,7 +138,7 @@ abort_redivis_job_error <- function(
 
 abort_redivis_deprecation_error <- function(
   message,
-  call = rlang::caller_env()
+  call = NULL
 ) {
   rlang::abort(
     message = message,
@@ -160,7 +160,8 @@ abort_redivis_deprecation_error <- function(
 raise_api_error <- function(
   response_json = NULL,
   response_text = NULL,
-  response = NULL
+  response = NULL,
+  call = NULL
 ) {
   status_code <- NULL
   if (!is.null(response)) {
@@ -191,19 +192,22 @@ raise_api_error <- function(
     abort_redivis_not_found_error(
       message = err,
       status_code = 404L,
-      description = description
+      description = description,
+      call = call
     )
   } else if (identical(status_code, 403L)) {
     abort_redivis_authorization_error(
       message = err,
       status_code = 403L,
-      description = description
+      description = description,
+      call = call
     )
   } else {
     abort_redivis_api_error(
       message = err,
       status_code = status_code %||% NA_integer_,
-      description = description
+      description = description,
+      call = call
     )
   }
 
