@@ -197,7 +197,9 @@ perform_parallel_download <- function(
   handles <- vector("list", length(uris))
 
   # limit open files
-  max_parallelization <- max(min(48, length(uris), max_parallelization), 1)
+  # NOTE: Parallelization above 24 seems to yield diminishing returns, even for a large number of small files
+  #       It's also causing weird silent "hangs" when downloading in notebooks
+  max_parallelization <- max(min(24, length(uris), max_parallelization), 1)
   pool <- curl::new_pool(
     total_con = ceiling(max(1, max_parallelization / 2)), # multiplexing allows us to have fewer connections, so divide by 2
   )
