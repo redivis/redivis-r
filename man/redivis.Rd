@@ -5,7 +5,7 @@
 \alias{redivis}
 \title{redivis}
 \format{
-An object of class \code{list} of length 16.
+An object of class \code{environment} of length 16.
 }
 \usage{
 library(redivis)
@@ -14,7 +14,6 @@ library(redivis)
 redivis$current_user()
 redivis$dataset(name)
 redivis$datasource(source)
-redivis$file(id)
 redivis$notebook(name)
 redivis$organization(name)
 redivis$parameter(name)
@@ -42,12 +41,17 @@ table$to_tibble()
 #   to_sf_tibble()
 #   ...
 table$download(path=NULL, format="csv", ...)
+
+# Read files (file tables only):
+table$file("path/to/file")
+open(file)
 file$read(...)
 file$download(path=NULL, ...)
-file$stream(callback)
-table$download_files(path, ...)
+dir <- table$to_directory()
+dir$get("/path/to/file/or/dir")
+dir$download(path=NULL, ...)
 
-# Upload tabular data
+# Upload data
 table$upload()$create("/path/to/file.csv", ...)
 # Upload raw files
 table$add_files(directory="/path/to/dir", ...)

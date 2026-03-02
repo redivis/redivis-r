@@ -118,7 +118,7 @@ File <- R6::R6Class(
       )
     },
 
-    open = function(mode = "rb") {
+    open = function(mode = "r") {
       if (!mode %in% c("r", "rb", "rt")) {
         abort_redivis_error(
           str_interp(
@@ -240,6 +240,6 @@ File <- R6::R6Class(
 #' @param ... Ignored (present for compatibility with the generic)
 #' @return A readable connection backed by HTTP range requests
 #' @export
-open.File <- function(con, mode = "rb", ...) {
+open.File <- function(con, mode = "r", ...) {
   con$open(mode)
 }

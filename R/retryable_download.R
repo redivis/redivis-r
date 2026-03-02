@@ -399,6 +399,27 @@ perform_parallel_download <- function(
         }
         active_downloads <<- active_downloads - 1L
         active_bytes <<- active_bytes - estimated_size
+      } else if (final && bytes_written != content_length) {
+        # Incomplete download — treat as a retriable error
+        tryCatch(close(file_con), error = function(e) {})
+        file_connections[[index]] <<- NULL
+        active_downloads <<- active_downloads - 1L
+        active_bytes <<- active_bytes - estimated_size
+        if (retry_count < max_retries) {
+          pending[[length(pending) + 1]] <<- list(
+            index = index,
+            retry_count = retry_count + 1L,
+            start_byte = bytes_written + start_byte
+          )
+        } else {
+          stop(sprintf(
+            "Download incomplete for %s: got %d of %d bytes after %d retries",
+            download_path,
+            bytes_written,
+            content_length,
+            max_retries
+          ))
+        }
       }
     }
 
