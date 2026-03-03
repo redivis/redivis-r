@@ -275,6 +275,6 @@ redivis <- local({
     Workflow$new(name = name)
   }
 
-  lockEnvironment(e)
+  lockEnvironment(e, bindings = TRUE)
   e
 })

@@ -32,7 +32,7 @@ Query <- R6::R6Class(
     },
 
     print = function(...) {
-      cat(str_interp("<Query ${self$properties$id}>\n"))
+      cat(str_interp("<Query ${self$properties$id %||% [uninitialized]}>\n"))
       invisible(self)
     },
 

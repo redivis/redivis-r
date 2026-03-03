@@ -132,8 +132,9 @@ static size_t redivis_read(void *buf, size_t size, size_t nitems,
     size_t total_requested = size * nitems;
     if (total_requested == 0 || size == 0) return 0;
 
+    if (ctx->pos >= ctx->size) return 0;
+
     R_xlen_t remaining = ctx->size - ctx->pos;
-    if (remaining <= 0) return 0;
     if ((R_xlen_t)total_requested > remaining) {
         total_requested = (size_t)remaining;
     }

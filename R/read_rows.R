@@ -386,11 +386,7 @@ parallel_stream_arrow <- function(
 
   # Parallely is returning True here in positron for Mac, but multicore still doesn't work
   # TODO: resolve / validate at a later point
-  if (
-    parallelly::supportsMulticore() &&
-      Sys.info()[["sysname"]] != "Darwin" &&
-      FALSE
-  ) {
+  if (parallelly::supportsMulticore() && Sys.info()[["sysname"]] != "Darwin") {
     oplan <- future::plan(future::multicore, workers = worker_count)
   } else {
     oplan <- future::plan(future::multisession, workers = worker_count)

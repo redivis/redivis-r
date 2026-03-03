@@ -26,7 +26,7 @@ perform_resumable_upload <- function(
 
   # handle empty upload for start_byte == 0
   while (start_byte < file_size || start_byte == 0) {
-    chunk_size <<- min(file_size - start_byte, chunk_size)
+    chunk_size <- min(file_size - start_byte, chunk_size)
     end_byte <- min(start_byte + chunk_size - 1, file_size - 1)
 
     tryCatch(
@@ -93,7 +93,7 @@ perform_resumable_upload <- function(
           )
         }
 
-        retry_count <<- retry_count + 1
+        retry_count <- retry_count + 1
         Sys.sleep(retry_count)
         cat("A network error occurred. Retrying resumable upload.\n")
         start_byte <<- retry_partial_upload(
@@ -223,7 +223,7 @@ perform_standard_upload <- function(
   retry_count = 0,
   on_progress = NULL
 ) {
-  original_url = temp_upload_url
+  original_url <- temp_upload_url
   tryCatch(
     {
       body <- if (
@@ -236,7 +236,7 @@ perform_standard_upload <- function(
         charToRaw(as.character(data))
       }
 
-      headers = get_authorization_header()
+      headers <- get_authorization_header()
 
       req <- httr2::request(temp_upload_url) |>
         httr2::req_method("PUT") |>

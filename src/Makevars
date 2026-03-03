@@ -17,8 +17,12 @@ ifneq ($(CURL_LIBS),)
 else
   CURL_CFLAGS := $(shell curl-config --cflags 2>/dev/null)
   CURL_LIBS   := $(shell curl-config --libs   2>/dev/null)
-  PKG_CFLAGS += $(CURL_CFLAGS)
-  PKG_LIBS   += $(CURL_LIBS)
+  ifneq ($(CURL_LIBS),)
+    PKG_CFLAGS += $(CURL_CFLAGS)
+    PKG_LIBS   += $(CURL_LIBS)
+  else
+    $(error libcurl not found. Please install libcurl development files (e.g., libcurl4-openssl-dev on Debian/Ubuntu, libcurl-devel on Fedora/RHEL, or brew install curl on macOS).)
+  endif
 endif
 
 PKG_LIBS += -lpthread -ldl

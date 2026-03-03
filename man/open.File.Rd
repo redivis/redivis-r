@@ -9,8 +9,8 @@
 \arguments{
 \item{con}{A Redivis File object}
 
-\item{mode}{Character string. \code{"rb"} (default) for binary mode,
-\code{"r"} or \code{"rt"} for text mode.}
+\item{mode}{Character string. \code{"r"} (default) for text mode,
+\code{"rb"} for binary mode.}
 
 \item{...}{Ignored (present for compatibility with the generic)}
 }

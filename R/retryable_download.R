@@ -68,7 +68,9 @@ perform_retryable_download <- function(
             recursive = TRUE
           )
         }
-        pb_multiplier <<- 100 / size
+        if (size > 0) {
+          pb_multiplier <<- 100 / size
+        }
       }
 
       con <- NULL

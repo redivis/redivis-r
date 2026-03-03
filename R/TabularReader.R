@@ -122,7 +122,6 @@ TabularReader <- R6::R6Class(
       batch_preprocessor = NULL,
       max_parallelization = parallelly::availableCores()
     ) {
-      check_is_ready(self)
       params <- get_table_request_params(self, max_results, variables)
 
       make_rows_request(
@@ -147,7 +146,6 @@ TabularReader <- R6::R6Class(
       batch_preprocessor = NULL,
       max_parallelization = parallelly::availableCores()
     ) {
-      check_is_ready(self)
       params <- get_table_request_params(self, max_results, variables)
 
       make_rows_request(
@@ -170,7 +168,6 @@ TabularReader <- R6::R6Class(
       variables = NULL,
       progress = TRUE
     ) {
-      check_is_ready(self)
       params <- get_table_request_params(self, max_results, variables)
 
       make_rows_request(
@@ -193,7 +190,6 @@ TabularReader <- R6::R6Class(
       batch_preprocessor = NULL,
       max_parallelization = parallelly::availableCores()
     ) {
-      check_is_ready(self)
       params <- get_table_request_params(self, max_results, variables)
 
       df <- make_rows_request(
@@ -226,8 +222,6 @@ TabularReader <- R6::R6Class(
           "The sf package must be installed to use the to_sf_tibble() method."
         )
       }
-      check_is_ready(self)
-
       params <- get_table_request_params(
         self,
         max_results,
@@ -265,7 +259,6 @@ TabularReader <- R6::R6Class(
       batch_preprocessor = NULL,
       max_parallelization = parallelly::availableCores()
     ) {
-      check_is_ready(self)
       params <- get_table_request_params(self, max_results, variables)
 
       make_rows_request(
@@ -290,7 +283,6 @@ TabularReader <- R6::R6Class(
       batch_preprocessor = NULL,
       max_parallelization = parallelly::availableCores()
     ) {
-      check_is_ready(self)
       params <- get_table_request_params(self, max_results, variables)
 
       make_rows_request(
@@ -317,7 +309,6 @@ TabularReader <- R6::R6Class(
           "Cannot call $to_read_stream() on a ReadStream."
         )
       }
-      check_is_ready(self)
       params <- get_table_request_params(self, variables = variables)
       payload = list(
         "requestedStreamCount" = target_count,
@@ -445,6 +436,7 @@ get_table_request_params <- function(
     res$use_export_api <- FALSE
     return(res)
   }
+  check_is_ready(instance)
   # IMPORTANT: note that this is also called by the upload$to_* methods
   all_variables <- make_paginated_request(
     path = str_interp("${instance$uri}/variables"),
