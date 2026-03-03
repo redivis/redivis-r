@@ -1,3 +1,5 @@
+cached_directories <- new.env(parent = emptyenv())
+
 #' @include read_rows.R Directory.R api_request.R
 TabularReader <- R6::R6Class(
   "TabularReader",
@@ -5,13 +7,11 @@ TabularReader <- R6::R6Class(
     uri = NULL,
     properties = list(),
     directory = NULL,
-    cached_directory_timestamp = NULL,
 
     initialize = function(uri = NULL, properties = list()) {
       self$uri <- uri
       self$properties <- properties
       self$directory <- NULL
-      self$cached_directory_timestamp <- NULL
     },
 
     to_directory = function(
@@ -25,14 +25,16 @@ TabularReader <- R6::R6Class(
       }
       if (inherits(self, "ReadStream")) {
         abort_redivis_value_error(
-          "Listing files on ReadStreams is not currently supported."
+          "Listing files on ReadStreams is not supported."
         )
       }
 
       is_query <- inherits(self, "Query")
       is_table <- inherits(self, "Table")
 
-      check_is_ready(self)
+      if (is.null(self$directory) && !is.null(cached_directories[[self$uri]])) {
+        self$directory <- cached_directories[[self$uri]]
+      }
 
       # Queries are immutable — return the cached directory if available
       if (is_query && !is.null(self$directory)) {
@@ -43,10 +45,10 @@ TabularReader <- R6::R6Class(
       current_timestamp_ms <- as.numeric(Sys.time()) * 1000
 
       req_headers <- list()
-      if (!is.null(self$cached_directory_timestamp)) {
+      if (!is.null(self$directory$last_cached_at)) {
         req_headers[["If-Modified-Since"]] <- format(
           as.POSIXct(
-            self$cached_directory_timestamp / 1000,
+            self$directory$last_cached_at / 1000,
             origin = "1970-01-01",
             tz = "GMT"
           ),
@@ -80,6 +82,7 @@ TabularReader <- R6::R6Class(
 
       # 304 Not Modified — return cached directory
       if (httr2::resp_status(res) == 304L) {
+        self$directory$last_cached_at <- current_timestamp_ms
         return(self$directory)
       }
 
@@ -107,7 +110,8 @@ TabularReader <- R6::R6Class(
       }
 
       self$directory <- dir
-      self$cached_directory_timestamp <- current_timestamp_ms
+      self$directory$last_cached_at <- current_timestamp_ms
+      cached_directories[[self$uri]] <- dir
       dir
     },
 
@@ -346,8 +350,11 @@ TabularReader <- R6::R6Class(
     },
 
     file = function(path) {
-      cache_age_ms <- if (!is.null(self$cached_directory_timestamp)) {
-        as.numeric(Sys.time()) * 1000 - self$cached_directory_timestamp
+      if (is.null(self$directory)) {
+        self$directory <- cached_directories[[self$uri]]
+      }
+      cache_age_ms <- if (!is.null(self$directory$last_cached_at)) {
+        as.numeric(Sys.time()) * 1000 - self$directory$last_cached_at
       } else {
         Inf
       }

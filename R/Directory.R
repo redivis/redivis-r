@@ -8,6 +8,7 @@ Directory <- R6::R6Class(
     query = NULL,
     parent = NULL,
     children = NULL,
+    last_cached_at = NULL,
     initialize = function(
       path,
       table = NULL,
