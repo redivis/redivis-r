@@ -50,7 +50,6 @@ Export <- R6::R6Class(
             "\\W+",
             "_"
           ))
-          print(path)
           path <- file.path(path, escaped_table_name)
         }
       } else if (

@@ -92,7 +92,5 @@ query_wait_for_finish <- function(query, count = 0) {
       path = str_interp("/queries/${query$properties$id}")
     )
     query_wait_for_finish(query, count + 1)
-  } else {
-    query$properties
   }
 }

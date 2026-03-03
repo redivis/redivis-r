@@ -406,7 +406,7 @@ TabularReader <- R6::R6Class(
   )
 )
 
-check_is_ready = function(instance) {
+check_is_ready <- function(instance) {
   if (inherits(instance, "Query")) {
     query_wait_for_finish(instance)
   } else if (
@@ -416,10 +416,10 @@ check_is_ready = function(instance) {
   }
 }
 
-get_table_request_params = function(
+get_table_request_params <- function(
   instance,
   max_results = NULL,
-  variables,
+  variables = NULL,
   geography_variable = NULL
 ) {
   if (inherits(instance, "ReadStream")) {
@@ -483,14 +483,6 @@ get_table_request_params = function(
         break
       }
     }
-  }
-
-  max_streaming_bytes <- if (
-    is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA))
-  ) {
-    1e9
-  } else {
-    1e11
   }
 
   should_use_export_api <- FALSE

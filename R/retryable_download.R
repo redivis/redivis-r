@@ -35,6 +35,10 @@ perform_retryable_download <- function(
   tryCatch(
     {
       exact_file_exists <- FALSE
+      pb_multiplier <- 0
+      pb <- progressr::progressor(steps = 100)
+      last_progress_time <- proc.time()[["elapsed"]]
+      progress_bytes_written <- 0
 
       headers_callback <- function(response_headers) {
         should_check_filename <- is.null(size) || is.null(md5_hash)
@@ -64,11 +68,8 @@ perform_retryable_download <- function(
             recursive = TRUE
           )
         }
+        pb_multiplier <<- 100 / size
       }
-      pb_multiplier <- 100 / size
-      pb <- progressr::progressor(steps = 100)
-      last_progress_time <<- proc.time()[["elapsed"]]
-      progress_bytes_written <- 0
 
       con <- NULL
       stream_callback = function(chunk) {
@@ -125,8 +126,7 @@ perform_retryable_download <- function(
             retry_count,
             " retries."
           ),
-          original_exception = e,
-          call. = FALSE
+          original_exception = e
         )
       }
     }
@@ -498,11 +498,11 @@ perform_parallel_download <- function(
           retry_count = task$retry_count,
           start_byte = task$start_byte
         )
-        # Make sure we wait for all retries to enqueue. Add 0.1s as additional buffer
-        Sys.sleep(
-          max(vapply(pending, function(task) task$retry_count, 1)) + 0.1
-        )
       }
+      # Make sure we wait for all retries to enqueue. Add 0.1s as additional buffer
+      Sys.sleep(
+        max(vapply(pending, function(task) task$retry_count, 1)) + 0.1
+      )
       pending <- list()
     }
     while (current_index <= length(uris) && can_schedule_more()) {
@@ -546,8 +546,7 @@ check_download_filename <- function(
             "File already exists at '",
             filename,
             "'. Set parameter overwrite=TRUE to overwrite existing files."
-          ),
-          call. = FALSE
+          )
         )
       }
     } else if (!isTRUE(overwrite)) {
@@ -556,8 +555,7 @@ check_download_filename <- function(
           "File already exists at '",
           filename,
           "'. Set parameter overwrite=TRUE to overwrite existing files."
-        ),
-        call. = FALSE
+        )
       )
     }
   }

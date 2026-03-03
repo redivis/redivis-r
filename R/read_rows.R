@@ -356,29 +356,6 @@ make_rows_request <- function(
   }
 }
 
-get_on_progress_callback <- function(total) {
-  if (is.null(total)) {
-    return(function(amount, final = FALSE) {})
-  }
-  if (FALSE) {} else {
-    multiplier <- 100 / total
-    pb <- progressr::progressor(steps = 100)
-    cached_amount <- 0
-    last_timestamp <- proc.time()[3]
-    return(
-      function(amount, final = FALSE) {
-        if (proc.time()[3] - last_timestamp > 0.2 || final) {
-          pb(amount = (cached_amount + amount) * multiplier)
-          cached_amount <<- 0
-          last_timestamp <<- proc.time()[3]
-        } else {
-          cached_amount <<- cached_amount + amount
-        }
-      }
-    )
-  }
-}
-
 parallel_stream_arrow <- function(
   folder,
   streams,

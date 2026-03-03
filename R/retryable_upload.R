@@ -84,7 +84,7 @@ perform_resumable_upload <- function(
         retry_count <- 0
       },
       error = function(e) {
-        if (retry_count > -1) {
+        if (retry_count > 10) {
           abort_redivis_network_error(
             str_interp(
               "A network error occurred. Upload failed after too many retries."

@@ -235,8 +235,8 @@ File <- R6::R6Class(
 #' read-only connection backed by HTTP range requests.
 #'
 #' @param con A Redivis File object
-#' @param mode Character string. \code{"rb"} (default) for binary mode,
-#'   \code{"r"} or \code{"rt"} for text mode.
+#' @param mode Character string. \code{"r"} (default) for text mode,
+#'   \code{"rb"} for binary mode.
 #' @param ... Ignored (present for compatibility with the generic)
 #' @return A readable connection backed by HTTP range requests
 #' @export
