@@ -206,19 +206,25 @@ Directory <- R6::R6Class(
       api_base_url <- generate_api_url("")
       auth_token <- get_auth_token()
 
-      private$.mount_ptr <- .Call(
-        "C_fuse_mount",
-        as.character(mount_path),
-        as.character(cache_dir),
-        as.character(rel_paths),
-        as.double(sizes),
-        as.character(file_ids),
-        as.double(added_ats),
-        as.character(dir_paths),
-        dir_child_names,
-        dir_child_is_dir,
-        as.character(api_base_url),
-        as.character(auth_token)
+      private$.mount_ptr <- tryCatch(
+        .Call(
+          "C_fuse_mount",
+          as.character(mount_path),
+          as.character(cache_dir),
+          as.character(rel_paths),
+          as.double(sizes),
+          as.character(file_ids),
+          as.double(added_ats),
+          as.character(dir_paths),
+          dir_child_names,
+          dir_child_is_dir,
+          as.character(api_base_url),
+          as.character(auth_token)
+        ),
+        error = function(e) {
+          unlink(mount_path, recursive = TRUE)
+          stop(e)
+        }
       )
 
       private$.mount_path <- mount_path
