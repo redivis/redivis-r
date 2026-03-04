@@ -160,7 +160,7 @@ Notebook <- R6::R6Class(
 
           if (
             !is.null(current_job) &&
-              current_job[["status"]] %in% c("completed", "failed")
+              current_job[["status"]] %in% c("completed", "failed", "cancelled")
           ) {
             if (current_job[["status"]] == "failed") {
               abort_redivis_job_error(

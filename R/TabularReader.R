@@ -33,7 +33,9 @@ TabularReader <- R6::R6Class(
       is_table <- inherits(self, "Table")
 
       # We need to check that the query has finished.
-      # However, for tables, we don't need to fetch the table metadata before building the directory, and shouldn't for perf
+      # However, for tables, we don't need to fetch the table metadata before building the directory
+      #   and it's important that we don't, since the cached_directories map is based on the user-provided URI
+      # TODO: in the future, we should map all URIs to a canonical URI for caching
       if (is_query) {
         check_is_ready(self)
       }
@@ -467,10 +469,6 @@ get_table_request_params <- function(
       }
     )
     variables_list <- Filter(Negate(is.null), variables_list)
-  }
-
-  if (is.null(instance$properties$container)) {
-    instance$get()
   }
 
   selected_variable_names <- if (is.null(variables)) {

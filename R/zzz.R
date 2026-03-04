@@ -1,5 +1,5 @@
 .onLoad <- function(libname, pkgname) {
-  if (is_jupyter()) {
+  if (is_jupyter() && requireNamespace("IRdisplay", quietly = TRUE)) {
     handler_jupyter <- function(
       intrusiveness = getOption("progressr.intrusiveness.gui", 1),
       target = "gui",

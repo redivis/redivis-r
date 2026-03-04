@@ -4,5 +4,5 @@
 # dev packages, or compile-time detection needed.
 # Only libcurl is required at compile time (for HTTP range requests).
 
-PKG_CFLAGS = 
-PKG_LIBS = -lcurl -lpthread -ldl
+PKG_CFLAGS = @CURL_CFLAGS@
+PKG_LIBS = @CURL_LIBS@ -lpthread -ldl

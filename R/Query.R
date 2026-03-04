@@ -70,12 +70,12 @@ Query <- R6::R6Class(
 
 initiate_query <- function(query) {
   if (!query$did_initiate) {
-    query$did_initiate <- TRUE
     query$properties <- make_request(
       method = 'POST',
       path = "/queries",
       payload = query$payload
     )
+    query$did_initiate <- TRUE
     query$uri <- query$properties$uri
   }
 }
