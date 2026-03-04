@@ -56,8 +56,7 @@ perform_resumable_upload <- function(
           forbid_reuse = FALSE,
           verbose = FALSE,
           infilesize_large = chunk_size,
-          followlocation = TRUE,
-          ssl_verifypeer = 0L
+          followlocation = TRUE
         )
 
         curl::handle_setheaders(
