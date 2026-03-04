@@ -1,3 +1,4 @@
+# TODO: can this be some sort of weakRef, like in python?
 cached_directories <- new.env(parent = emptyenv())
 
 #' @include read_rows.R Directory.R api_request.R
