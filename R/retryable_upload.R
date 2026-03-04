@@ -123,7 +123,7 @@ initiate_resumable_upload <- function(
         httr2::req_headers(
           `x-upload-content-length` = as.character(size),
           `x-goog-resumable` = "start",
-          `content-length` = "0",
+          `content-length` = "0", # IMPORTANT: GCS requires a content-length header for the initiation request, even though the body is empty
           !!!as.list(headers)
         ) |>
         httr2::req_error(is_error = function(resp) FALSE)
