@@ -218,6 +218,16 @@ File <- R6::R6Class(
         env$last_timer_reset <- NULL
       }
 
+      # Register a weak-ref finalizer on the environment so the stream
+      # is cleaned up when the env is GC'd (safe context for R eval).
+      reg.finalizer(
+        env,
+        function(e) {
+          try(e$close_stream(), silent = TRUE)
+        },
+        onexit = TRUE
+      )
+
       .Call(
         "C_redivis_connection",
         env,

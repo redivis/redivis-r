@@ -93,7 +93,13 @@ static Rboolean redivis_open(Rconnection con) {
 static void redivis_close(Rconnection con) {
     redivis_con_t *ctx = (redivis_con_t *)con->private;
     if (ctx) {
-        invalidate_stream(ctx);
+        /* Only close the stream if we can safely call back into R.
+         * When called during GC finalization, Rf_eval is unsafe.
+         * Skip the Rf_eval-based stream close here; the R-side
+         * reg.finalizer on the environment will handle it safely. */
+        if (ctx->stream_open) {
+            ctx->stream_open = 0;
+        }
         R_ReleaseObject(ctx->env);
         free(ctx);
         con->private = NULL;
