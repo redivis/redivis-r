@@ -400,7 +400,9 @@ perform_parallel_download <- function(
       }
 
       # on final chunk, clean up if we're done (note that if we haven't read all bytes in content-length, fail_cb will be called)
-      if (final && bytes_written == content_length) {
+      if (
+        final && (is.null(content_length) || bytes_written == content_length)
+      ) {
         close(file_con)
         file_connections[[index]] <<- NULL
         if (!is.null(on_progress) && progress_bytes_written > 0) {
@@ -451,6 +453,7 @@ perform_parallel_download <- function(
           start_byte = bytes_written + start_byte
         )
       } else {
+        did_short_circuit <<- TRUE
         stop(err)
       }
     }
