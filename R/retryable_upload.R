@@ -93,7 +93,7 @@ perform_resumable_upload <- function(
           )
         }
 
-        retry_count <- retry_count + 1
+        retry_count <<- retry_count + 1
         Sys.sleep(retry_count)
         cat("A network error occurred. Retrying resumable upload.\n")
         start_byte <<- retry_partial_upload(

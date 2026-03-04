@@ -335,7 +335,6 @@ Directory <- R6::R6Class(
       path = getwd(),
       overwrite = FALSE,
       max_results = NULL,
-      file_id_variable = NULL,
       progress = TRUE,
       max_parallelization = NULL
     ) {

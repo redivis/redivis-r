@@ -220,12 +220,12 @@ SEXP C_redivis_connection(SEXP env, SEXP description, SEXP s_size, SEXP s_mode) 
         UNPROTECT(1);
         Rf_error("redivis connection: failed to allocate memory");
     }
+    R_PreserveObject(env);
     ctx->env         = env;
     ctx->pos         = 0;
     ctx->size        = (R_xlen_t)dsize;
     ctx->stream_open = 0;
     ctx->stream_pos  = 0;
-    R_PreserveObject(env);
 
     con->private        = ctx;
     con->isopen         = TRUE;

@@ -335,10 +335,15 @@ perform_parallel_download <- function(
         if (!did_check_existing) {
           # Header looks like "crc32c=U26yZA==, md5=uE0r1xmbDXTJAGiWL6xlHw=="
           hash_header <- headers[["x-redivis-hash"]]
-          md5_hash <<- trimws(regmatches(
-            hash_header,
-            regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
-          ))
+          if (is.null(hash_header)) {
+            md5_hash <<- NULL
+          } else {
+            extracted_md5 <- trimws(regmatches(
+              hash_header,
+              regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
+            ))
+            md5_hash <<- if (length(extracted_md5) == 0) NULL else extracted_md5
+          }
 
           exact_file_exists <- check_download_filename(
             filename = download_path,
