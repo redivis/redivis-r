@@ -123,6 +123,7 @@ initiate_resumable_upload <- function(
         httr2::req_headers(
           `x-upload-content-length` = as.character(size),
           `x-goog-resumable` = "start",
+          `content-length` = "0",
           !!!as.list(headers)
         ) |>
         httr2::req_error(is_error = function(resp) FALSE)
