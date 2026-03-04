@@ -32,6 +32,12 @@ TabularReader <- R6::R6Class(
       is_query <- inherits(self, "Query")
       is_table <- inherits(self, "Table")
 
+      # We need to check that the query has finished.
+      # However, for tables, we don't need to fetch the table metadata before building the directory, and shouldn't for perf
+      if (is_query) {
+        check_is_ready(self)
+      }
+
       if (is.null(self$directory) && !is.null(cached_directories[[self$uri]])) {
         self$directory <- cached_directories[[self$uri]]
       }
@@ -231,7 +237,7 @@ TabularReader <- R6::R6Class(
 
       if (is.null(params$geography_variable)) {
         abort_redivis_not_found_error(
-          'Unable to find geography variable in table'
+          description = 'Unable to find geography variable in table'
         )
       }
 
@@ -350,7 +356,7 @@ TabularReader <- R6::R6Class(
         Inf
       }
 
-      if (is.null(self$directory) || cache_age_ms >= 5 * 1000) {
+      if (is.null(self$directory) || cache_age_ms >= 30 * 1000) {
         self$to_directory()
       }
 
@@ -396,7 +402,6 @@ TabularReader <- R6::R6Class(
         path = path,
         overwrite = overwrite,
         max_results = max_results,
-        file_id_variable = file_id_variable,
         progress = progress,
         max_parallelization = max_parallelization
       )

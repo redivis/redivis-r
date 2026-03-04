@@ -253,7 +253,6 @@ perform_standard_upload <- function(
       }
     },
     error = function(e) {
-      print(e)
       if (retry_count > 20) {
         cat("A network error occurred. Upload failed after too many retries.\n")
         stop(e)
