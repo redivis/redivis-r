@@ -108,6 +108,10 @@ File <- R6::R6Class(
     },
 
     stream = function(callback, start_byte = 0, end_byte = NULL) {
+      warning(
+        "This method is deprecated. Please use file$open() to get a connection that supports streaming and seek operations",
+        call. = FALSE
+      )
       make_request(
         method = "GET",
         path = str_interp("/rawFiles/${self$id}"),
