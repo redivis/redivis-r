@@ -1,0 +1,29 @@
+#!/bin/sh
+# configure script for redivis R package
+# Detects libcurl and generates src/Makevars from src/Makevars.in
+
+# Try pkg-config first
+CURL_CFLAGS=$(pkg-config --cflags libcurl 2>/dev/null)
+CURL_LIBS=$(pkg-config --libs libcurl 2>/dev/null)
+
+# Fall back to curl-config
+if [ -z "${CURL_LIBS}" ]; then
+  CURL_CFLAGS=$(curl-config --cflags 2>/dev/null)
+  CURL_LIBS=$(curl-config --libs 2>/dev/null)
+fi
+
+if [ -z "${CURL_LIBS}" ]; then
+  echo "ERROR: libcurl not found."
+  echo "Please install libcurl development files:"
+  echo "  - Debian/Ubuntu: libcurl4-openssl-dev"
+  echo "  - Fedora/RHEL:   libcurl-devel"
+  echo "  - macOS:         brew install curl"
+  exit 1
+fi
+
+# Generate src/Makevars from src/Makevars.in
+sed -e "s|@CURL_CFLAGS@|${CURL_CFLAGS}|g" \
+    -e "s|@CURL_LIBS@|${CURL_LIBS}|g" \
+    src/Makevars.in > src/Makevars
+
+exit 0

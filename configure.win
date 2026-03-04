@@ -1,0 +1,12 @@
+#!/bin/sh
+# configure.win for redivis R package (Windows)
+# On Windows, libcurl is typically bundled with Rtools.
+
+CURL_CFLAGS=""
+CURL_LIBS="-lcurl"
+
+sed -e "s|@CURL_CFLAGS@|${CURL_CFLAGS}|g" \
+    -e "s|@CURL_LIBS@|${CURL_LIBS}|g" \
+    src/Makevars.in > src/Makevars.win
+
+exit 0

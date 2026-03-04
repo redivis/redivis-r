@@ -1,6 +1,5 @@
 #' @importFrom stringr str_interp
 
-
 #' @title query
 #'
 #' @description DEPRECATED: please use redivis$query
@@ -11,13 +10,17 @@
 #' @examples
 #' output_table <- redivis::query(query = 'SELECT 1 + 1 AS two')$to_tibble()
 #' @export
-query <- function(query="", default_workflow=NULL, default_dataset=NULL) {
+query <- function(query = "", default_workflow = NULL, default_dataset = NULL) {
   show_namespace_warning("query")
-  if (is.null(default_workflow) && is.null(default_dataset)){
+  if (is.null(default_workflow) && is.null(default_dataset)) {
     default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
     default_dataset <- Sys.getenv("REDIVIS_DEFAULT_DATASET")
   }
-  Query$new(query=query, default_workflow=default_workflow, default_dataset=default_dataset)
+  Query$new(
+    query = query,
+    default_workflow = default_workflow,
+    default_dataset = default_dataset
+  )
 }
 
 
@@ -34,9 +37,9 @@ query <- function(query="", default_workflow=NULL, default_dataset=NULL) {
 #' We can also construct a query scoped to a particular workflow, removing the need to fully qualify table names
 #' redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 #' @export
-user <- function(name){
+user <- function(name) {
   show_namespace_warning("user")
-  User$new(name=name)
+  User$new(name = name)
 }
 
 
@@ -53,56 +56,9 @@ user <- function(name){
 #' We can also construct a query scoped to a particular dataset, removing the need to fully qualify table names
 #' redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
 #' @export
-organization <- function(name){
+organization <- function(name) {
   show_namespace_warning("organization")
-  Organization$new(name=name)
-}
-
-#' @title table
-#'
-#' @description DEPRECATED: please use redivis$table
-#'
-#' @param name The table's username
-#'
-#' @return class<table>
-#' @examples
-#' redivis::table('a_table')$to_tibble(max_results=100)
-#'
-
-#' @export
-table <- function(name){
-  show_namespace_warning("table")
-  if (Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != ""){
-    Table$new(name=name)
-  } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != ""){
-    user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[1]
-    workflow_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"), "[.]"))[2]
-    User$new(name=user_name)$workflow(name=workflow_name)$table(name=name)
-
-  }else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != ""){
-    user_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[1]
-    dataset_name <- unlist(strsplit(Sys.getenv("REDIVIS_DEFAULT_DATASET"), "[.]"))[2]
-
-    User$new(name=user_name)$dataset(name=dataset_name)$table(name=name)
-  }
-  else{
-    stop("Cannot reference an unqualified table if the neither the REDIVIS_DEFAULT_WORKFLOW or REDIVIS_DEFAULT_DATASET environment variables are set.")
-  }
-}
-
-#' @title file
-#'
-#' @description DEPRECATED: please use redivis$file
-#'
-#' @param id The id of the file
-#'
-#' @return class<File>
-#' @examples
-#' file <- redivis::file("s335-8ey8zt7bx.qKmzpdttY2ZcaLB0wbRB7A")$download()
-#' @export
-file <- function(id) {
-  show_namespace_warning("file")
-  File$new(id=id)
+  Organization$new(name = name)
 }
 
 
@@ -116,9 +72,9 @@ file <- function(id) {
 #' @export
 current_notebook <- function() {
   show_namespace_warning("current_notebook")
-  if(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
-    Notebook$new(name=Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK"))
-  }else {
+  if (Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
+    Notebook$new(name = Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK"))
+  } else {
     NULL
   }
 }
@@ -137,7 +93,6 @@ current_notebook <- function() {
 #' redivis$current_user()
 #' redivis$dataset(name)
 #' redivis$datasource(source)
-#' redivis$file(id)
 #' redivis$notebook(name)
 #' redivis$organization(name)
 #' redivis$parameter(name)
@@ -165,12 +120,17 @@ current_notebook <- function() {
 #' #   to_sf_tibble()
 #' #   ...
 #' table$download(path=NULL, format="csv", ...)
+#'
+#' # Read files (file tables only):
+#' table$file("path/to/file")
+#' open(file)
 #' file$read(...)
 #' file$download(path=NULL, ...)
-#' file$stream(callback)
-#' table$download_files(path, ...)
+#' dir <- table$to_directory()
+#' dir$get("/path/to/file/or/dir")
+#' dir$download(path=NULL, ...)
 #'
-#' # Upload tabular data
+#' # Upload data
 #' table$upload()$create("/path/to/file.csv", ...)
 #' # Upload raw files
 #' table$add_files(directory="/path/to/dir", ...)
@@ -202,92 +162,119 @@ current_notebook <- function() {
 #'  notebook <- redivis$current_notebook();
 #'  workflow <- redivis$current_workflow();
 #' @export
-redivis <- list(
+redivis <- local({
+  e <- new.env(parent = emptyenv())
 
-  "authenticate"=function(scope=NULL, force_reauthentication=FALSE) {
-    if (force_reauthentication){
+  e$authenticate <- function(scope = NULL, force_reauthentication = FALSE) {
+    if (force_reauthentication) {
       clear_cached_credentials()
     }
-    if (is.character(scope)){
+    if (is.character(scope)) {
       scope <- list(scope)
     }
-    get_auth_token(scope=scope)
+    get_auth_token(scope = scope)
     invisible(NULL)
-  },
+  }
 
-  "current_notebook"=function() {
-    if(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
-      Notebook$new(name=Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK"))
-    }else {
+  e$current_notebook <- function() {
+    if (Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
+      Notebook$new(name = Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK"))
+    } else {
       NULL
     }
-  },
+  }
 
-  "current_user"=function(){
-    res <- make_request(method="GET", path="/users/me")
-    User$new(name=res$name)
-  },
+  e$current_user <- function() {
+    res <- make_request(method = "GET", path = "/users/me")
+    User$new(name = res$name)
+  }
 
-  "current_workflow"=function(){
-    if(Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
-      Workflow$new(name=Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"))
-    }else {
+  e$current_workflow <- function() {
+    if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
+      Workflow$new(name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"))
+    } else {
       NULL
     }
-  },
+  }
 
-  "dataset"=function(name, version=NULL){
-    Dataset$new(name=name, version=version)
-  },
+  e$dataset <- function(name, version = NULL) {
+    Dataset$new(name = name, version = version)
+  }
 
-  "datasource"=function(source){
-    Datasource$new(source=source)
-  },
+  e$datasource <- function(source) {
+    Datasource$new(source = source)
+  }
 
-  "file"=function(id) {
-    File$new(id=id)
-  },
+  e$file <- function(id) {
+    abort_redivis_deprecation_error(
+      'Calling redivis$file() is no longer supported. Please use redivis$table("table_reference")$file("filename") instead.'
+    )
+  }
 
-  "make_api_request"=function(method='GET', path = "", query=NULL, payload=NULL, headers=NULL, parse_response=TRUE, stream_callback=NULL){
-    make_request(method=method, path=path, query=query, payload=payload, headers=headers, parse_response=parse_response, stream_callback=stream_callback)
-  },
+  e$make_api_request <- function(
+    method = 'GET',
+    path = "",
+    query = NULL,
+    payload = NULL,
+    headers = NULL,
+    parse_response = TRUE,
+    stream_callback = NULL
+  ) {
+    make_request(
+      method = method,
+      path = path,
+      query = query,
+      payload = payload,
+      headers = headers,
+      parse_response = parse_response,
+      stream_callback = stream_callback
+    )
+  }
 
-  "notebook"=function(name){
-    Notebook$new(name=name)
-  },
+  e$notebook <- function(name) {
+    Notebook$new(name = name)
+  }
 
-  "organization"=function(name){
-    Organization$new(name=name)
-  },
+  e$organization <- function(name) {
+    Organization$new(name = name)
+  }
 
-  "parameter"=function(name){
-    Parameter$new(name=name)
-  },
+  e$parameter <- function(name) {
+    Parameter$new(name = name)
+  }
 
-  "query"=function(query="", default_workflow=NULL, default_dataset=NULL) {
-    if (is.null(default_workflow) && is.null(default_dataset)){
+  e$query <- function(
+    query = "",
+    default_workflow = NULL,
+    default_dataset = NULL
+  ) {
+    if (is.null(default_workflow) && is.null(default_dataset)) {
       default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
       default_dataset <- Sys.getenv("REDIVIS_DEFAULT_DATASET")
     }
-    Query$new(query=query, default_workflow=default_workflow, default_dataset=default_dataset)
-  },
-
-  "table"=function(name){
-    Table$new(name=name)
-  },
-
-  "transform"=function(name){
-    Transform$new(name=name)
-  },
-
-  "user"=function(name){
-    User$new(name=name)
-  },
-
-  "workflow"=function(name){
-    Workflow$new(name=name)
+    Query$new(
+      query = query,
+      default_workflow = default_workflow,
+      default_dataset = default_dataset
+    )
   }
 
-)
+  e$table <- function(name) {
+    Table$new(name = name)
+  }
 
+  e$transform <- function(name) {
+    Transform$new(name = name)
+  }
 
+  e$user <- function(name) {
+    User$new(name = name)
+  }
+
+  e$workflow <- function(name) {
+    Workflow$new(name = name)
+  }
+
+  lockEnvironment(e, bindings = TRUE)
+  e
+})

@@ -1,0 +1,8 @@
+# Makevars for redivis
+#
+# FUSE libraries are loaded at runtime via dlopen — no FUSE headers,
+# dev packages, or compile-time detection needed.
+# Only libcurl is required at compile time (for HTTP range requests).
+
+PKG_CFLAGS = @CURL_CFLAGS@
+PKG_LIBS = @CURL_LIBS@ -lpthread -ldl

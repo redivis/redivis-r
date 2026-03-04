@@ -1,47 +1,72 @@
 #' @include Dataset.R Secret.R Workflow.R api_request.R
-Organization <- setRefClass("Organization",
-  fields = list(name="character"),
-  methods = list(
-    show = function(){
-      print(str_interp("<Organization ${.self$name}>"))
+Organization <- R6::R6Class(
+  "Organization",
+  public = list(
+    name = NULL,
+
+    initialize = function(name = "") {
+      self$name <- name
     },
-    dataset = function(name, version=NULL) {
-      Dataset$new(name=name, version=version, organization=.self)
+
+    print = function(...) {
+      cat(str_interp("<Organization ${self$name}>\n"))
+      invisible(self)
+    },
+    dataset = function(name, version = NULL) {
+      Dataset$new(name = name, version = version, organization = self)
     },
     secret = function(name) {
-      Secret$new(name=name, organization=.self)
+      Secret$new(name = name, organization = self)
     },
     workflow = function(name) {
-      Workflow$new(name=name, organization=.self)
+      Workflow$new(name = name, organization = self)
     },
 
-    exists = function(){
+    exists = function() {
       # TODO: once we have org.get() endpoint, refactor
-      res <- make_request(method="GET", path=str_interp("/organizations/${.self$name}/datasets"), stop_on_error=FALSE, query=list(maxResults=1))
-      if (length(res$error)){
-        if (res$status == 404){
-          return(FALSE)
-        } else {
-          stop(str_interp("${res$error}: ${res$error_description}"))
+      tryCatch(
+        {
+          make_request(
+            method = "HEAD",
+            path = str_interp("/organizations/${self$name}/datasets"),
+            query = list(maxResults = 1)
+          )
+          TRUE
+        },
+        redivis_not_found_error = function(e) {
+          FALSE
         }
-      } else {
-        return(TRUE)
-      }
+      )
     },
 
-    list_datasets = function(max_results=NULL) {
-      datasets <- make_paginated_request(path=str_interp("/organizations/${.self$name}/datasets"), page_size=100, max_results=max_results)
+    list_datasets = function(max_results = NULL) {
+      datasets <- make_paginated_request(
+        path = str_interp("/organizations/${self$name}/datasets"),
+        page_size = 100,
+        max_results = max_results
+      )
       purrr::map(datasets, function(dataset) {
-        Dataset$new(name=dataset$name, properties=dataset, organization=.self)
+        Dataset$new(
+          name = dataset$name,
+          properties = dataset,
+          organization = self
+        )
       })
     },
 
-    list_workflows = function(max_results=NULL) {
-      workflows <- make_paginated_request(path=str_interp("/organizations/${.self$name}/workflows"), page_size=100, max_results=max_results)
+    list_workflows = function(max_results = NULL) {
+      workflows <- make_paginated_request(
+        path = str_interp("/organizations/${self$name}/workflows"),
+        page_size = 100,
+        max_results = max_results
+      )
       purrr::map(workflows, function(workflow) {
-        Workflow$new(name=workflow$name, properties=workflow, organization=.self)
+        Workflow$new(
+          name = workflow$name,
+          properties = workflow,
+          organization = self
+        )
       })
     }
   )
 )
-

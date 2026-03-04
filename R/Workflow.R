@@ -1,159 +1,211 @@
 #' @include User.R Organization.R Datasource.R Notebook.R Transform.R Table.R Parameter.R api_request.R
-Workflow <- setRefClass("Workflow",
-   fields = list(name="character",
-                 user="ANY",
-                 organization="ANY",
-                 uri="character",
-                 qualified_reference="character",
-                 scoped_reference="character",
-                 properties="list"
-             ),
-   methods = list(
+Workflow <- R6::R6Class(
+  "Workflow",
+  public = list(
+    name = NULL,
+    user = NULL,
+    organization = NULL,
+    uri = NULL,
+    qualified_reference = NULL,
+    scoped_reference = NULL,
+    properties = NULL,
 
-     initialize = function(..., name="", user=NULL, organization=NULL, properties=list()){
-       parsed_user <- user
-       parsed_organization <- organization
-       parsed_name <- name
-       if (is.null(user) && is.null(organization)){
-         split <- strsplit(name, "\\.")[[1]]
-         if (length(split) == 2){
-           parsed_name <- split[[2]]
-           username <- split[[1]]
-           parsed_user <- User$new(name=username)
-           parsed_organization <- Organization$new(name=username)
-         } else if (Sys.getenv("REDIVIS_DEFAULT_USER", FALSE)){
-           parsed_user <- User$new(name=Sys.getenv("REDIVIS_DEFAULT_USER"))
-         } else if (Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION", FALSE)){
-           parsed_organization <- Organization$new(name=Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION"))
-         } else {
-           stop("Invalid workflow specifier, must be the fully qualified reference if no owner is specified")
-         }
-       }
+    initialize = function(
+      name = "",
+      user = NULL,
+      organization = NULL,
+      properties = list()
+    ) {
+      parsed_user <- user
+      parsed_organization <- organization
+      parsed_name <- name
+      if (is.null(user) && is.null(organization)) {
+        split <- strsplit(name, "\\.")[[1]]
+        if (length(split) == 2) {
+          parsed_name <- split[[2]]
+          username <- split[[1]]
+          parsed_user <- User$new(name = username)
+          parsed_organization <- Organization$new(name = username)
+        } else if (Sys.getenv("REDIVIS_DEFAULT_USER", FALSE)) {
+          parsed_user <- User$new(name = Sys.getenv("REDIVIS_DEFAULT_USER"))
+        } else if (Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION", FALSE)) {
+          parsed_organization <- Organization$new(
+            name = Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION")
+          )
+        } else {
+          abort_redivis_value_error(
+            "Invalid workflow specifier, must be the fully qualified reference if no owner is specified"
+          )
+        }
+      }
 
-       owner_name <- if (is.null(parsed_user)) parsed_organization$name else parsed_user$name
-       scoped_reference_val <- if (length(properties$scopedReference)) properties$scopedReference else parsed_name
-       qualified_reference_val <- if (length(properties$qualifiedReference)) properties$qualifiedReference else str_interp("${owner_name}.${scoped_reference_val}")
+      owner_name <- if (is.null(parsed_user)) {
+        parsed_organization$name
+      } else {
+        parsed_user$name
+      }
+      scoped_reference_val <- if (length(properties$scopedReference)) {
+        properties$scopedReference
+      } else {
+        parsed_name
+      }
+      qualified_reference_val <- if (length(properties$qualifiedReference)) {
+        properties$qualifiedReference
+      } else {
+        str_interp("${owner_name}.${scoped_reference_val}")
+      }
 
-       callSuper(...,
-                 name=parsed_name,
-                 user=parsed_user,
-                 organization = parsed_organization,
-                 qualified_reference=qualified_reference_val,
-                 scoped_reference=scoped_reference_val,
-                 uri=str_interp("/workflows/${URLencode(qualified_reference_val)}"),
-                 properties=properties
-       )
-     },
+      self$name <- parsed_name
+      self$user <- parsed_user
+      self$organization <- parsed_organization
+      self$qualified_reference <- qualified_reference_val
+      self$scoped_reference <- scoped_reference_val
+      self$uri <- str_interp("/workflows/${URLencode(qualified_reference_val)}")
+      self$properties <- properties
+    },
 
-     show = function(){
-       print(str_interp("<Workflow ${.self$qualified_reference}>"))
-     },
+    print = function(...) {
+      cat(str_interp("<Workflow ${self$qualified_reference}>\n"))
+      invisible(self)
+    },
 
-     get = function(){
-       res <- make_request(path=.self$uri)
-       update_workflow_properties(.self, res)
-       .self
-     },
+    get = function() {
+      res <- make_request(path = self$uri)
+      update_workflow_properties(self, res)
+      self
+    },
 
-     exists = function(){
-       res <- make_request(method="HEAD", path=.self$uri, stop_on_error=FALSE)
-       if (length(res$error)){
-         if (res$status == 404){
-           return(FALSE)
-         } else {
-           stop(str_interp("${res$error}: ${res$error_description}"))
-         }
-       } else {
-         return(TRUE)
-       }
-     },
+    exists = function() {
+      tryCatch(
+        {
+          make_request(
+            method = "HEAD",
+            path = self$uri
+          )
+          TRUE
+        },
+        redivis_not_found_error = function(e) {
+          FALSE
+        }
+      )
+    },
 
-     table = function(name) {
-       Table$new(name=name, workflow=.self)
-     },
+    table = function(name) {
+      Table$new(name = name, workflow = self)
+    },
 
-     notebook = function(name){
-       Notebook$new(name=name, workflow=.self)
-     },
+    notebook = function(name) {
+      Notebook$new(name = name, workflow = self)
+    },
 
-     transform = function(name){
-       Transform$new(name=name, workflow=.self)
-     },
+    transform = function(name) {
+      Transform$new(name = name, workflow = self)
+    },
 
-     parameter = function(name){
-       Parameter$new(name=name, workflow=.self)
-     },
+    parameter = function(name) {
+      Parameter$new(name = name, workflow = self)
+    },
 
-     datasource = function(source){
-       Datasource$new(source=source, workflow=.self)
-     },
+    datasource = function(source) {
+      Datasource$new(source = source, workflow = self)
+    },
 
-     query = function(query){
-       redivis$query(query, default_workflow = .self$qualified_reference)
-     },
+    query = function(query) {
+      redivis$query(query, default_workflow = self$qualified_reference)
+    },
 
-     list_tables = function(max_results=NULL) {
-       tables <- make_paginated_request(
-         path=str_interp("${.self$uri}/tables"),
-         page_size=100,
-         max_results=max_results,
-       )
-       purrr::map(tables, function(table_properties) {
-         Table$new(name=table_properties$name, workflow=.self, properties=table_properties)
-       })
-     },
+    list_tables = function(max_results = NULL) {
+      tables <- make_paginated_request(
+        path = str_interp("${self$uri}/tables"),
+        page_size = 100,
+        max_results = max_results,
+      )
+      purrr::map(tables, function(table_properties) {
+        Table$new(
+          name = table_properties$name,
+          workflow = self,
+          properties = table_properties
+        )
+      })
+    },
 
-     list_transforms = function(max_results=NULL) {
-       transforms <- make_paginated_request(
-         path=str_interp("${.self$uri}/transforms"),
-         page_size=100,
-         max_results=max_results,
-       )
-       purrr::map(transforms, function(transform_properties) {
-         Transform$new(name=transform_properties$name, workflow=.self, properties=transform_properties)
-       })
-     },
+    list_transforms = function(max_results = NULL) {
+      transforms <- make_paginated_request(
+        path = str_interp("${self$uri}/transforms"),
+        page_size = 100,
+        max_results = max_results,
+      )
+      purrr::map(transforms, function(transform_properties) {
+        Transform$new(
+          name = transform_properties$name,
+          workflow = self,
+          properties = transform_properties
+        )
+      })
+    },
 
-     list_notebooks = function(max_results=NULL) {
-       notebooks <- make_paginated_request(
-         path=str_interp("${.self$uri}/notebooks"),
-         page_size=100,
-         max_results=max_results,
-       )
-       purrr::map(notebooks, function(notebook_properties) {
-         Notebook$new(name=notebook_properties$name, workflow=.self, properties=notebook_properties)
-       })
-     },
+    list_notebooks = function(max_results = NULL) {
+      notebooks <- make_paginated_request(
+        path = str_interp("${self$uri}/notebooks"),
+        page_size = 100,
+        max_results = max_results,
+      )
+      purrr::map(notebooks, function(notebook_properties) {
+        Notebook$new(
+          name = notebook_properties$name,
+          workflow = self,
+          properties = notebook_properties
+        )
+      })
+    },
 
-     list_parameters = function(max_results=NULL) {
-       parameters <- make_paginated_request(
-         path=str_interp("${.self$uri}/parameters"),
-         page_size=100,
-         max_results=max_results,
-       )
-       purrr::map(parameters, function(parameter_properties) {
-         Parameter$new(name=parameter_properties$name, workflow=.self, properties=parameter_properties)
-       })
-     },
+    list_parameters = function(max_results = NULL) {
+      parameters <- make_paginated_request(
+        path = str_interp("${self$uri}/parameters"),
+        page_size = 100,
+        max_results = max_results,
+      )
+      purrr::map(parameters, function(parameter_properties) {
+        Parameter$new(
+          name = parameter_properties$name,
+          workflow = self,
+          properties = parameter_properties
+        )
+      })
+    },
 
-     list_datasources = function(max_results=NULL) {
-       datasources <- make_paginated_request(
-         path=str_interp("${.self$uri}/dataSources"),
-         page_size=100,
-         max_results=max_results,
-       )
-       purrr::map(datasources, function(datasource_properties) {
-         Datasource$new(source=datasource_properties$id, workflow=.self, properties=datasource_properties)
-       })
-     }
-   )
+    list_datasources = function(max_results = NULL) {
+      datasources <- make_paginated_request(
+        path = str_interp("${self$uri}/dataSources"),
+        page_size = 100,
+        max_results = max_results,
+      )
+      purrr::map(datasources, function(datasource_properties) {
+        Datasource$new(
+          source = datasource_properties$id,
+          workflow = self,
+          properties = datasource_properties
+        )
+      })
+    },
+
+    update_variables = function(variables) {
+      make_request(
+        method = "PATCH",
+        path = str_interp("${self$uri}/variables"),
+        payload = list(
+          "variables" = variables
+        ),
+      )
+      self
+    }
+  )
 )
 
-update_workflow_properties <- function(instance, properties){
-  instance$properties = properties
-  instance$qualified_reference = properties$qualifiedReference
-  instance$scoped_reference = properties$scopedReference
-  instance$name = properties$name
-  instance$uri = properties$uri
+update_workflow_properties <- function(instance, properties) {
+  instance$properties <- properties
+  instance$qualified_reference <- properties$qualifiedReference
+  instance$scoped_reference <- properties$scopedReference
+  instance$name <- properties$name
+  instance$uri <- properties$uri
 }
-

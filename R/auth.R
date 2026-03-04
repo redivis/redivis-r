@@ -1,50 +1,70 @@
-library(httr)
-
 auth_vars <- new.env(parent = emptyenv())
 
 auth_vars$redivis_dir = file.path(Sys.getenv("HOME"), ".redivis")
 auth_vars$cached_credentials = NULL
-auth_vars$verify_ssl = !grepl("https://localhost", Sys.getenv("REDIVIS_API_ENDPOINT", "https://redivis.com"), fixed = TRUE)
-auth_vars$credentials_file = file.path(file.path(Sys.getenv("HOME"), ".redivis"), "r_credentials")
+auth_vars$verify_ssl = !grepl(
+  "https://localhost",
+  Sys.getenv("REDIVIS_API_ENDPOINT", "https://redivis.com"),
+  fixed = TRUE
+)
+auth_vars$credentials_file = file.path(
+  file.path(Sys.getenv("HOME"), ".redivis"),
+  "r_credentials"
+)
 auth_vars$default_scope = list('data.edit', 'workflow.write')
 auth_vars$client_id = 'Ah850nGnQg5mFWd25nkyk9Y3'
-auth_vars$base_url = sub("(https?://.*?)(/|$).*", "\\1", Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com'))
+auth_vars$base_url = sub(
+  "(https?://.*?)(/|$).*",
+  "\\1",
+  Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com')
+)
 
-get_auth_token <- function(scope=NULL) {
-  if (is.null(scope)){
+get_auth_token <- function(scope = NULL) {
+  if (is.null(scope)) {
     scope <- auth_vars$default_scope
   }
 
-  if (!is.na(Sys.getenv("REDIVIS_API_TOKEN", unset=NA))) {
-    if (is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset=NA)) && interactive()) {
-      warning("Setting the REDIVIS_API_TOKEN for interactive sessions is deprecated and highly discouraged.
-Please delete the token on Redivis and remove it from your code, and follow the authentication prompts here instead.
-
-This environment variable should only ever be set in a non-interactive environment, such as in an automated script or service.")
+  if (!is.na(Sys.getenv("REDIVIS_API_TOKEN", unset = NA))) {
+    if (
+      is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA)) && interactive()
+    ) {
+      warning(
+        "Setting the REDIVIS_API_TOKEN for interactive sessions is deprecated and highly discouraged.\nPlease delete the token on Redivis and remove it from your code, and follow the authentication prompts here instead.\n\nThis environment variable should only ever be set in a non-interactive environment, such as in an automated script or service.",
+        call. = FALSE
+      )
     }
     return(Sys.getenv("REDIVIS_API_TOKEN"))
-  } else if (is.null(auth_vars$cached_credentials) && file.exists(auth_vars$credentials_file)) {
-    tryCatch({
-      auth_vars$cached_credentials <- jsonlite::fromJSON(
-        readLines(
-          auth_vars$credentials_file,
-          warn=FALSE # Otherwise will print a warning since there's not a line break at the end
+  } else if (
+    is.null(auth_vars$cached_credentials) &&
+      file.exists(auth_vars$credentials_file)
+  ) {
+    tryCatch(
+      {
+        auth_vars$cached_credentials <- jsonlite::fromJSON(
+          readLines(
+            auth_vars$credentials_file,
+            warn = FALSE # Otherwise will print a warning since there's not a line break at the end
+          )
         )
-      )
-    }, error = function(e) {
-      # ignore
-    })
+      },
+      error = function(e) {
+        # ignore
+      }
+    )
   }
 
   missing_scope = setdiff(scope, get_current_credential_scope())
 
   if (
-    !is.null(auth_vars$cached_credentials)
-    && "expires_at" %in% names(auth_vars$cached_credentials)
-    && "access_token" %in% names(auth_vars$cached_credentials)
-    && length(missing_scope) == 0
+    !is.null(auth_vars$cached_credentials) &&
+      "expires_at" %in% names(auth_vars$cached_credentials) &&
+      "access_token" %in% names(auth_vars$cached_credentials) &&
+      length(missing_scope) == 0
   ) {
-    if (auth_vars$cached_credentials$expires_at < (as.numeric(Sys.time()) - 5 * 60)) {
+    if (
+      auth_vars$cached_credentials$expires_at <
+        (as.numeric(Sys.time()) - 5 * 60)
+    ) {
       refresh_credentials()
     }
 
@@ -54,7 +74,10 @@ This environment variable should only ever be set in a non-interactive environme
       dir.create(auth_vars$redivis_dir)
     }
 
-    perform_oauth_login(scope=if(length(missing_scope)) missing_scope else scope, upgrade_credentials=length(missing_scope) > 0)
+    perform_oauth_login(
+      scope = if (length(missing_scope)) missing_scope else scope,
+      upgrade_credentials = length(missing_scope) > 0
+    )
     return(auth_vars$cached_credentials$access_token)
   }
 }
@@ -66,28 +89,36 @@ clear_cached_credentials <- function() {
   }
 }
 
-perform_oauth_login <- function(scope, amr_values=NULL, upgrade_credentials=FALSE) {
+perform_oauth_login <- function(
+  scope,
+  amr_values = NULL,
+  upgrade_credentials = FALSE
+) {
   pkce <- get_pkce()
   challenge <- pkce$challenge
   verifier <- pkce$verifier
 
-  res <- httr::POST(
-    url = paste0(auth_vars$base_url, "/oauth/device_authorization"),
-    httr::add_headers(`Content-Type` = "application/json"),
-    body = list(
+  req <- httr2::request(paste0(
+    auth_vars$base_url,
+    "/oauth/device_authorization"
+  )) |>
+    httr2::req_method("POST") |>
+    httr2::req_headers("Content-Type" = "application/json") |>
+    httr2::req_body_json(list(
       client_id = auth_vars$client_id,
-      scope = paste(scope, collapse=" "),
+      scope = paste(scope, collapse = " "),
       amr_values = amr_values,
       code_challenge = challenge,
       code_challenge_method = 'S256',
       access_type = 'offline'
-    ),
-    encode = "json",
-    config = if (auth_vars$verify_ssl) httr::config() else httr::config(ssl_verifypeer = FALSE)
-  )
+    ))
 
-  httr::stop_for_status(res)
-  parsed_response <- httr::content(res, "parsed")
+  if (!auth_vars$verify_ssl) {
+    req <- req |> httr2::req_options(ssl_verifypeer = 0L)
+  }
+
+  res <- httr2::req_perform(req)
+  parsed_response <- httr2::resp_body_json(res)
 
   browse_url_response <- browseURL(parsed_response$verification_uri_complete)
 
@@ -96,87 +127,128 @@ perform_oauth_login <- function(scope, amr_values=NULL, upgrade_credentials=FALS
     cat('Please authenticate with your Redivis account. Opening browser to:\n')
     cat(parsed_response$verification_uri_complete, '\n')
   } else {
-    cat('Please visit the URL below to authenticate with your Redivis account:\n')
+    cat(
+      'Please visit the URL below to authenticate with your Redivis account:\n'
+    )
     cat(parsed_response$verification_uri_complete, '\n')
   }
   flush.console()
 
-  headers <- c()
-  if (upgrade_credentials && !is.null(auth_vars$cached_credentials)){
-    headers <- c('Authorization' = str_interp("Bearer ${auth_vars$cached_credentials$access_token}"))
+  headers <- list()
+  if (upgrade_credentials && !is.null(auth_vars$cached_credentials)) {
+    headers <- list(
+      'Authorization' = str_interp(
+        "Bearer ${auth_vars$cached_credentials$access_token}"
+      )
+    )
   }
 
   started_polling_at <- Sys.time()
   while (TRUE) {
     if (difftime(Sys.time(), started_polling_at, units = "secs") > 60 * 10) {
-      stop('Timed out waiting for device authorization')
+      abort_redivis_error(
+        "Timed out after 10 minutes while waiting for device authorization"
+      )
     }
 
-    Sys.sleep(ifelse(is.null(parsed_response$interval), 5, parsed_response$interval))
+    Sys.sleep(ifelse(
+      is.null(parsed_response$interval),
+      5,
+      parsed_response$interval
+    ))
 
-    res <- httr::POST(
-      url = paste0(auth_vars$base_url, "/oauth/token"),
-      httr::add_headers(headers),
-      body = list(
+    poll_req <- httr2::request(paste0(auth_vars$base_url, "/oauth/token")) |>
+      httr2::req_method("POST") |>
+      httr2::req_headers(!!!headers) |>
+      httr2::req_body_form(
         client_id = auth_vars$client_id,
         grant_type = 'urn:ietf:params:oauth:grant-type:device_code',
         device_code = parsed_response$device_code,
         code_verifier = verifier
-      ),
-      encode = "form",
-      config = if (auth_vars$verify_ssl) httr::config() else httr::config(ssl_verifypeer = FALSE)
-    )
+      ) |>
+      httr2::req_error(is_error = function(resp) FALSE)
 
-    if (httr::status_code(res) == 200) {
+    if (!auth_vars$verify_ssl) {
+      poll_req <- poll_req |> httr2::req_options(ssl_verifypeer = 0L)
+    }
+
+    res <- httr2::req_perform(poll_req)
+
+    if (httr2::resp_status(res) == 200) {
       cat("Authentication was successful!")
       break
-    } else if (httr::status_code(res) == 400) {
-      error_response <- httr::content(res, "parsed")
+    } else if (httr2::resp_status(res) == 400) {
+      error_response <- httr2::resp_body_json(res)
       if (error_response$error == 'authorization_pending') {
         # authorization pending
       } else {
-        stop(error_response)
+        raise_api_error(response_json = error_response, response = res)
       }
     } else {
-      stop(httr::content(res, "parsed"))
+      raise_api_error(
+        response_json = httr2::resp_body_json(res),
+        response = res
+      )
     }
   }
 
-  auth_vars$cached_credentials <- httr::content(res, "parsed")
-  write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
+  auth_vars$cached_credentials <- httr2::resp_body_json(res)
+  write(
+    jsonlite::toJSON(
+      auth_vars$cached_credentials,
+      pretty = TRUE,
+      auto_unbox = TRUE
+    ),
+    auth_vars$credentials_file
+  )
 
   return(auth_vars$cached_credentials)
 }
 
-refresh_credentials <- function(scope=NULL, amr_values=NULL) {
+refresh_credentials <- function(scope = NULL, amr_values = NULL) {
   # Recreate, in case REDIVIS_API_ENDPOINT has changed
-  auth_vars$base_url <- sub("(https?://.*?)(/|$).*", "\\1", Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com'))
-  if (!is.null(scope) || !is.null(amr_values)){
+  auth_vars$base_url <- sub(
+    "(https?://.*?)(/|$).*",
+    "\\1",
+    Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com')
+  )
+  if (!is.null(scope) || !is.null(amr_values)) {
     perform_oauth_login(
-      scope=if (is.null(scope)) get_current_credential_scope() else scope,
-      amr_values=amr_values,
-      upgrade_credentials=TRUE
+      scope = if (is.null(scope)) get_current_credential_scope() else scope,
+      amr_values = amr_values,
+      upgrade_credentials = TRUE
     )
-  }else if (!is.null(auth_vars$cached_credentials$refresh_token)) {
-    res <- httr::POST(
-      url = paste0(auth_vars$base_url, "/oauth/token"),
-      body = list(
+  } else if (!is.null(auth_vars$cached_credentials$refresh_token)) {
+    refresh_req <- httr2::request(paste0(auth_vars$base_url, "/oauth/token")) |>
+      httr2::req_method("POST") |>
+      httr2::req_body_form(
         client_id = auth_vars$client_id,
         grant_type = 'refresh_token',
         refresh_token = auth_vars$cached_credentials$refresh_token
-      ),
-      encode = "form",
-      config = if (auth_vars$verify_ssl) httr::config() else httr::config(ssl_verifypeer = FALSE)
-    )
+      ) |>
+      httr2::req_error(is_error = function(resp) FALSE)
 
-    if (httr::status_code(res) >= 400) {
+    if (!auth_vars$verify_ssl) {
+      refresh_req <- refresh_req |> httr2::req_options(ssl_verifypeer = 0L)
+    }
+
+    res <- httr2::req_perform(refresh_req)
+
+    if (httr2::resp_status(res) >= 400) {
       clear_cached_credentials()
     } else {
-      refresh_response <- httr::content(res, "parsed")
+      refresh_response <- httr2::resp_body_json(res)
       auth_vars$cached_credentials$access_token <- refresh_response$access_token
       auth_vars$cached_credentials$expires_at <- refresh_response$expires_at
       auth_vars$cached_credentials$expires_in <- refresh_response$expires_in
-      write(jsonlite::toJSON(auth_vars$cached_credentials, pretty = TRUE, auto_unbox=TRUE), auth_vars$credentials_file)
+      write(
+        jsonlite::toJSON(
+          auth_vars$cached_credentials,
+          pretty = TRUE,
+          auto_unbox = TRUE
+        ),
+        auth_vars$credentials_file
+      )
     }
   } else {
     clear_cached_credentials()
@@ -186,21 +258,33 @@ refresh_credentials <- function(scope=NULL, amr_values=NULL) {
 }
 
 get_current_credential_scope <- function() {
-  tryCatch({
-    if (!is.null(auth_vars$cached_credentials)) {
-      token_payload = strsplit(auth_vars$cached_credentials$access_token, ".", fixed=TRUE)[[1]][2]
-      decoded_token <- jsonlite::fromJSON(rawToChar(base64enc::base64decode(token_payload)))
-      return(strsplit(decoded_token$scope, " ")[[1]])
+  tryCatch(
+    {
+      if (!is.null(auth_vars$cached_credentials)) {
+        token_payload = strsplit(
+          auth_vars$cached_credentials$access_token,
+          ".",
+          fixed = TRUE
+        )[[1]][2]
+        decoded_token <- jsonlite::fromJSON(rawToChar(base64enc::base64decode(
+          token_payload
+        )))
+        return(strsplit(decoded_token$scope, " ")[[1]])
+      }
+    },
+    error = function(e) {
+      # Ignore errors
     }
-  }, error = function(e) {
-    # Ignore errors
-  })
+  )
 
   return(auth_vars$default_scope)
 }
 
 get_pkce <- function() {
-  verifier <- safe_encode_base64_url(charToRaw(paste(sample(c(0:9, letters, LETTERS), 64, replace = TRUE), collapse = "")))
+  verifier <- safe_encode_base64_url(charToRaw(paste(
+    sample(c(0:9, letters, LETTERS), 64, replace = TRUE),
+    collapse = ""
+  )))
   challenge <- safe_encode_base64_url(openssl::sha256(charToRaw(verifier)))
   list(challenge = challenge, verifier = verifier)
 }

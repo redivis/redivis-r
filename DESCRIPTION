@@ -1,7 +1,7 @@
 Package: redivis
 Type: Package
 Title: R interface for Redivis
-Version: 0.11.12
+Version: 0.12.0
 Author: Redivis Inc.
 Maintainer: Redivis <support@redivis.com>
 Description: Supports working with Redivis API through R. 
@@ -12,9 +12,11 @@ BugReports: https://github.com/redivis/redivis-r/issues
 Depends:
     R (>= 3.5.0)
 Imports:
-    httr (>= 1.4.0),
+    R6 (>= 2.5.0),
+    httr2 (>= 1.0.0),
     curl (>= 5.0.0),
     jsonlite (>= 1.8.0),
+    digest (>= 0.1.0),
     data.table (>= 1.0.0),
     dplyr (>= 1.0.0),
     stringr (>= 1.4.0),
@@ -24,10 +26,11 @@ Imports:
     purrr (>= 0.3.0),
     progressr (>= 0.9.0),
     furrr (>= 0.2.0),
-    uuid (>= 1.0.0)
+    uuid (>= 1.0.0),
+    later (>= 1.3.0)
 Encoding: UTF-8
 Language: en-US
-RoxygenNote: 7.3.2
+RoxygenNote: 7.3.3
 Suggests: 
     sf (>= 1.0),
     testthat (>= 2.1.0)
@@ -36,6 +39,11 @@ Collate:
     'auth.R'
     'api_request.R'
     'Version.R'
+    'retryable_download.R'
+    'File.R'
+    'Directory.R'
+    'read_rows.R'
+    'TabularReader.R'
     'Export.R'
     'Variable.R'
     'Parameter.R'
@@ -48,7 +56,10 @@ Collate:
     'Workflow.R'
     'Table.R'
     'Dataset.R'
-    'File.R'
     'Query.R'
+    'ReadStream.R'
     'Upload.R'
+    'exceptions.R'
     'index.R'
+    'retryable_upload.R'
+    'zzz.R'
