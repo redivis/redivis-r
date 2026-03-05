@@ -305,8 +305,11 @@ Dataset <- R6::R6Class(
         ),
       )
       self
+    },
+    connect_dbi = function() {
+      DBI::dbConnect(RedivisDBI(), dataset = self)
     }
-  )
+  ),
 )
 
 rectify_ambiguous_dataset_owner <- function(dataset) {
