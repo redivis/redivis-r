@@ -155,6 +155,15 @@ setMethod(
 
 #' @export
 setMethod(
+  "dbSendQuery",
+  signature("RedivisConnection", "SQL"),
+  function(conn, statement, ...) {
+    dbSendQuery(conn, as.character(statement), ...)
+  }
+)
+
+#' @export
+setMethod(
   "dbGetQuery",
   signature("RedivisConnection", "character"),
   function(conn, statement, ...) {
@@ -175,6 +184,15 @@ setMethod(
     res <- dbSendQuery(conn, statement, ...)
     on.exit(dbClearResult(res))
     dbFetch(res)
+  }
+)
+
+#' @export
+setMethod(
+  "dbGetQuery",
+  signature("RedivisConnection", "SQL"),
+  function(conn, statement, ...) {
+    dbGetQuery(conn, as.character(statement), ...)
   }
 )
 
@@ -274,7 +292,7 @@ setMethod("show", "RedivisResult", function(object) {
 
 #' @export
 setMethod("dbFetch", "RedivisResult", function(res, n = -1, ...) {
-  if (n > 0) {
+  if (n >= 0) {
     res@query$to_tibble(max_results = n)
   } else {
     res@query$to_tibble()

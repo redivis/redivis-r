@@ -378,6 +378,7 @@ parallel_stream_arrow <- function(
     }
   }
   pb <- NULL
+  pb_multiplier <- 0
   if (!is.null(max_results) && max_results > 0) {
     pb_multiplier <- 100 / max_results
     pb <- progressr::progressor(steps = 100)
