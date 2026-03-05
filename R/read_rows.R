@@ -29,6 +29,9 @@ RedivisBatchReader <- R6::R6Class(
     },
 
     get_next_reader__ = function(offset = 0) {
+      if (!is.null(self$current_connection)) {
+        tryCatch(base::close(self$current_connection), error = function(e) {})
+      }
       self$current_offset <- offset
       base_url <- generate_api_url('/readStreams')
       options(timeout = 3600)
@@ -108,6 +111,10 @@ RedivisBatchReader <- R6::R6Class(
 
           if (is.null(batch)) {
             if (self$current_stream_index == length(self$streams)) {
+              tryCatch(
+                base::close(self$current_connection),
+                error = function(e) {}
+              )
               return(NULL)
             } else {
               self$current_stream_index <- self$current_stream_index + 1
@@ -202,7 +209,7 @@ RedivisBatchReader <- R6::R6Class(
     },
 
     close = function() {
-      base::close(self$current_connection)
+      tryCatch(base::close(self$current_connection), error = function(e) {})
     }
   )
 )

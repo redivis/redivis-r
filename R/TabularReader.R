@@ -342,6 +342,7 @@ TabularReader <- R6::R6Class(
             table = if (inherits(self, "Table")) self else NULL,
             query = if (inherits(self, "Query")) self else NULL,
             upload = if (inherits(self, "Upload")) self else NULL,
+            selected_variable_names = params$selected_variable_names,
             properties = stream
           )
         }
@@ -438,14 +439,15 @@ get_table_request_params <- function(
         instance$query
       },
       max_results = max_results,
-      variables = variables,
+      variables = instance$selected_variable_names,
       geography_variable = geography_variable
     )
     res$use_export_api <- FALSE
     return(res)
   }
   check_is_ready(instance)
-  # IMPORTANT: note that this is also called by the upload$to_* methods
+
+  # TODO: do we need all this variable fetching complexity still? Can we just handle everything on the BE?
   all_variables <- make_paginated_request(
     path = str_interp("${instance$uri}/variables"),
     page_size = 1000
