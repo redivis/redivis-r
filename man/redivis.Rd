@@ -5,7 +5,7 @@
 \alias{redivis}
 \title{redivis}
 \format{
-An object of class \code{environment} of length 16.
+An object of class \code{environment} of length 17.
 }
 \usage{
 library(redivis)
@@ -41,6 +41,9 @@ table$to_tibble()
 #   to_sf_tibble()
 #   ...
 table$download(path=NULL, format="csv", ...)
+
+# DBI interface
+con <- redivis$connect_dbi()
 
 # Read files (file tables only):
 table$file("path/to/file")

@@ -189,6 +189,10 @@ Workflow <- R6::R6Class(
       })
     },
 
+    connect_dbi = function() {
+      DBI::dbConnect(RedivisDBI(), workflow = self)
+    },
+
     update_variables = function(variables) {
       make_request(
         method = "PATCH",

@@ -121,6 +121,9 @@ current_notebook <- function() {
 #' #   ...
 #' table$download(path=NULL, format="csv", ...)
 #'
+#' # DBI interface
+#' con <- redivis$connect_dbi()
+#'
 #' # Read files (file tables only):
 #' table$file("path/to/file")
 #' open(file)
@@ -273,6 +276,10 @@ redivis <- local({
 
   e$workflow <- function(name) {
     Workflow$new(name = name)
+  }
+
+  e$connect_dbi = function() {
+    DBI::dbConnect(RedivisDBI())
   }
 
   lockEnvironment(e, bindings = TRUE)
