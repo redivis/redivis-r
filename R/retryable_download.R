@@ -39,9 +39,14 @@ perform_retryable_download <- function(
       pb <- progressr::progressor(steps = 100)
       last_progress_time <- proc.time()[["elapsed"]]
       progress_bytes_written <- 0
+      supports_range_requests <- FALSE
 
       headers_callback <- function(response_headers) {
         should_check_filename <- is.null(size) || is.null(md5_hash)
+        accept_ranges <- response_headers[["accept-ranges"]]
+        if (!is.null(accept_ranges) && tolower(accept_ranges) != "none") {
+          supports_range_requests <<- TRUE
+        }
         size <<- as.integer(
           response_headers[["x-redivis-size"]] %||%
             response_headers[["content-length"]]
@@ -115,10 +120,18 @@ perform_retryable_download <- function(
       if (retry_count < 10) {
         Sys.sleep(retry_count)
         args$retry_count <- retry_count + 1
-        args$start_byte <- if (file.exists(download_path)) {
-          file.size(download_path)
+        if (supports_range_requests) {
+          args$start_byte <- if (file.exists(download_path)) {
+            file.size(download_path)
+          } else {
+            0
+          }
         } else {
-          0
+          # Server doesn't support range requests; delete partial file and restart
+          if (file.exists(download_path)) {
+            unlink(download_path)
+          }
+          args$start_byte <- 0
         }
         return(do.call(perform_retryable_download, args))
       } else {
@@ -289,6 +302,7 @@ perform_parallel_download <- function(
     did_error <- FALSE
     did_short_circuit <- FALSE
     estimated_size <- get_estimated_size(index)
+    supports_range_requests <- FALSE
 
     # callback: write chunks
     write_cb <- function(chunk, final) {
@@ -312,10 +326,15 @@ perform_parallel_download <- function(
           active_downloads <<- active_downloads - 1L
           active_bytes <<- active_bytes - estimated_size
           # queue a retry
+          resume_byte <- if (supports_range_requests && file.exists(download_path)) {
+            file.size(download_path)
+          } else {
+            0
+          }
           pending[[length(pending) + 1]] <<- list(
             index = index,
             retry_count = retry_count + 1L,
-            start_byte = start_byte + bytes_written
+            start_byte = resume_byte
           )
           return(FALSE)
         }
@@ -325,12 +344,20 @@ perform_parallel_download <- function(
           active_bytes <<- active_bytes - estimated_size
           stop(sprintf("HTTP %d for path %s", status, url))
         }
+headers <- parse_curl_headers(res)
 
-        headers <- parse_curl_headers(res)
+        accept_ranges <- headers[["accept-ranges"]]
+        if (!is.null(accept_ranges) && tolower(accept_ranges) != "none") {
+          supports_range_requests <<- TRUE
+        }
 
         content_length <<- as.integer(
           headers[["x-redivis-size"]] %||% headers[["content-length"]]
         )
+
+        if (length(content_length) == 0 || is.na(content_length)) {
+          content_length <<- NULL
+        }
 
         if (!did_check_existing) {
           # Header looks like "crc32c=U26yZA==, md5=uE0r1xmbDXTJAGiWL6xlHw=="
@@ -417,10 +444,15 @@ perform_parallel_download <- function(
         active_downloads <<- active_downloads - 1L
         active_bytes <<- active_bytes - estimated_size
         if (retry_count < max_retries) {
+          resume_byte <- if (supports_range_requests && file.exists(download_path)) {
+            file.size(download_path)
+          } else {
+            0
+          }
           pending[[length(pending) + 1]] <<- list(
             index = index,
             retry_count = retry_count + 1L,
-            start_byte = bytes_written + start_byte
+            start_byte = resume_byte
           )
         } else {
           stop(sprintf(
@@ -447,10 +479,15 @@ perform_parallel_download <- function(
         file_connections[[index]] <<- NULL
       }
       if (retry_count < max_retries) {
+        resume_byte <- if (supports_range_requests && file.exists(download_path)) {
+          file.size(download_path)
+        } else {
+          0
+        }
         pending[[length(pending) + 1]] <<- list(
           index = index,
           retry_count = retry_count + 1L,
-          start_byte = bytes_written + start_byte
+          start_byte = resume_byte
         )
       } else {
         did_short_circuit <<- TRUE

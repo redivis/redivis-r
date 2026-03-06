@@ -372,18 +372,17 @@ parallel_stream_arrow <- function(
   batch_preprocessor,
   max_parallelization
 ) {
-  schema <- get_arrow_schema(variables)
-
   if (!length(streams)) {
     if (is.null(folder)) {
-      return(arrow::arrow_table(schema = schema))
+      return(arrow::arrow_table(schema = get_arrow_schema(variables)))
     } else {
       # Write an empty feather file so the dataset has the correct schema
-      empty_table <- arrow::arrow_table(schema = schema)
+      empty_table <- arrow::arrow_table(schema = get_arrow_schema(variables))
       arrow::write_feather(empty_table, file.path(folder, "empty.feather"))
       return()
     }
   }
+
   pb <- NULL
   pb_multiplier <- 0
   if (!is.null(max_results) && max_results > 0) {
@@ -431,7 +430,7 @@ parallel_stream_arrow <- function(
 
   if (is.null(folder)) {
     if (length(unlist(results, recursive = FALSE)) == 0) {
-      return(arrow::arrow_table(schema = schema))
+      return(arrow::arrow_table(schema = get_arrow_schema(variables)))
     }
     return(do.call(arrow::arrow_table, unlist(results, recursive = FALSE)))
   }
