@@ -174,6 +174,7 @@ perform_parallel_download <- function(
   max_parallelization,
   total_bytes = NULL
 ) {
+  now <- Sys.time()
   pb <- NULL
   on_progress <- NULL
   if (!is.null(total_bytes)) {
@@ -190,47 +191,12 @@ perform_parallel_download <- function(
     0
   }
 
-  did_check_existing <- FALSE
-  if (!is.null(sizes) && !is.null(md5_hashes)) {
-    did_check_existing <- TRUE
-    # Filter uris, removing all where check_download_filename returns a non-NULL
-    # value (indicating the file already exists and matches the expected size and hash)
-    keep <- vapply(
-      seq_along(uris),
-      function(i) {
-        size <- sizes[[i]]
-        md5_hash <- md5_hashes[[i]]
-        exact_file_exists <- check_download_filename(
-          filename = download_paths[[i]],
-          overwrite = overwrite,
-          retry_count = 0L,
-          size = size,
-          md5_hash = md5_hash
-        )
-        if (exact_file_exists) {
-          if (!is.null(on_progress)) {
-            on_progress(size)
-          }
-          FALSE
-        } else {
-          TRUE
-        }
-      },
-      logical(1L)
-    )
-
-    uris <- uris[keep]
-    download_paths <- download_paths[keep]
-    sizes <- sizes[keep]
-    md5_hashes <- md5_hashes[keep]
-  }
-
   # Determine number of workers (cores) to use, following the pattern in parallel_stream_arrow
   worker_count <- max(
     1,
     min(
       4,
-      length(uris),
+      ceiling(length(uris) / 100),
       parallelly::availableCores(),
       max_parallelization
     )
@@ -246,15 +212,13 @@ perform_parallel_download <- function(
       overwrite = overwrite,
       max_parallelization = max_parallelization,
       on_progress = on_progress,
-      avg_file_size = avg_file_size,
-      did_check_existing = did_check_existing
+      avg_file_size = avg_file_size
     )
     return(invisible(NULL))
   }
 
   # Set up future plan, matching the pattern in parallel_stream_arrow / perform_table_parallel_file_upload
   # Parallely is returning True here in positron for Mac, but multicore still doesn't work
-  # TODO: resolve / validate at a later point
   if (parallelly::supportsMulticore() && Sys.info()[["sysname"]] != "Darwin") {
     oplan <- future::plan(future::multicore, workers = worker_count)
   } else {
@@ -263,11 +227,9 @@ perform_parallel_download <- function(
 
   # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
   on.exit(future::plan(oplan), add = TRUE)
-
   # Partition URIs into chunks, one per worker
   indices <- seq_along(uris)
   chunks <- split(indices, cut(indices, breaks = worker_count, labels = FALSE))
-
   # Compute per-worker max_parallelization (divide the pool connections across workers)
   per_worker_max <- max(1, floor(max_parallelization / worker_count))
 
@@ -287,8 +249,7 @@ perform_parallel_download <- function(
       overwrite = overwrite,
       max_parallelization = per_worker_max,
       on_progress = on_progress,
-      avg_file_size = avg_file_size,
-      did_check_existing = did_check_existing
+      avg_file_size = avg_file_size
     )
   })
 
@@ -303,8 +264,7 @@ perform_parallel_download_worker <- function(
   overwrite = FALSE,
   max_parallelization,
   on_progress = NULL,
-  avg_file_size,
-  did_check_existing = FALSE
+  avg_file_size
 ) {
   if (length(uris) == 0L) {
     return(invisible(NULL))
@@ -365,6 +325,32 @@ perform_parallel_download_worker <- function(
     max_retries <- 10L
     download_path <- download_paths[[index]]
     url <- generate_api_url(uris[[index]])
+    did_check_existing <- FALSE
+
+    # Pre-network check: if we have size + md5_hash, check before fetching headers
+    if (
+      retry_count == 0L &&
+        start_byte == 0L &&
+        !is.null(sizes) &&
+        index <= length(sizes) &&
+        !is.null(md5_hashes) &&
+        index <= length(md5_hashes)
+    ) {
+      did_check_existing <- TRUE
+      exact_file_exists <- check_download_filename(
+        filename = download_path,
+        overwrite = overwrite,
+        retry_count = 0L,
+        size = sizes[[index]],
+        md5_hash = md5_hashes[[index]]
+      )
+      if (exact_file_exists) {
+        if (!is.null(on_progress)) {
+          on_progress(sizes[[index]])
+        }
+        return(invisible(NULL))
+      }
+    }
 
     if (retry_count > 0) {
       Sys.sleep(retry_count)
