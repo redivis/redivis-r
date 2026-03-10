@@ -227,17 +227,13 @@ perform_parallel_download <- function(
   handles <- vector("list", length(uris))
 
   # limit open files
-  # NOTE: Parallelization above 24 seems to yield diminishing returns, even for a large number of small files
-  #       It's also causing weird silent "hangs" when downloading in notebooks
-  max_parallelization <- max(min(100, length(uris), max_parallelization), 1)
-  # pool <- curl::new_pool(
-  #   total_con = ceiling(max(1, max_parallelization / 2)), # multiplexing allows us to have fewer connections, so divide by 2
-  # )
+  # NOTE: Parallelization above 48 seems to yield diminishing returns, even for a large number of small files
+  max_parallelization <- max(min(48, length(uris), max_parallelization), 1)
 
   pool <- curl::new_pool(
     total_con = max_parallelization,
     host_con = max_parallelization,
-    max_streams = 10,
+    max_streams = 10, # Allow multiplexing, upt to 10 streams per file
     multiplex = TRUE
   )
 
@@ -297,9 +293,6 @@ perform_parallel_download <- function(
     # build a fresh handle
     h <- curl::new_handle()
     handles[[index]] <<- h
-    if (Sys.getenv("REDIVIS_API_ENDPOINT") == "https://localhost:8443/api/v1") {
-      curl::handle_setopt(h, ssl_verifypeer = 0L)
-    }
 
     headers <- get_authorization_header(as_list = TRUE)
     if (start_byte > 0) {
@@ -307,6 +300,7 @@ perform_parallel_download <- function(
     }
     curl::handle_setheaders(h, .list = headers)
     curl::handle_setopt(h, url = url)
+    curl::handle_setopt(h, buffersize = 524288L) # 512 KB
 
     # local state for this download
     file_con <- NULL
@@ -314,6 +308,7 @@ perform_parallel_download <- function(
     bytes_written <- 0
     last_progress_time <- proc.time()[["elapsed"]]
     progress_bytes_written <- 0
+    progress_chunk_count <- 0
     did_error <- FALSE
     did_short_circuit <- FALSE
     estimated_size <- get_estimated_size(index)
@@ -455,11 +450,16 @@ perform_parallel_download <- function(
         writeBin(chunk, file_con)
         # NOTE: progress updates don't work within the curl handler; we can't do this
         progress_bytes_written <<- progress_bytes_written + length(chunk)
-        if (proc.time()[["elapsed"]] - last_progress_time > 1) {
+        progress_chunk_count <<- progress_chunk_count + 1L
+        if (
+          progress_chunk_count >= 10 &&
+            proc.time()[["elapsed"]] - last_progress_time > 1
+        ) {
           if (!is.null(on_progress)) {
             on_progress(progress_bytes_written)
           }
           progress_bytes_written <<- 0
+          progress_chunk_count <<- 0
           last_progress_time <<- proc.time()[["elapsed"]]
         }
       }
