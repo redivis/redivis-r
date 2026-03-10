@@ -176,6 +176,7 @@ perform_parallel_download <- function(
 ) {
   urls <- vapply(uris, generate_api_url, character(1))
   headers <- get_authorization_header(as_list = TRUE)
+  header_strings <- paste0(names(headers), ": ", headers)
 
   dir.create(
     dirname(download_paths[[1]]),
@@ -186,12 +187,9 @@ perform_parallel_download <- function(
   curl::multi_download(
     urls = urls,
     destfiles = download_paths,
-    headers = headers,
+    progress = FALSE,
     multiplex = TRUE,
-    pool = curl::new_pool(
-      total_con = 100,
-      host_con = 100
-    )
+    httpheader = header_strings
   )
   return(invisible(NULL))
   pb <- NULL
