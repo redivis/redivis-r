@@ -174,6 +174,26 @@ perform_parallel_download <- function(
   max_parallelization,
   total_bytes = NULL
 ) {
+  urls <- vapply(uris, generate_api_url, character(1))
+  headers <- get_authorization_header(as_list = TRUE)
+
+  dir.create(
+    dirname(download_paths[[1]]),
+    showWarnings = FALSE,
+    recursive = TRUE
+  )
+
+  curl::multi_download(
+    urls = urls,
+    destfiles = download_paths,
+    headers = headers,
+    multiplex = TRUE,
+    pool = curl::new_pool(
+      total_con = 100,
+      host_con = 100
+    )
+  )
+  return(invisible(NULL))
   pb <- NULL
   on_progress <- NULL
   if (!is.null(total_bytes)) {
@@ -234,12 +254,11 @@ perform_parallel_download <- function(
   #   total_con = ceiling(max(1, max_parallelization / 2)), # multiplexing allows us to have fewer connections, so divide by 2
   # )
 
-  # TODO: upgrade to curl >= 6.1.0 and we can do:
-  streams_per_connection <- 10
   pool <- curl::new_pool(
     total_con = 100, #ceiling(max_parallelization / streams_per_connection),
     host_con = 100, #ceiling(max_parallelization / streams_per_connection),
-    max_streams = streams_per_connection
+    max_streams = 10,
+    multiplex = TRUE
   )
 
   # track open connections so we can clean up on exit
