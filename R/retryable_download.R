@@ -174,24 +174,6 @@ perform_parallel_download <- function(
   max_parallelization,
   total_bytes = NULL
 ) {
-  urls <- vapply(uris, generate_api_url, character(1))
-  headers <- get_authorization_header(as_list = TRUE)
-  header_strings <- paste0(names(headers), ": ", headers)
-
-  dir.create(
-    dirname(download_paths[[1]]),
-    showWarnings = FALSE,
-    recursive = TRUE
-  )
-
-  curl::multi_download(
-    urls = urls,
-    destfiles = download_paths,
-    progress = FALSE,
-    multiplex = TRUE,
-    httpheader = header_strings
-  )
-  return(invisible(NULL))
   pb <- NULL
   on_progress <- NULL
   if (!is.null(total_bytes)) {
@@ -252,9 +234,10 @@ perform_parallel_download <- function(
   #   total_con = ceiling(max(1, max_parallelization / 2)), # multiplexing allows us to have fewer connections, so divide by 2
   # )
 
+  streams_per_connection <- 10
   pool <- curl::new_pool(
-    total_con = 100, #ceiling(max_parallelization / streams_per_connection),
-    host_con = 100, #ceiling(max_parallelization / streams_per_connection),
+    total_con = ceiling(max_parallelization / streams_per_connection),
+    host_con = ceiling(max_parallelization / streams_per_connection),
     max_streams = 10,
     multiplex = TRUE
   )
