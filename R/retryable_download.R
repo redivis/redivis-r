@@ -184,6 +184,12 @@ perform_parallel_download <- function(
     }
   }
 
+  avg_file_size <- if (!is.null(total_bytes) && length(uris) > 0) {
+    total_bytes / length(uris)
+  } else {
+    0
+  }
+
   did_check_existing <- FALSE
   if (!is.null(sizes) && !is.null(md5_hashes)) {
     did_check_existing <- TRUE
@@ -240,6 +246,7 @@ perform_parallel_download <- function(
       overwrite = overwrite,
       max_parallelization = max_parallelization,
       on_progress = on_progress,
+      avg_file_size = avg_file_size,
       did_check_existing = did_check_existing
     )
     return(invisible(NULL))
@@ -280,6 +287,7 @@ perform_parallel_download <- function(
       overwrite = overwrite,
       max_parallelization = per_worker_max,
       on_progress = on_progress,
+      avg_file_size = avg_file_size,
       did_check_existing = did_check_existing
     )
   })
@@ -295,6 +303,7 @@ perform_parallel_download_worker <- function(
   overwrite = FALSE,
   max_parallelization,
   on_progress = NULL,
+  avg_file_size,
   did_check_existing = FALSE
 ) {
   if (length(uris) == 0L) {
@@ -342,12 +351,6 @@ perform_parallel_download_worker <- function(
   active_downloads <- 0L
   active_bytes <- 0
 
-  # estimate the size of a file by index
-  avg_file_size <- if (!is.null(total_bytes) && length(uris) > 0) {
-    total_bytes / length(uris)
-  } else {
-    0
-  }
   get_estimated_size <- function(index) {
     if (!is.null(sizes) && index <= length(sizes)) {
       sizes[[index]]
