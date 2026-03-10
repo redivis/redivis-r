@@ -177,7 +177,6 @@ perform_parallel_download <- function(
   pb <- NULL
   on_progress <- NULL
   if (!is.null(total_bytes)) {
-    # We need to define the on_progress callback here, since we can't update pb directly from within the curl handler
     pb_multiplier <- 100 / total_bytes
     pb <- progressr::progressor(steps = 100)
     on_progress <- function(bytes = NULL) {
@@ -220,6 +219,84 @@ perform_parallel_download <- function(
     md5_hashes <- md5_hashes[keep]
   }
 
+  # Determine number of workers (cores) to use, following the pattern in parallel_stream_arrow
+  worker_count <- max(
+    1,
+    min(
+      4,
+      length(uris),
+      parallelly::availableCores(),
+      max_parallelization
+    )
+  )
+
+  if (worker_count <= 1) {
+    # Single worker: run directly without spawning futures
+    perform_parallel_download_worker(
+      uris = uris,
+      download_paths = download_paths,
+      sizes = sizes,
+      md5_hashes = md5_hashes,
+      overwrite = overwrite,
+      max_parallelization = max_parallelization,
+      on_progress = on_progress,
+      did_check_existing = did_check_existing
+    )
+    return(invisible(NULL))
+  }
+
+  # Set up future plan, matching the pattern in parallel_stream_arrow / perform_table_parallel_file_upload
+  # Parallely is returning True here in positron for Mac, but multicore still doesn't work
+  # TODO: resolve / validate at a later point
+  if (parallelly::supportsMulticore() && Sys.info()[["sysname"]] != "Darwin") {
+    oplan <- future::plan(future::multicore, workers = worker_count)
+  } else {
+    oplan <- future::plan(future::multisession, workers = worker_count)
+  }
+
+  # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
+  on.exit(future::plan(oplan), add = TRUE)
+
+  # Partition URIs into chunks, one per worker
+  indices <- seq_along(uris)
+  chunks <- split(indices, cut(indices, breaks = worker_count, labels = FALSE))
+
+  # Compute per-worker max_parallelization (divide the pool connections across workers)
+  per_worker_max <- max(1, floor(max_parallelization / worker_count))
+
+  # Need a local variable for parallelization to work
+  .perform_parallel_download_worker <- perform_parallel_download_worker
+
+  furrr::future_map(chunks, function(chunk_indices) {
+    .perform_parallel_download_worker(
+      uris = uris[chunk_indices],
+      download_paths = download_paths[chunk_indices],
+      sizes = if (!is.null(sizes)) sizes[chunk_indices] else NULL,
+      md5_hashes = if (!is.null(md5_hashes)) {
+        md5_hashes[chunk_indices]
+      } else {
+        NULL
+      },
+      overwrite = overwrite,
+      max_parallelization = per_worker_max,
+      on_progress = on_progress,
+      did_check_existing = did_check_existing
+    )
+  })
+
+  invisible(NULL)
+}
+
+perform_parallel_download_worker <- function(
+  uris,
+  download_paths,
+  sizes = NULL,
+  md5_hashes = NULL,
+  overwrite = FALSE,
+  max_parallelization,
+  on_progress = NULL,
+  did_check_existing = FALSE
+) {
   if (length(uris) == 0L) {
     return(invisible(NULL))
   }
@@ -233,7 +310,7 @@ perform_parallel_download <- function(
   pool <- curl::new_pool(
     total_con = max_parallelization,
     host_con = max_parallelization,
-    max_streams = 10, # Allow multiplexing, upt to 10 streams per file
+    max_streams = 10, # Allow multiplexing, up to 10 streams per file
     multiplex = TRUE
   )
 
@@ -458,7 +535,7 @@ perform_parallel_download <- function(
         }
       }
 
-      # on final chunk, clean up if we're done (note that if we haven't read all bytes in content-length, fail_cb will be called)
+      # on final chunk, clean up if we're done
       if (
         final && (is.null(content_length) || bytes_written == content_length)
       ) {
@@ -556,8 +633,6 @@ perform_parallel_download <- function(
 
   # drive the pool until everything (including retries) is done
   while (active_downloads > 0L) {
-    # curl::multi_run(pool = pool, poll = 1)
-
     tryCatch(
       {
         curl::multi_run(pool = pool, poll = 1)
