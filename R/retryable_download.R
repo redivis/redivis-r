@@ -234,10 +234,9 @@ perform_parallel_download <- function(
   #   total_con = ceiling(max(1, max_parallelization / 2)), # multiplexing allows us to have fewer connections, so divide by 2
   # )
 
-  streams_per_connection <- 10
   pool <- curl::new_pool(
-    total_con = ceiling(max_parallelization / streams_per_connection),
-    host_con = ceiling(max_parallelization / streams_per_connection),
+    total_con = max_parallelization,
+    host_con = max_parallelization,
     max_streams = 10,
     multiplex = TRUE
   )
