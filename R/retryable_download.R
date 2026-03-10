@@ -174,17 +174,6 @@ perform_parallel_download <- function(
   max_parallelization,
   total_bytes = NULL
 ) {
-  now <- Sys.time()
-  pb <- NULL
-  on_progress <- NULL
-  if (!is.null(total_bytes)) {
-    pb_multiplier <- 100 / total_bytes
-    pb <- progressr::progressor(steps = 100)
-    on_progress <- function(bytes = NULL) {
-      pb(amount = bytes * pb_multiplier)
-    }
-  }
-
   avg_file_size <- if (!is.null(total_bytes) && length(uris) > 0) {
     total_bytes / length(uris)
   } else {
@@ -195,12 +184,22 @@ perform_parallel_download <- function(
   worker_count <- max(
     1,
     min(
-      4,
+      8,
       ceiling(length(uris) / 100),
       parallelly::availableCores(),
       max_parallelization
     )
   )
+
+  pb <- NULL
+  on_progress <- NULL
+  if (!is.null(total_bytes)) {
+    pb_multiplier <- 100 / total_bytes
+    pb <- progressr::progressor(steps = 100)
+    on_progress <- function(bytes = NULL) {
+      pb(amount = bytes * pb_multiplier)
+    }
+  }
 
   if (worker_count <= 1) {
     # Single worker: run directly without spawning futures
@@ -210,7 +209,6 @@ perform_parallel_download <- function(
       sizes = sizes,
       md5_hashes = md5_hashes,
       overwrite = overwrite,
-      max_parallelization = max_parallelization,
       on_progress = on_progress,
       avg_file_size = avg_file_size
     )
@@ -230,8 +228,6 @@ perform_parallel_download <- function(
   # Partition URIs into chunks, one per worker
   indices <- seq_along(uris)
   chunks <- split(indices, cut(indices, breaks = worker_count, labels = FALSE))
-  # Compute per-worker max_parallelization (divide the pool connections across workers)
-  per_worker_max <- max(1, floor(max_parallelization / worker_count))
 
   # Need a local variable for parallelization to work
   .perform_parallel_download_worker <- perform_parallel_download_worker
@@ -247,7 +243,6 @@ perform_parallel_download <- function(
         NULL
       },
       overwrite = overwrite,
-      max_parallelization = per_worker_max,
       on_progress = on_progress,
       avg_file_size = avg_file_size
     )
@@ -262,7 +257,7 @@ perform_parallel_download_worker <- function(
   sizes = NULL,
   md5_hashes = NULL,
   overwrite = FALSE,
-  max_parallelization,
+  max_concurrency = 48,
   on_progress = NULL,
   avg_file_size
 ) {
@@ -274,12 +269,12 @@ perform_parallel_download_worker <- function(
 
   # limit open files
   # NOTE: Parallelization above 48 seems to yield diminishing returns, even for a large number of small files
-  max_parallelization <- max(min(48, length(uris), max_parallelization), 1)
+  max_concurrency <- max(min(max_concurrency, length(uris)), 1)
 
   pool <- curl::new_pool(
-    total_con = max_parallelization,
-    host_con = max_parallelization,
-    max_streams = 10, # Allow multiplexing, up to 10 streams per file
+    total_con = max_concurrency,
+    host_con = max_concurrency,
+    max_streams = 24, # Allow multiplexing, up to 20 streams per connection
     multiplex = TRUE
   )
 
@@ -609,7 +604,7 @@ perform_parallel_download_worker <- function(
   }
 
   can_schedule_more <- function() {
-    active_downloads < max_parallelization &&
+    active_downloads < max_concurrency &&
       (active_bytes < TARGET_ACTIVE_BYTES || active_downloads == 0L)
   }
 

@@ -400,6 +400,28 @@ parallel_stream_arrow <- function(
     )
   )
 
+  if (worker_count == 1) {
+    # Don't use parallelization if we only have one stream, to avoid the overhead of spawning a future and copying data
+    result <- process_arrow_stream(
+      streams[[1]],
+      folder,
+      variables,
+      coerce_schema,
+      batch_preprocessor,
+      pb,
+      pb_multiplier,
+      is_subprocess = FALSE
+    )
+    if (is.null(folder)) {
+      if (length(result) == 0) {
+        return(arrow::arrow_table(schema = get_arrow_schema(variables)))
+      }
+      return(do.call(arrow::arrow_table, result))
+    } else {
+      return()
+    }
+  }
+
   # Parallely is returning True here in positron for Mac, but multicore still doesn't work
   # TODO: resolve / validate at a later point
   if (parallelly::supportsMulticore() && Sys.info()[["sysname"]] != "Darwin") {
