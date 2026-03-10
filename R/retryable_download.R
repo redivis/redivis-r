@@ -300,7 +300,7 @@ perform_parallel_download <- function(
     }
     curl::handle_setheaders(h, .list = headers)
     curl::handle_setopt(h, url = url)
-    curl::handle_setopt(h, buffersize = 524288L) # 512 KB
+    curl::handle_setopt(h, buffersize = 131072L) # 128 KB
 
     # local state for this download
     file_con <- NULL
@@ -308,7 +308,6 @@ perform_parallel_download <- function(
     bytes_written <- 0
     last_progress_time <- proc.time()[["elapsed"]]
     progress_bytes_written <- 0
-    progress_chunk_count <- 0
     did_error <- FALSE
     did_short_circuit <- FALSE
     estimated_size <- get_estimated_size(index)
@@ -450,16 +449,11 @@ perform_parallel_download <- function(
         writeBin(chunk, file_con)
         # NOTE: progress updates don't work within the curl handler; we can't do this
         progress_bytes_written <<- progress_bytes_written + length(chunk)
-        progress_chunk_count <<- progress_chunk_count + 1L
-        if (
-          progress_chunk_count >= 10 &&
-            proc.time()[["elapsed"]] - last_progress_time > 1
-        ) {
+        if (proc.time()[["elapsed"]] - last_progress_time > 1) {
           if (!is.null(on_progress)) {
             on_progress(progress_bytes_written)
           }
           progress_bytes_written <<- 0
-          progress_chunk_count <<- 0
           last_progress_time <<- proc.time()[["elapsed"]]
         }
       }
