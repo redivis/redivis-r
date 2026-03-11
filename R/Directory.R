@@ -342,7 +342,8 @@ Directory <- R6::R6Class(
       overwrite = FALSE,
       max_results = NULL,
       progress = TRUE,
-      max_parallelization = NULL
+      max_parallelization = NULL,
+      max_concurrency = NULL
     ) {
       files <- self$list(
         mode = "files",
@@ -400,7 +401,8 @@ Directory <- R6::R6Class(
           )
         }),
         overwrite = overwrite,
-        max_parallelization = max_parallelization
+        max_parallelization = max_parallelization,
+        max_concurrency = max_concurrency
       )
 
       if (progress) {

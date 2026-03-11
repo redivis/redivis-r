@@ -172,7 +172,8 @@ perform_parallel_download <- function(
   md5_hashes = NULL,
   overwrite = FALSE,
   max_parallelization,
-  total_bytes = NULL
+  total_bytes = NULL,
+  max_concurrency = NULL
 ) {
   avg_file_size <- if (!is.null(total_bytes) && length(uris) > 0) {
     total_bytes / length(uris)
@@ -190,6 +191,12 @@ perform_parallel_download <- function(
       max_parallelization
     )
   )
+
+  if (!is.null(max_concurrency) && max_concurrency < 1) {
+    abort_redivis_value_error(
+      "max_concurrency must be greater than or equal to 1."
+    )
+  }
 
   pb <- NULL
   on_progress <- NULL
@@ -210,7 +217,8 @@ perform_parallel_download <- function(
       md5_hashes = md5_hashes,
       overwrite = overwrite,
       on_progress = on_progress,
-      avg_file_size = avg_file_size
+      avg_file_size = avg_file_size,
+      max_concurrency = max_concurrency
     )
     return(invisible(NULL))
   }
@@ -244,7 +252,12 @@ perform_parallel_download <- function(
       },
       overwrite = overwrite,
       on_progress = on_progress,
-      avg_file_size = avg_file_size
+      avg_file_size = avg_file_size,
+      max_concurrency = if (is.null(max_concurrency)) {
+        max_concurrency
+      } else {
+        ceiling(max_concurrency / worker_count)
+      }
     )
   })
 
@@ -267,9 +280,13 @@ perform_parallel_download_worker <- function(
 
   handles <- vector("list", length(uris))
 
+  if (is.null(max_concurrency)) {
+    max_concurrency <- 48
+  }
+
   # limit open files
   # NOTE: Parallelization above 48 seems to yield diminishing returns, even for a large number of small files
-  max_concurrency <- max(min(max_concurrency, length(uris)), 1)
+  max_concurrency <- max(min(100, max_concurrency, length(uris)), 1)
 
   pool <- curl::new_pool(
     total_con = max_concurrency,
@@ -414,6 +431,56 @@ perform_parallel_download_worker <- function(
           did_error <<- TRUE
           active_downloads <<- active_downloads - 1L
           active_bytes <<- active_bytes - estimated_size
+
+          # Check for reauth-able errors (401, or 403 with insufficient_scope)
+          if (
+            (status == 401L || status == 403L) &&
+              is.na(Sys.getenv("REDIVIS_API_TOKEN", unset = NA)) &&
+              is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA))
+          ) {
+            resp_body <- tryCatch(
+              rawToChar(chunk),
+              error = function(e) NULL
+            )
+            response_content <- NULL
+            is_json <- FALSE
+            if (!is.null(resp_body) && nzchar(resp_body)) {
+              tryCatch(
+                {
+                  response_content <- jsonlite::fromJSON(
+                    resp_body,
+                    simplifyVector = FALSE
+                  )
+                  is_json <- TRUE
+                },
+                error = function(e) {}
+              )
+            }
+
+            if (
+              status == 401L ||
+                (status == 403L &&
+                  is_json &&
+                  identical(response_content$error, "insufficient_scope"))
+            ) {
+              refresh_credentials(
+                scope = if (is.null(response_content$scope)) {
+                  NULL
+                } else {
+                  strsplit(response_content$scope, " ")
+                },
+                amr_values = response_content$amr_values
+              )
+              # Queue a retry with fresh credentials
+              pending[[length(pending) + 1]] <<- list(
+                index = index,
+                retry_count = 0L,
+                start_byte = 0L
+              )
+              return(FALSE)
+            }
+          }
+
           stop(sprintf("HTTP %d for path %s", status, url))
         }
         headers <- parse_curl_headers(res)
@@ -613,6 +680,21 @@ perform_parallel_download_worker <- function(
   while (current_index <= length(uris) && can_schedule_more()) {
     schedule_download(current_index)
     current_index <- current_index + 1
+    # Periodically give curl a chance to start connecting while we schedule more
+    if (current_index %% 8L == 0L) {
+      tryCatch(
+        curl::multi_run(pool = pool, timeout = 0, poll = 0),
+        redivis_short_circuit = function(e) {
+          idx <- e$index
+          h <- handles[[idx]]
+          if (!is.null(h)) {
+            try(curl::multi_remove(pool, h), silent = TRUE)
+            handles[[idx]] <<- NULL
+          }
+          invisible(NULL)
+        }
+      )
+    }
   }
 
   # drive the pool until everything (including retries) is done
