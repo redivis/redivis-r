@@ -186,7 +186,7 @@ perform_parallel_download <- function(
     1,
     min(
       8,
-      ceiling(length(uris) / 100),
+      ceiling(length(uris) / 1000),
       parallelly::availableCores(),
       max_parallelization
     )
@@ -680,21 +680,6 @@ perform_parallel_download_worker <- function(
   while (current_index <= length(uris) && can_schedule_more()) {
     schedule_download(current_index)
     current_index <- current_index + 1
-    # Periodically give curl a chance to start connecting while we schedule more
-    if (current_index %% 8L == 0L) {
-      tryCatch(
-        curl::multi_run(pool = pool, timeout = 0, poll = 0),
-        redivis_short_circuit = function(e) {
-          idx <- e$index
-          h <- handles[[idx]]
-          if (!is.null(h)) {
-            try(curl::multi_remove(pool, h), silent = TRUE)
-            handles[[idx]] <<- NULL
-          }
-          invisible(NULL)
-        }
-      )
-    }
   }
 
   # drive the pool until everything (including retries) is done
