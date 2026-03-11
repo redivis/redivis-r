@@ -1,7 +1,7 @@
 Package: redivis
 Type: Package
 Title: R interface for Redivis
-Version: 0.12.3
+Version: 0.12.4
 Author: Redivis Inc.
 Maintainer: Redivis <support@redivis.com>
 Description: Supports working with Redivis API through R. 
@@ -14,7 +14,7 @@ Depends:
 Imports:
     R6 (>= 2.5.0),
     httr2 (>= 1.0.0),
-    curl (>= 5.0.0),
+    curl (>= 6.1.0),
     jsonlite (>= 1.8.0),
     digest (>= 0.1.0),
     data.table (>= 1.0.0),

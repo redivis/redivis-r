@@ -370,6 +370,13 @@ TabularReader <- R6::R6Class(
           "'${path}' is a directory, not a file"
         ))
       }
+      if (is.null(node)) {
+        abort_redivis_not_found_error(
+          description = str_interp(
+            "No file found at path '${path}'"
+          )
+        )
+      }
       node
     },
 

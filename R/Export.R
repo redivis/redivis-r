@@ -29,6 +29,7 @@ Export <- R6::R6Class(
       path = NULL,
       overwrite = FALSE,
       max_parallelization = NULL,
+      max_concurrency = NULL,
       progress = TRUE
     ) {
       if (progress) {
@@ -108,6 +109,7 @@ Export <- R6::R6Class(
           }),
           overwrite = overwrite,
           max_parallelization = max_parallelization,
+          max_concurrency = max_concurrency,
           total_bytes = self$properties$size
         )
         if (progress) {

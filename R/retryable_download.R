@@ -47,16 +47,31 @@ perform_retryable_download <- function(
         if (!is.null(accept_ranges) && tolower(accept_ranges) != "none") {
           supports_range_requests <<- TRUE
         }
-        size <<- as.integer(
-          response_headers[["x-redivis-size"]] %||%
-            response_headers[["content-length"]]
-        )
-        # Looks like "crc32c=U26yZA==, md5=uE0r1xmbDXTJAGiWL6xlHw=="
-        hash_header <- response_headers[["x-redivis-hash"]]
-        md5_hash <<- trimws(regmatches(
-          hash_header,
-          regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
-        ))
+        content_range <- response_headers[["content-range"]]
+        if (!is.null(content_range)) {
+          size <<- as.integer(sub(".*/", "", content_range))
+        } else {
+          size <<- as.integer(response_headers[["content-length"]])
+        }
+        # Prefer content-digest (values wrapped in colons, e.g. "md5=:uE0r1xmbDXTJAGiWL6xlHw==:")
+        # over x-goog-hash (no colons, e.g. "md5=uE0r1xmbDXTJAGiWL6xlHw==")
+        hash_header <- response_headers[["content-digest"]]
+        if (!is.null(hash_header)) {
+          md5_hash <<- trimws(gsub(
+            ":",
+            "",
+            regmatches(
+              hash_header,
+              regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
+            )
+          ))
+        } else {
+          hash_header <- response_headers[["x-goog-hash"]]
+          md5_hash <<- trimws(regmatches(
+            hash_header,
+            regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
+          ))
+        }
         if (should_check_filename) {
           exact_file_exists <<- check_download_filename(
             download_path,
@@ -157,12 +172,35 @@ perform_parallel_download <- function(
   md5_hashes = NULL,
   overwrite = FALSE,
   max_parallelization,
-  total_bytes = NULL
+  total_bytes = NULL,
+  max_concurrency = NULL
 ) {
+  avg_file_size <- if (!is.null(total_bytes) && length(uris) > 0) {
+    total_bytes / length(uris)
+  } else {
+    0
+  }
+
+  # Determine number of workers (cores) to use, following the pattern in parallel_stream_arrow
+  worker_count <- max(
+    1,
+    min(
+      8,
+      ceiling(length(uris) / 1000),
+      parallelly::availableCores(),
+      max_parallelization
+    )
+  )
+
+  if (!is.null(max_concurrency) && max_concurrency < 1) {
+    abort_redivis_value_error(
+      "max_concurrency must be greater than or equal to 1."
+    )
+  }
+
   pb <- NULL
   on_progress <- NULL
   if (!is.null(total_bytes)) {
-    # We need to define the on_progress callback here, since we can't update pb directly from within the curl handler
     pb_multiplier <- 100 / total_bytes
     pb <- progressr::progressor(steps = 100)
     on_progress <- function(bytes = NULL) {
@@ -170,61 +208,99 @@ perform_parallel_download <- function(
     }
   }
 
-  did_check_existing <- FALSE
-  if (!is.null(sizes) && !is.null(md5_hashes)) {
-    did_check_existing <- TRUE
-    # Filter uris, removing all where check_download_filename returns a non-NULL
-    # value (indicating the file already exists and matches the expected size and hash)
-    keep <- vapply(
-      seq_along(uris),
-      function(i) {
-        size <- sizes[[i]]
-        md5_hash <- md5_hashes[[i]]
-        exact_file_exists <- check_download_filename(
-          filename = download_paths[[i]],
-          overwrite = overwrite,
-          retry_count = 0L,
-          size = size,
-          md5_hash = md5_hash
-        )
-        if (exact_file_exists) {
-          if (!is.null(on_progress)) {
-            on_progress(size)
-          }
-          FALSE
-        } else {
-          TRUE
-        }
-      },
-      logical(1L)
+  if (worker_count <= 1) {
+    # Single worker: run directly without spawning futures
+    perform_parallel_download_worker(
+      uris = uris,
+      download_paths = download_paths,
+      sizes = sizes,
+      md5_hashes = md5_hashes,
+      overwrite = overwrite,
+      on_progress = on_progress,
+      avg_file_size = avg_file_size,
+      max_concurrency = max_concurrency
     )
-
-    uris <- uris[keep]
-    download_paths <- download_paths[keep]
-    sizes <- sizes[keep]
-    md5_hashes <- md5_hashes[keep]
+    return(invisible(NULL))
   }
 
+  # Set up future plan, matching the pattern in parallel_stream_arrow / perform_table_parallel_file_upload
+  # Parallely is returning True here in positron for Mac, but multicore still doesn't work
+  if (parallelly::supportsMulticore() && Sys.info()[["sysname"]] != "Darwin") {
+    oplan <- future::plan(future::multicore, workers = worker_count)
+  } else {
+    oplan <- future::plan(future::multisession, workers = worker_count)
+  }
+
+  # This avoids overwriting any future strategy that may have been set by the user, resetting on exit
+  on.exit(future::plan(oplan), add = TRUE)
+  # Partition URIs into chunks, one per worker
+  indices <- seq_along(uris)
+  chunks <- split(indices, cut(indices, breaks = worker_count, labels = FALSE))
+
+  # Build per-chunk task objects so each future only receives the data it needs,
+  # avoiding serialization of the full vectors into every worker
+  tasks <- lapply(chunks, function(chunk_indices) {
+    list(
+      uris = uris[chunk_indices],
+      download_paths = download_paths[chunk_indices],
+      sizes = if (!is.null(sizes)) sizes[chunk_indices] else NULL,
+      md5_hashes = if (!is.null(md5_hashes)) md5_hashes[chunk_indices] else NULL
+    )
+  })
+
+  # Need a local variable for parallelization to work
+  .perform_parallel_download_worker <- perform_parallel_download_worker
+
+  furrr::future_map(tasks, function(task) {
+    .perform_parallel_download_worker(
+      uris = task$uris,
+      download_paths = task$download_paths,
+      sizes = task$sizes,
+      md5_hashes = task$md5_hashes,
+      overwrite = overwrite,
+      on_progress = on_progress,
+      avg_file_size = avg_file_size,
+      max_concurrency = if (is.null(max_concurrency)) {
+        max_concurrency
+      } else {
+        ceiling(max_concurrency / worker_count)
+      }
+    )
+  })
+
+  invisible(NULL)
+}
+
+perform_parallel_download_worker <- function(
+  uris,
+  download_paths,
+  sizes = NULL,
+  md5_hashes = NULL,
+  overwrite = FALSE,
+  max_concurrency = 48,
+  on_progress = NULL,
+  avg_file_size
+) {
   if (length(uris) == 0L) {
     return(invisible(NULL))
   }
 
   handles <- vector("list", length(uris))
 
-  # limit open files
-  # NOTE: Parallelization above 24 seems to yield diminishing returns, even for a large number of small files
-  #       It's also causing weird silent "hangs" when downloading in notebooks
-  max_parallelization <- max(min(24, length(uris), max_parallelization), 1)
-  pool <- curl::new_pool(
-    total_con = ceiling(max(1, max_parallelization / 2)), # multiplexing allows us to have fewer connections, so divide by 2
-  )
+  if (is.null(max_concurrency)) {
+    max_concurrency <- 48
+  }
 
-  # TODO: upgrade to curl >= 6.1.0 and we can do:
-  # streams_per_connection <- 5
-  # pool <- curl::new_pool(
-  #   total_con   = ceiling(max_parallelization / streams_per_connection),
-  #   max_streams = streams_per_connection
-  # )
+  # limit open files
+  # NOTE: Parallelization above 48 seems to yield diminishing returns, even for a large number of small files
+  max_concurrency <- max(min(100, max_concurrency, length(uris)), 1)
+
+  pool <- curl::new_pool(
+    total_con = max_concurrency,
+    host_con = max_concurrency,
+    max_streams = 24, # Allow multiplexing, up to 24 streams per connection
+    multiplex = TRUE
+  )
 
   # track open connections so we can clean up on exit
   file_connections <- vector("list", length(uris))
@@ -254,12 +330,6 @@ perform_parallel_download <- function(
   active_downloads <- 0L
   active_bytes <- 0
 
-  # estimate the size of a file by index
-  avg_file_size <- if (!is.null(total_bytes) && length(uris) > 0) {
-    total_bytes / length(uris)
-  } else {
-    0
-  }
   get_estimated_size <- function(index) {
     if (!is.null(sizes) && index <= length(sizes)) {
       sizes[[index]]
@@ -274,6 +344,32 @@ perform_parallel_download <- function(
     max_retries <- 10L
     download_path <- download_paths[[index]]
     url <- generate_api_url(uris[[index]])
+    did_check_existing <- FALSE
+
+    # Pre-network check: if we have size + md5_hash, check before fetching headers
+    if (
+      retry_count == 0L &&
+        start_byte == 0L &&
+        !is.null(sizes) &&
+        index <= length(sizes) &&
+        !is.null(md5_hashes) &&
+        index <= length(md5_hashes)
+    ) {
+      did_check_existing <- TRUE
+      exact_file_exists <- check_download_filename(
+        filename = download_path,
+        overwrite = overwrite,
+        retry_count = 0L,
+        size = sizes[[index]],
+        md5_hash = md5_hashes[[index]]
+      )
+      if (exact_file_exists) {
+        if (!is.null(on_progress)) {
+          on_progress(sizes[[index]])
+        }
+        return(invisible(NULL))
+      }
+    }
 
     if (retry_count > 0) {
       Sys.sleep(retry_count)
@@ -282,9 +378,6 @@ perform_parallel_download <- function(
     # build a fresh handle
     h <- curl::new_handle()
     handles[[index]] <<- h
-    if (Sys.getenv("REDIVIS_API_ENDPOINT") == "https://localhost:8443/api/v1") {
-      curl::handle_setopt(h, ssl_verifypeer = 0L)
-    }
 
     headers <- get_authorization_header(as_list = TRUE)
     if (start_byte > 0) {
@@ -292,6 +385,7 @@ perform_parallel_download <- function(
     }
     curl::handle_setheaders(h, .list = headers)
     curl::handle_setopt(h, url = url)
+    curl::handle_setopt(h, buffersize = 131072L) # 128 KB
 
     # local state for this download
     file_con <- NULL
@@ -326,7 +420,9 @@ perform_parallel_download <- function(
           active_downloads <<- active_downloads - 1L
           active_bytes <<- active_bytes - estimated_size
           # queue a retry
-          resume_byte <- if (supports_range_requests && file.exists(download_path)) {
+          resume_byte <- if (
+            supports_range_requests && file.exists(download_path)
+          ) {
             file.size(download_path)
           } else {
             0
@@ -342,34 +438,105 @@ perform_parallel_download <- function(
           did_error <<- TRUE
           active_downloads <<- active_downloads - 1L
           active_bytes <<- active_bytes - estimated_size
+
+          # Check for reauth-able errors (401, or 403 with insufficient_scope)
+          if (
+            (status == 401L || status == 403L) &&
+              is.na(Sys.getenv("REDIVIS_API_TOKEN", unset = NA)) &&
+              is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA))
+          ) {
+            resp_body <- tryCatch(
+              rawToChar(chunk),
+              error = function(e) NULL
+            )
+            response_content <- NULL
+            is_json <- FALSE
+            if (!is.null(resp_body) && nzchar(resp_body)) {
+              tryCatch(
+                {
+                  response_content <- jsonlite::fromJSON(
+                    resp_body,
+                    simplifyVector = FALSE
+                  )
+                  is_json <- TRUE
+                },
+                error = function(e) {}
+              )
+            }
+
+            if (
+              status == 401L ||
+                (status == 403L &&
+                  is_json &&
+                  identical(response_content$error, "insufficient_scope"))
+            ) {
+              refresh_credentials(
+                scope = if (is.null(response_content$scope)) {
+                  NULL
+                } else {
+                  strsplit(response_content$scope, " ")
+                },
+                amr_values = response_content$amr_values
+              )
+              # Queue a retry with fresh credentials
+              pending[[length(pending) + 1]] <<- list(
+                index = index,
+                retry_count = 0L,
+                start_byte = 0L
+              )
+              return(FALSE)
+            }
+          }
+
           stop(sprintf("HTTP %d for path %s", status, url))
         }
-headers <- parse_curl_headers(res)
+        headers <- parse_curl_headers(res)
 
         accept_ranges <- headers[["accept-ranges"]]
         if (!is.null(accept_ranges) && tolower(accept_ranges) != "none") {
           supports_range_requests <<- TRUE
         }
 
-        content_length <<- as.integer(
-          headers[["x-redivis-size"]] %||% headers[["content-length"]]
-        )
+        content_range <- headers[["content-range"]]
+        if (!is.null(content_range)) {
+          content_length <<- as.integer(sub(".*/", "", content_range))
+        } else {
+          content_length <<- as.integer(headers[["content-length"]])
+        }
 
         if (length(content_length) == 0 || is.na(content_length)) {
           content_length <<- NULL
         }
 
         if (!did_check_existing) {
-          # Header looks like "crc32c=U26yZA==, md5=uE0r1xmbDXTJAGiWL6xlHw=="
-          hash_header <- headers[["x-redivis-hash"]]
-          if (is.null(hash_header)) {
-            md5_hash <<- NULL
-          } else {
-            extracted_md5 <- trimws(regmatches(
-              hash_header,
-              regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
+          # Prefer content-digest (values wrapped in colons, e.g. "md5=:uE0r1xmbDXTJAGiWL6xlHw==:")
+          # over x-goog-hash (no colons, e.g. "md5=uE0r1xmbDXTJAGiWL6xlHw==")
+          hash_header <- headers[["content-digest"]]
+          if (!is.null(hash_header)) {
+            extracted_md5 <- trimws(gsub(
+              ":",
+              "",
+              regmatches(
+                hash_header,
+                regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
+              )
             ))
             md5_hash <<- if (length(extracted_md5) == 0) NULL else extracted_md5
+          } else {
+            hash_header <- headers[["x-goog-hash"]]
+            if (is.null(hash_header)) {
+              md5_hash <<- NULL
+            } else {
+              extracted_md5 <- trimws(regmatches(
+                hash_header,
+                regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
+              ))
+              md5_hash <<- if (length(extracted_md5) == 0) {
+                NULL
+              } else {
+                extracted_md5
+              }
+            }
           }
 
           exact_file_exists <- check_download_filename(
@@ -426,7 +593,7 @@ headers <- parse_curl_headers(res)
         }
       }
 
-      # on final chunk, clean up if we're done (note that if we haven't read all bytes in content-length, fail_cb will be called)
+      # on final chunk, clean up if we're done
       if (
         final && (is.null(content_length) || bytes_written == content_length)
       ) {
@@ -444,7 +611,9 @@ headers <- parse_curl_headers(res)
         active_downloads <<- active_downloads - 1L
         active_bytes <<- active_bytes - estimated_size
         if (retry_count < max_retries) {
-          resume_byte <- if (supports_range_requests && file.exists(download_path)) {
+          resume_byte <- if (
+            supports_range_requests && file.exists(download_path)
+          ) {
             file.size(download_path)
           } else {
             0
@@ -479,7 +648,9 @@ headers <- parse_curl_headers(res)
         file_connections[[index]] <<- NULL
       }
       if (retry_count < max_retries) {
-        resume_byte <- if (supports_range_requests && file.exists(download_path)) {
+        resume_byte <- if (
+          supports_range_requests && file.exists(download_path)
+        ) {
           file.size(download_path)
         } else {
           0
@@ -507,7 +678,7 @@ headers <- parse_curl_headers(res)
   }
 
   can_schedule_more <- function() {
-    active_downloads < max_parallelization &&
+    active_downloads < max_concurrency &&
       (active_bytes < TARGET_ACTIVE_BYTES || active_downloads == 0L)
   }
 
@@ -520,8 +691,6 @@ headers <- parse_curl_headers(res)
 
   # drive the pool until everything (including retries) is done
   while (active_downloads > 0L) {
-    # curl::multi_run(pool = pool, poll = 1)
-
     tryCatch(
       {
         curl::multi_run(pool = pool, poll = 1)

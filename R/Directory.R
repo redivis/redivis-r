@@ -342,7 +342,8 @@ Directory <- R6::R6Class(
       overwrite = FALSE,
       max_results = NULL,
       progress = TRUE,
-      max_parallelization = NULL
+      max_parallelization = NULL,
+      max_concurrency = NULL
     ) {
       files <- self$list(
         mode = "files",
@@ -375,6 +376,7 @@ Directory <- R6::R6Class(
         integer(1L)
       ))
 
+      # TODO: should include query params for table / query being downloaded from
       self_path <- gsub("^/+|/+$", "", as.character(self$path))
       args <- base::list(
         uris = purrr::map(files, function(f) {
@@ -400,7 +402,8 @@ Directory <- R6::R6Class(
           )
         }),
         overwrite = overwrite,
-        max_parallelization = max_parallelization
+        max_parallelization = max_parallelization,
+        max_concurrency = max_concurrency
       )
 
       if (progress) {

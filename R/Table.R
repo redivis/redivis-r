@@ -338,7 +338,8 @@ Table <- R6::R6Class(
       format = 'csv',
       overwrite = FALSE,
       progress = TRUE,
-      max_parallelization = NULL
+      max_parallelization = NULL,
+      max_concurrency = NULL
     ) {
       res <- make_request(
         method = "POST",
@@ -351,7 +352,8 @@ Table <- R6::R6Class(
         path = path,
         overwrite = overwrite,
         progress = progress,
-        max_parallelization = max_parallelization
+        max_parallelization = max_parallelization,
+        max_concurrency = max_concurrency
       )
 
       return(res)
