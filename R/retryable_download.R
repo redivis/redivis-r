@@ -298,7 +298,7 @@ perform_parallel_download_worker <- function(
   pool <- curl::new_pool(
     total_con = max_concurrency,
     host_con = max_concurrency,
-    max_streams = 24, # Allow multiplexing, up to 20 streams per connection
+    max_streams = 24, # Allow multiplexing, up to 24 streams per connection
     multiplex = TRUE
   )
 

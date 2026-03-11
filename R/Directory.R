@@ -376,6 +376,7 @@ Directory <- R6::R6Class(
         integer(1L)
       ))
 
+      # TODO: should include query params for table / query being downloaded from
       self_path <- gsub("^/+|/+$", "", as.character(self$path))
       args <- base::list(
         uris = purrr::map(files, function(f) {
