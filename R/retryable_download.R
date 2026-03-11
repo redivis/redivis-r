@@ -237,19 +237,26 @@ perform_parallel_download <- function(
   indices <- seq_along(uris)
   chunks <- split(indices, cut(indices, breaks = worker_count, labels = FALSE))
 
-  # Need a local variable for parallelization to work
-  .perform_parallel_download_worker <- perform_parallel_download_worker
-
-  furrr::future_map(chunks, function(chunk_indices) {
-    .perform_parallel_download_worker(
+  # Build per-chunk task objects so each future only receives the data it needs,
+  # avoiding serialization of the full vectors into every worker
+  tasks <- lapply(chunks, function(chunk_indices) {
+    list(
       uris = uris[chunk_indices],
       download_paths = download_paths[chunk_indices],
       sizes = if (!is.null(sizes)) sizes[chunk_indices] else NULL,
-      md5_hashes = if (!is.null(md5_hashes)) {
-        md5_hashes[chunk_indices]
-      } else {
-        NULL
-      },
+      md5_hashes = if (!is.null(md5_hashes)) md5_hashes[chunk_indices] else NULL
+    )
+  })
+
+  # Need a local variable for parallelization to work
+  .perform_parallel_download_worker <- perform_parallel_download_worker
+
+  furrr::future_map(tasks, function(task) {
+    .perform_parallel_download_worker(
+      uris = task$uris,
+      download_paths = task$download_paths,
+      sizes = task$sizes,
+      md5_hashes = task$md5_hashes,
       overwrite = overwrite,
       on_progress = on_progress,
       avg_file_size = avg_file_size,
