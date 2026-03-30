@@ -400,7 +400,7 @@ parallel_stream_arrow <- function(
     )
   )
 
-  if (worker_count == 1) {
+  if (length(streams) == 1) {
     # Don't use parallelization if we only have one stream, to avoid the overhead of spawning a future and copying data
     result <- process_arrow_stream(
       streams[[1]],
@@ -477,19 +477,11 @@ process_arrow_stream <- function(
   headers <- get_authorization_header()
   schema <- get_arrow_schema(variables)
 
-  # Workaround for self-signed certs in dev
-  # h <- curl::new_handle()
-  # auth = get_authorization_header()
-  # curl::handle_setheaders(h, .list=auth)
-  # if (Sys.getenv("REDIVIS_API_ENDPOINT") == "https://localhost:8443/api/v1"){
-  #   curl::handle_setopt(h, "ssl_verifypeer"=0L)
-  # }
-  # url <- str_interp('${base_url}/${stream$id}')
-  # con <- curl::curl(url, handle=h)
-  # open(con, "rb")
-
   tryCatch(
     {
+      # This ensures the url method doesn't time out after 60s. Only applies to this function, doesn't set globally
+      # IMPORTANT: if not set, and the download exceeds the default 60s limit, we end up w/ corrupted feather files that can't be read
+      options(timeout = 3600)
       con <- url(
         str_interp('${base_url}/${stream$id}?offset=${stream_rows_read}'),
         open = "rb",
@@ -673,9 +665,11 @@ process_arrow_stream <- function(
         output_file$close()
       }
     },
-    warning = function(w) {},
     error = function(e) {
-      if (grepl("cannot read from connection", conditionMessage(e))) {
+      if (
+        grepl("cannot read from connection", conditionMessage(e)) ||
+          grepl("cannot open the connection", conditionMessage(e))
+      ) {
         if (retry_count > 10) {
           message(
             "Download connection failed after too many retries, giving up."
