@@ -81,11 +81,15 @@ Transform <- R6::R6Class(
       self
     },
 
-    update = function(name = NULL, source_table = NULL) {
+    update = function(name = NULL, source_table = NULL, query = NULL) {
       payload <- list()
 
       if (!is.null(name)) {
         payload$name <- name
+      }
+
+      if (!is.null(query)) {
+        payload$query <- query
       }
 
       if (!is.null(source_table)) {
