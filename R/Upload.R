@@ -79,7 +79,7 @@ Upload <- R6::R6Class(
       })
     },
 
-    insert_rows = function(rows, update_schema = FALSE) {
+    insert_rows = function(rows) {
       if (is.character(rows)) {
         rows <- jsonlite::fromJSON(rows)
       } else if (!is(rows, "data.frame")) {
@@ -92,8 +92,7 @@ Upload <- R6::R6Class(
         method = "POST",
         path = str_interp("${self$uri}/rows"),
         payload = list(
-          "rows" = rows,
-          "updateSchema" = update_schema
+          "rows" = rows
         )
       )
     },
