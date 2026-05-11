@@ -8,3 +8,6 @@ tests/testthat/.DS_Store
 .DS_Store
 .DS_Store
 src/Makevars
+src/*.o
+src/*.so
+src/*.dylib
