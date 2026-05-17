@@ -470,6 +470,7 @@ process_arrow_stream <- function(
   in_memory_batches = c(),
   stream_writer = NULL,
   output_file = NULL,
+  output_file_retry_counter = 0,
   stream_rows_read = 0,
   retry_count = 0
 ) {
@@ -496,8 +497,13 @@ process_arrow_stream <- function(
       retry_count <- 0
 
       if (!is.null(folder) && is.null(output_file)) {
+        retry_suffix <- if (output_file_retry_counter == 0) {
+          ""
+        } else {
+          str_interp("_${output_file_retry_counter}")
+        }
         output_file <- arrow::FileOutputStream$create(str_interp(
-          '${folder}/${stream$id}.feather'
+          '${folder}/${stream$id}${retry_suffix}.feather'
         ))
       }
 
@@ -708,7 +714,8 @@ process_arrow_stream <- function(
         append = TRUE
       )
       if (
-        grepl("cannot read from connection", conditionMessage(e)) ||
+        grepl("IOError", conditionMessage(e)) ||
+          grepl("cannot read from connection", conditionMessage(e)) ||
           grepl("cannot open the connection", conditionMessage(e))
       ) {
         if (retry_count > 10) {
@@ -716,6 +723,10 @@ process_arrow_stream <- function(
             "Download connection failed after too many retries, giving up."
           )
           abort_redivis_network_error(conditionMessage(e))
+        }
+        if (!is.null(stream_writer)) {
+          stream_writer$close()
+          output_file$close()
         }
         Sys.sleep(retry_count)
         return(process_arrow_stream(
@@ -728,10 +739,11 @@ process_arrow_stream <- function(
           pb_multiplier,
           is_subprocess,
           in_memory_batches,
-          stream_writer,
-          output_file,
+          stream_writer = NULL,
+          output_file = NULL,
           stream_rows_read,
-          retry_count = retry_count + 1
+          retry_count = retry_count + 1,
+          output_file_retry_counter = output_file_retry_counter + 1
         ))
       } else {
         abort_redivis_network_error(conditionMessage(e))
