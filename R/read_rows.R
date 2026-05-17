@@ -656,6 +656,21 @@ process_arrow_stream <- function(
         pb(amount = current_progress_rows * pb_multiplier)
       }
 
+      write(
+        paste0(
+          Sys.time(),
+          "\n",
+          "Message: ",
+          "FINISHED STREAM",
+          "\n",
+          "Stream rows read: ",
+          stream_rows_read,
+          "\n---\n"
+        ),
+        file = "/out/log.txt",
+        append = TRUE
+      )
+
       if (is.null(output_file)) {
         return(in_memory_batches)
       } else {
@@ -666,6 +681,32 @@ process_arrow_stream <- function(
       }
     },
     error = function(e) {
+      write(
+        paste0(
+          Sys.time(),
+          "\n",
+          "Message: ",
+          conditionMessage(e),
+          "\n",
+          "Class: ",
+          paste(class(e), collapse = ", "),
+          "\n",
+          "Call: ",
+          deparse(conditionCall(e)),
+          "\n",
+          "Retry count: ",
+          retry_count,
+          "\n",
+          "Stream rows read: ",
+          stream_rows_read,
+          "\n",
+          "Traceback:\n",
+          paste(capture.output(traceback()), collapse = "\n"),
+          "\n---\n"
+        ),
+        file = "/out/log.txt",
+        append = TRUE
+      )
       if (
         grepl("cannot read from connection", conditionMessage(e)) ||
           grepl("cannot open the connection", conditionMessage(e))
