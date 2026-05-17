@@ -291,7 +291,7 @@ make_rows_request <- function(
       (length(read_session$streams) > 1 &&
         max_parallelization > 1)
   ) {
-    folder <- str_interp('${get_temp_dir()}/tables/${uuid::UUIDgenerate()}')
+    folder <- file.path(get_temp_dir(), "tables", uuid::UUIDgenerate())
     dir.create(folder, recursive = TRUE)
 
     if (type != 'arrow_dataset') {
@@ -470,7 +470,6 @@ process_arrow_stream <- function(
   in_memory_batches = c(),
   stream_writer = NULL,
   output_file = NULL,
-  output_file_retry_counter = 0,
   stream_rows_read = 0,
   retry_count = 0
 ) {
@@ -497,15 +496,34 @@ process_arrow_stream <- function(
       retry_count <- 0
 
       if (!is.null(folder) && is.null(output_file)) {
-        retry_suffix <- if (output_file_retry_counter == 0) {
+        retry_suffix <- if (stream_rows_read == 0) {
           ""
         } else {
-          str_interp("_${output_file_retry_counter}")
+          str_interp("-retry_offset-${stream_rows_read}")
         }
-        output_file <- arrow::FileOutputStream$create(str_interp(
+        output_file_path <- str_interp(
           '${folder}/${stream$id}${retry_suffix}.feather'
-        ))
+        )
+        output_file <- arrow::FileOutputStream$create(output_file_path)
       }
+
+      write(
+        paste0(
+          Sys.time(),
+          "\n",
+          "Message: ",
+          "STARTING STREAM",
+          "\n",
+          "Stream rows read: ",
+          stream_rows_read,
+          "\n",
+          "Output file: ",
+          output_file_path,
+          "\n---\n"
+        ),
+        file = "/out/log.txt",
+        append = TRUE
+      )
 
       fields_to_add <- list()
       should_reorder_fields <- FALSE
@@ -742,8 +760,7 @@ process_arrow_stream <- function(
           stream_writer = NULL,
           output_file = NULL,
           stream_rows_read,
-          retry_count = retry_count + 1,
-          output_file_retry_counter = output_file_retry_counter + 1
+          retry_count = retry_count + 1
         ))
       } else {
         abort_redivis_network_error(conditionMessage(e))
