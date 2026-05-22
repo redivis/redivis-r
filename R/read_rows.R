@@ -507,24 +507,6 @@ process_arrow_stream <- function(
         output_file <- arrow::FileOutputStream$create(output_file_path)
       }
 
-      write(
-        paste0(
-          Sys.time(),
-          "\n",
-          "Message: ",
-          "STARTING STREAM",
-          "\n",
-          "Stream rows read: ",
-          stream_rows_read,
-          "\n",
-          "Output file: ",
-          output_file_path,
-          "\n---\n"
-        ),
-        file = "/out/log.txt",
-        append = TRUE
-      )
-
       fields_to_add <- list()
       should_reorder_fields <- FALSE
       time_variables_to_coerce = c()
@@ -680,21 +662,6 @@ process_arrow_stream <- function(
         pb(amount = current_progress_rows * pb_multiplier)
       }
 
-      write(
-        paste0(
-          Sys.time(),
-          "\n",
-          "Message: ",
-          "FINISHED STREAM",
-          "\n",
-          "Stream rows read: ",
-          stream_rows_read,
-          "\n---\n"
-        ),
-        file = "/out/log.txt",
-        append = TRUE
-      )
-
       if (is.null(output_file)) {
         return(in_memory_batches)
       } else {
@@ -705,32 +672,6 @@ process_arrow_stream <- function(
       }
     },
     error = function(e) {
-      write(
-        paste0(
-          Sys.time(),
-          "\n",
-          "Message: ",
-          conditionMessage(e),
-          "\n",
-          "Class: ",
-          paste(class(e), collapse = ", "),
-          "\n",
-          "Call: ",
-          deparse(conditionCall(e)),
-          "\n",
-          "Retry count: ",
-          retry_count,
-          "\n",
-          "Stream rows read: ",
-          stream_rows_read,
-          "\n",
-          "Traceback:\n",
-          paste(capture.output(traceback()), collapse = "\n"),
-          "\n---\n"
-        ),
-        file = "/out/log.txt",
-        append = TRUE
-      )
       if (
         grepl("IOError", conditionMessage(e)) ||
           grepl("cannot read from connection", conditionMessage(e)) ||
@@ -744,6 +685,8 @@ process_arrow_stream <- function(
         }
         if (!is.null(stream_writer)) {
           stream_writer$close()
+        }
+        if (!is.null(output_file)) {
           output_file$close()
         }
         Sys.sleep(retry_count)
