@@ -493,8 +493,6 @@ process_arrow_stream <- function(
         "arrow"
       )$MakeRConnectionInputStream(con))
 
-      retry_count <- 0
-
       if (!is.null(folder) && is.null(output_file)) {
         retry_suffix <- if (stream_rows_read == 0) {
           ""
@@ -657,6 +655,7 @@ process_arrow_stream <- function(
             last_measured_time <- proc.time()[3]
           }
         }
+        retry_count <- 0
       }
 
       if (!is.null(pb)) {
