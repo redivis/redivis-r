@@ -1,12 +1,21 @@
 #define R_NO_REMAP
 #include <R.h>
 #include <Rinternals.h>
+#include <Rversion.h>
 #include <R_ext/Connections.h>
 #include <string.h>
 
 /* R_EOF is not exposed under R_NO_REMAP */
 #ifndef R_EOF
 #define R_EOF (-1)
+#endif
+
+/* Rf_findVarInFrame / Rf_findVarInFrame3 are deprecated non-API as of R 4.5.0.
+ * Use R_getVar(symbol, env, error) on R >= 4.5.0, with fallback for older R. */
+#if defined(R_VERSION) && R_VERSION >= R_Version(4, 5, 0)
+# define FIND_VAR_IN_FRAME(env, sym) R_getVar((sym), (env), FALSE)
+#else
+# define FIND_VAR_IN_FRAME(env, sym) Rf_findVarInFrame3((env), (sym), TRUE)
 #endif
 
 /*
@@ -30,7 +39,7 @@ typedef struct {
 
 /* Call env$open_stream(start_byte) */
 static void call_open_stream(SEXP env, R_xlen_t start) {
-    SEXP fn = Rf_findVarInFrame(env, Rf_install("open_stream"));
+    SEXP fn = FIND_VAR_IN_FRAME(env, Rf_install("open_stream"));
     if (fn == R_UnboundValue) {
         Rf_error("redivis connection: open_stream not found in environment");
     }
@@ -43,7 +52,7 @@ static void call_open_stream(SEXP env, R_xlen_t start) {
  * If the stream was idle-closed by R, returns raw(0) AND sets
  * env$stream_con to NULL.  We detect that via is_stream_open(). */
 static SEXP call_read_stream(SEXP env, R_xlen_t n) {
-    SEXP fn = Rf_findVarInFrame(env, Rf_install("read_stream"));
+    SEXP fn = FIND_VAR_IN_FRAME(env, Rf_install("read_stream"));
     if (fn == R_UnboundValue) {
         Rf_error("redivis connection: read_stream not found in environment");
     }
@@ -55,13 +64,13 @@ static SEXP call_read_stream(SEXP env, R_xlen_t n) {
 
 /* Check whether the R-level stream is still open (env$stream_con != NULL) */
 static int is_stream_open(SEXP env) {
-    SEXP val = Rf_findVarInFrame(env, Rf_install("stream_con"));
+    SEXP val = FIND_VAR_IN_FRAME(env, Rf_install("stream_con"));
     return (val != R_NilValue && val != R_UnboundValue);
 }
 
 /* Call env$close_stream() */
 static void call_close_stream(SEXP env) {
-    SEXP fn = Rf_findVarInFrame(env, Rf_install("close_stream"));
+    SEXP fn = FIND_VAR_IN_FRAME(env, Rf_install("close_stream"));
     if (fn == R_UnboundValue) return;  /* tolerate missing */
     SEXP call = PROTECT(Rf_lang1(fn));
     Rf_eval(call, env);
