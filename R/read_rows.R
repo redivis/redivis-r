@@ -501,8 +501,9 @@ process_arrow_stream <- function(
         } else {
           str_interp("-retry_offset-${stream_rows_read}")
         }
-        output_file_path <- str_interp(
-          '${folder}/${stream$id}${retry_suffix}.feather'
+        output_file_path <- file.path(
+          folder,
+          paste0(stream$id, retry_suffix, ".feather")
         )
         output_file <- arrow::FileOutputStream$create(output_file_path)
       }
