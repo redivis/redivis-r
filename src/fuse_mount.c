@@ -1,3 +1,4 @@
+#ifndef _WIN32
 /*
  * fuse_mount.c — FUSE read-only filesystem for Redivis Directory objects
  *
@@ -1044,3 +1045,4 @@ SEXP C_fuse_unmount(SEXP ext_ptr) {
     fuse_mount_finalizer(ext_ptr);
     return R_NilValue;
 }
+#endif /* _WIN32 */

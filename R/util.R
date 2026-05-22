@@ -26,13 +26,13 @@ get_arrow_schema <- function(variables) {
 }
 
 convert_data_to_parquet <- function(data) {
-  folder <- str_interp('/${get_temp_dir()}/parquet')
+  folder <- file.path(get_temp_dir(), "parquet")
 
   if (!dir.exists(folder)) {
     dir.create(folder, recursive = TRUE)
   }
 
-  temp_file_path <- str_interp('${folder}/${uuid::UUIDgenerate()}')
+  temp_file_path <- file.path(folder, uuid::UUIDgenerate())
 
   if (is(data, "sf")) {
     sf_column_name <- attr(data, "sf_column")
