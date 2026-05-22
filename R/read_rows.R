@@ -291,7 +291,7 @@ make_rows_request <- function(
       (length(read_session$streams) > 1 &&
         max_parallelization > 1)
   ) {
-    folder <- str_interp('${get_temp_dir()}/tables/${uuid::UUIDgenerate()}')
+    folder <- file.path(get_temp_dir(), "tables", uuid::UUIDgenerate())
     dir.create(folder, recursive = TRUE)
 
     if (type != 'arrow_dataset') {
@@ -493,12 +493,17 @@ process_arrow_stream <- function(
         "arrow"
       )$MakeRConnectionInputStream(con))
 
-      retry_count <- 0
-
       if (!is.null(folder) && is.null(output_file)) {
-        output_file <- arrow::FileOutputStream$create(str_interp(
-          '${folder}/${stream$id}.feather'
-        ))
+        retry_suffix <- if (stream_rows_read == 0) {
+          ""
+        } else {
+          str_interp("-retry_offset-${stream_rows_read}")
+        }
+        output_file_path <- file.path(
+          folder,
+          paste0(stream$id, retry_suffix, ".feather")
+        )
+        output_file <- arrow::FileOutputStream$create(output_file_path)
       }
 
       fields_to_add <- list()
@@ -650,6 +655,7 @@ process_arrow_stream <- function(
             last_measured_time <- proc.time()[3]
           }
         }
+        retry_count <- 0
       }
 
       if (!is.null(pb)) {
@@ -667,7 +673,8 @@ process_arrow_stream <- function(
     },
     error = function(e) {
       if (
-        grepl("cannot read from connection", conditionMessage(e)) ||
+        grepl("IOError", conditionMessage(e)) ||
+          grepl("cannot read from connection", conditionMessage(e)) ||
           grepl("cannot open the connection", conditionMessage(e))
       ) {
         if (retry_count > 10) {
@@ -675,6 +682,12 @@ process_arrow_stream <- function(
             "Download connection failed after too many retries, giving up."
           )
           abort_redivis_network_error(conditionMessage(e))
+        }
+        if (!is.null(stream_writer)) {
+          stream_writer$close()
+        }
+        if (!is.null(output_file)) {
+          output_file$close()
         }
         Sys.sleep(retry_count)
         return(process_arrow_stream(
@@ -687,8 +700,8 @@ process_arrow_stream <- function(
           pb_multiplier,
           is_subprocess,
           in_memory_batches,
-          stream_writer,
-          output_file,
+          stream_writer = NULL,
+          output_file = NULL,
           stream_rows_read,
           retry_count = retry_count + 1
         ))
