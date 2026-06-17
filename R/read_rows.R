@@ -349,7 +349,7 @@ make_rows_request <- function(
       } else if (type == 'data_table') {
         # This is the most performant way to get a data.table
         # We need to temporarily set use_altrep to FALSE, since when set to TRUE (the default), it defers materialization of most values,
-        # but then materialization happens anyways on ::setDT. It's much faster to do this during the initial arrow conversion.
+        # but then materialization happens anyways on data.table::setDT(). It's much faster to do this during the initial arrow conversion.
         old <- options(arrow.use_altrep = FALSE)
         on.exit(options(old), add = TRUE)
         df <- as.data.frame(ds)

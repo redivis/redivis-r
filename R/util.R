@@ -60,8 +60,9 @@ get_parquet_rows_per_group <- function(data) {
     return(100000L)
   }
 
-  rpg <- as.integer(TARGET_GROUP_BYTES / bytes_per_row)
-  max(MIN_RPG, min(MAX_RPG, rpg))
+  rpg <- TARGET_GROUP_BYTES / bytes_per_row
+  rpg <- max(MIN_RPG, min(MAX_RPG, rpg))
+  as.integer(rpg)
 }
 
 convert_data_to_parquet <- function(data) {
@@ -80,7 +81,7 @@ convert_data_to_parquet <- function(data) {
     data[sf_column_name] <- wkt_geopoint
   }
 
-  rows_per_group = get_parquet_rows_per_group(data)
+  rows_per_group <- get_parquet_rows_per_group(data)
 
   if (is(data, "Dataset")) {
     dir.create(temp_file_path)
