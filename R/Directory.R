@@ -371,9 +371,9 @@ Directory <- R6::R6Class(
       total_bytes <- sum(vapply(
         files,
         function(f) {
-          if (is.null(f$size)) 0L else as.integer(f$size)
+          if (is.null(f$size)) 0 else as.numeric(f$size)
         },
-        integer(1L)
+        1
       ))
 
       # TODO: should include query params for table / query being downloaded from

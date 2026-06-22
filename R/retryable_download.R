@@ -49,9 +49,9 @@ perform_retryable_download <- function(
         }
         content_range <- response_headers[["content-range"]]
         if (!is.null(content_range)) {
-          size <<- as.integer(sub(".*/", "", content_range))
+          size <<- as.numeric(sub(".*/", "", content_range))
         } else {
-          size <<- as.integer(response_headers[["content-length"]])
+          size <<- as.numeric(response_headers[["content-length"]])
         }
         # Prefer content-digest (values wrapped in colons, e.g. "md5=:uE0r1xmbDXTJAGiWL6xlHw==:")
         # over x-goog-hash (no colons, e.g. "md5=uE0r1xmbDXTJAGiWL6xlHw==")
@@ -499,9 +499,11 @@ perform_parallel_download_worker <- function(
 
         content_range <- headers[["content-range"]]
         if (!is.null(content_range)) {
-          content_length <<- as.integer(sub(".*/", "", content_range))
+          #  Use numeric to avoid int32 overflow
+          content_length <<- as.numeric(sub(".*/", "", content_range))
         } else {
-          content_length <<- as.integer(headers[["content-length"]])
+          #  Use numeric to avoid int32 overflow
+          content_length <<- as.numeric(headers[["content-length"]])
         }
 
         if (length(content_length) == 0 || is.na(content_length)) {
@@ -740,7 +742,7 @@ check_download_filename <- function(
     if (
       !is.null(size) &&
         !is.null(md5_hash) &&
-        file.size(filename) == as.integer(size)
+        file.size(filename) == as.numeric(size)
     ) {
       # Decode base64 hash if necessary
       if (is.character(md5_hash)) {

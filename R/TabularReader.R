@@ -103,6 +103,9 @@ TabularReader <- R6::R6Class(
 
       raw_bytes <- httr2::resp_body_raw(res)
       file_specs <- arrow::read_ipc_stream(raw_bytes, as_data_frame = TRUE)
+      # IMPORTANT: need to explicitly set int64 as numeric to avoid purrr::transpose casting to an int32, which causes overflow issues when > 2^31-1
+      int64_cols <- vapply(file_specs, inherits, logical(1), "integer64")
+      file_specs[int64_cols] <- lapply(file_specs[int64_cols], as.numeric)
 
       # Convert to a list of rows upfront; each element is a named list of scalars
       row_list <- purrr::transpose(as.list(file_specs))
