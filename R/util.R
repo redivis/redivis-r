@@ -97,6 +97,11 @@ convert_data_to_parquet <- function(data) {
     )
     temp_file_path <- str_interp('${temp_file_path}/part-0.parquet')
   } else {
+    if (!is(data, "Table") && !is(data, "RecordBatch")) {
+      # We need to do this, otherwise the metadata on large R objects completely bloat the parquet file and cause read errors
+      data <- arrow::as_arrow_table(data)
+      data$metadata$r <- NULL # drop serialized R attributes
+    }
     arrow::write_parquet(
       data,
       sink = temp_file_path,
