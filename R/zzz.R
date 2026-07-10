@@ -8,12 +8,24 @@
 .redivis_state$native_available <- FALSE
 .redivis_state$native_load_error <- NULL
 
-#' @keywords internal
+#' @noRd
 native_available <- function() isTRUE(.redivis_state$native_available)
+
+#' TRUE if the registered native entry point is actually resolvable. This is
+#' the source of truth for whether the C component is usable, and works
+#' regardless of *how* the DLL got loaded (installed package via library.dynam,
+#' or devtools::load_all()/pkgload compiling and loading it directly).
+#' @noRd
+native_routine_available <- function() {
+  tryCatch(
+    is.loaded("C_redivis_connection", PACKAGE = "redivis", type = "Call"),
+    error = function(e) FALSE
+  )
+}
 
 #' Abort a native-only feature with a clear message when the C component
 #' could not be loaded, rather than surfacing a cryptic .Call() error.
-#' @keywords internal
+#' @noRd
 require_native <- function(feature) {
   if (!native_available()) {
     detail <- if (!is.null(.redivis_state$native_load_error)) {
@@ -34,20 +46,56 @@ require_native <- function(feature) {
   }
 }
 
-.onLoad <- function(libname, pkgname) {
-  # Load the compiled code manually (instead of via NAMESPACE's useDynLib) so
-  # that a load failure degrades only the native features rather than aborting
-  # the whole package namespace.
+# Load the compiled shared object manually (instead of via NAMESPACE's
+# useDynLib) so that a load failure degrades only the native features rather
+# than aborting the whole package namespace. Returns TRUE if the native
+# routines end up resolvable. Handles both installed packages and
+# devtools::load_all() (where the object lives in src/ rather than libs/, and
+# pkgload won't auto-load it because there is no useDynLib directive).
+load_native <- function(libname, pkgname) {
+  # Already loaded (a prior load, or pkgload having done it for us).
+  if (native_routine_available()) {
+    return(TRUE)
+  }
+
+  # Standard installed-package location (<lib>/<pkg>/libs[/<arch>]/).
   tryCatch(
-    {
-      library.dynam("redivis", pkgname, libname)
-      .redivis_state$native_available <- TRUE
-    },
+    library.dynam(pkgname, pkgname, libname),
     error = function(e) {
-      .redivis_state$native_available <- FALSE
       .redivis_state$native_load_error <- conditionMessage(e)
     }
   )
+  if (native_routine_available()) {
+    .redivis_state$native_load_error <- NULL
+    return(TRUE)
+  }
+
+  # Dev fallback (devtools::load_all()): the compiled object sits in src/.
+  dev_so <- tryCatch(
+    file.path(
+      getNamespaceInfo(pkgname, "path"),
+      "src",
+      paste0(pkgname, .Platform$dynlib.ext)
+    ),
+    error = function(e) NULL
+  )
+  if (!is.null(dev_so) && file.exists(dev_so)) {
+    tryCatch(
+      {
+        dyn.load(dev_so)
+        .redivis_state$native_load_error <- NULL
+      },
+      error = function(e) {
+        .redivis_state$native_load_error <- conditionMessage(e)
+      }
+    )
+  }
+
+  native_routine_available()
+}
+
+.onLoad <- function(libname, pkgname) {
+  .redivis_state$native_available <- load_native(libname, pkgname)
 
   if (is_jupyter() && requireNamespace("IRdisplay", quietly = TRUE)) {
     handler_jupyter <- function(
@@ -134,7 +182,9 @@ require_native <- function(feature) {
 
 .onUnload <- function(libpath) {
   if (native_available()) {
-    library.dynam.unload("redivis", libpath)
+    # Wrapped because the DLL may have been loaded by pkgload (load_all) rather
+    # than our library.dynam call, in which case this unload can fail harmlessly.
+    try(library.dynam.unload("redivis", libpath), silent = TRUE)
   }
 }
 
