@@ -84,6 +84,7 @@ Directory <- R6::R6Class(
       if (.Platform$OS.type == "windows") {
         abort_redivis_error("FUSE mounting is not supported on Windows.")
       }
+      require_native("Mounting a directory")
 
       mount_path <- normalizePath(mount_path, mustWork = FALSE)
 
@@ -219,7 +220,8 @@ Directory <- R6::R6Class(
           dir_child_names,
           dir_child_is_dir,
           as.character(api_base_url),
-          as.character(auth_token)
+          as.character(auth_token),
+          PACKAGE = "redivis"
         ),
         error = function(e) {
           unlink(mount_path, recursive = TRUE)
@@ -237,7 +239,7 @@ Directory <- R6::R6Class(
         warning("Not currently mounted.", call. = FALSE)
         return(invisible(NULL))
       }
-      .Call("C_fuse_unmount", private$.mount_ptr)
+      .Call("C_fuse_unmount", private$.mount_ptr, PACKAGE = "redivis")
       private$.mount_ptr <- NULL
       private$.mount_path <- NULL
       message("Unmounted.")
