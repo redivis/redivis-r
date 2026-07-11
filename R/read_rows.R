@@ -12,6 +12,7 @@ RedivisBatchReader <- R6::R6Class(
     current_connection = NULL,
     fields_to_add = NULL,
     should_reorder_fields = FALSE,
+    saw_eos_sentinel = FALSE,
 
     initialize = function(
       streams,
@@ -36,11 +37,17 @@ RedivisBatchReader <- R6::R6Class(
       base_url <- generate_api_url('/readStreams')
       options(timeout = 3600)
       headers <- get_authorization_header()
+      # Bind con before the tryCatch so the error handler can safely reference
+      # it even if url() below fails before assigning it
+      con <- NULL
       tryCatch(
-        {
+        # suppressWarnings rather than a tryCatch warning handler — a warning
+        # handler would abandon the rest of this block, leaving the reader
+        # pointing at the previous stream
+        suppressWarnings({
           con <- url(
             str_interp(
-              '${base_url}/${self$streams[[self$current_stream_index]]$id}?offset=${self$current_offset}'
+              '${base_url}/${self$streams[[self$current_stream_index]]$id}?offset=${self$current_offset}&eosSentinel=true'
             ),
             open = "rb",
             headers = headers,
@@ -49,6 +56,12 @@ RedivisBatchReader <- R6::R6Class(
           stream_reader <- arrow::RecordBatchStreamReader$create(
             getNamespace("arrow")$MakeRConnectionInputStream(con)
           )
+
+          # The eosSentinel query param asks the server to terminate the stream
+          # with a zero-row sentinel batch, which lets us distinguish a
+          # complete stream from one truncated exactly at a message boundary
+          # (otherwise silent)
+          self$saw_eos_sentinel <- FALSE
 
           if (self$coerce_schema) {
             for (field in self$schema$fields) {
@@ -88,9 +101,13 @@ RedivisBatchReader <- R6::R6Class(
 
           self$current_record_batch_reader <- stream_reader
           self$current_connection <- con
-        },
-        warning = function(w) {},
+        }),
         error = function(e) {
+          # Close the connection from this failed attempt before retrying, so
+          # failed attempts don't accumulate open connections
+          if (!is.null(con)) {
+            tryCatch(base::close(con), error = function(e2) {})
+          }
           self$retry_count <- self$retry_count + 1
           if (self$retry_count > 10) {
             message(
@@ -108,6 +125,22 @@ RedivisBatchReader <- R6::R6Class(
       tryCatch(
         {
           batch <- self$current_record_batch_reader$read_next_batch()
+
+          if (is.null(batch) && !self$saw_eos_sentinel) {
+            # The stream ended without the sentinel, meaning it was truncated.
+            # This triggers the error handler below, which reconnects at
+            # current_offset.
+            stop(
+              "Stream ended before the end-of-stream sentinel was received (truncated download)"
+            )
+          }
+
+          if (!is.null(batch) && batch$num_rows == 0) {
+            # A zero-row batch is the server's end-of-stream sentinel; it
+            # carries no data
+            self$saw_eos_sentinel <- TRUE
+            return(self$read_next_batch())
+          }
 
           if (is.null(batch)) {
             if (self$current_stream_index == length(self$streams)) {
@@ -483,6 +516,13 @@ process_arrow_stream <- function(
   base_url = generate_api_url('/readStreams')
   headers <- get_authorization_header()
   schema <- get_arrow_schema(variables)
+  # Offset at the start of any file created by this invocation, so its rows can
+  # be re-fetched if the file can't be finalized after an error
+  file_start_offset <- stream_rows_read
+  output_file_path <- NULL
+  # Bind con before the tryCatch so the error handler can safely reference it
+  # even if url() below fails before assigning it
+  con <- NULL
 
   tryCatch(
     {
@@ -490,15 +530,25 @@ process_arrow_stream <- function(
       # IMPORTANT: if not set, and the download exceeds the default 60s limit, we end up w/ corrupted feather files that can't be read
       options(timeout = 3600)
       con <- url(
-        str_interp('${base_url}/${stream$id}?offset=${stream_rows_read}'),
+        str_interp(
+          '${base_url}/${stream$id}?offset=${stream_rows_read}&eosSentinel=true'
+        ),
         open = "rb",
         headers = headers,
         blocking = FALSE
       )
-      on.exit(close(con), add = TRUE)
+      # close() errors on an already-closed connection, and the error handler
+      # below closes it before retrying
+      on.exit(tryCatch(close(con), error = function(e) {}), add = TRUE)
       stream_reader <- arrow::RecordBatchStreamReader$create(getNamespace(
         "arrow"
       )$MakeRConnectionInputStream(con))
+
+      # The eosSentinel query param asks the server to terminate the stream
+      # with a zero-row sentinel batch, which lets us distinguish a complete
+      # stream from one truncated exactly at a message boundary (otherwise
+      # silent)
+      saw_eos_sentinel <- FALSE
 
       if (!is.null(folder) && is.null(output_file)) {
         retry_suffix <- if (stream_rows_read == 0) {
@@ -511,6 +561,17 @@ process_arrow_stream <- function(
           paste0(stream$id, retry_suffix, ".feather")
         )
         output_file <- arrow::FileOutputStream$create(output_file_path)
+        if (is.null(batch_preprocessor)) {
+          # Create the writer eagerly so the file is a valid Arrow file (with
+          # magic bytes and footer) once closed, even if zero batches arrive —
+          # e.g. when resuming from an offset at the end of the stream.
+          # With a batch_preprocessor the schema isn't known until the first
+          # batch, so the writer stays lazy and an empty file is removed below.
+          stream_writer <- arrow::RecordBatchFileWriter$create(
+            output_file,
+            schema = schema
+          )
+        }
       }
 
       fields_to_add <- list()
@@ -551,10 +612,21 @@ process_arrow_stream <- function(
       while (TRUE) {
         batch <- stream_reader$read_next_batch()
         if (is.null(batch)) {
+          if (!saw_eos_sentinel) {
+            # The stream ended without the sentinel, meaning it was truncated.
+            # This triggers the retryable error handler below, which resumes
+            # from stream_rows_read.
+            stop(
+              "Stream ended before the end-of-stream sentinel was received (truncated download)"
+            )
+          }
           break
+        } else if (batch$num_rows == 0) {
+          # A zero-row batch is the server's end-of-stream sentinel; it
+          # carries no data
+          saw_eos_sentinel <- TRUE
         } else {
-          current_progress_rows <- current_progress_rows + batch$num_rows
-          stream_rows_read <- stream_rows_read + batch$num_rows
+          batch_rows <- batch$num_rows
 
           # We need to coerce_schema for all dataset tables, since their underlying storage type may not be the same as the logical type
           if (coerce_schema) {
@@ -630,13 +702,11 @@ process_arrow_stream <- function(
           if (!is.null(batch)) {
             if (!is.null(output_file)) {
               if (is.null(stream_writer)) {
+                # Only reachable with a batch_preprocessor; otherwise the
+                # writer was created eagerly above
                 stream_writer <- arrow::RecordBatchFileWriter$create(
                   output_file,
-                  schema = if (is.null(batch_preprocessor)) {
-                    schema
-                  } else {
-                    batch$schema
-                  }
+                  schema = batch$schema
                 )
               }
               stream_writer$write_batch(batch)
@@ -644,6 +714,11 @@ process_arrow_stream <- function(
               in_memory_batches <- c(in_memory_batches, batch)
             }
           }
+
+          # Only count these rows towards the resume offset after they've been
+          # written, so a retry after a failed write doesn't skip them
+          stream_rows_read <- stream_rows_read + batch_rows
+          current_progress_rows <- current_progress_rows + batch_rows
 
           if (proc.time()[3] - last_measured_time > 0.2) {
             # Yield to R's event loop to check for pending interrupts. Only need to do if on the main thread
@@ -674,15 +749,23 @@ process_arrow_stream <- function(
       } else {
         if (!is.null(stream_writer)) {
           stream_writer$close()
+          output_file$close()
+        } else {
+          # The batch_preprocessor filtered out every batch: nothing was
+          # written, so the empty file isn't a valid Arrow file
+          output_file$close()
+          if (!is.null(output_file_path)) {
+            unlink(output_file_path)
+          }
         }
-        output_file$close()
       }
     },
     error = function(e) {
       if (
         grepl("IOError", conditionMessage(e)) ||
           grepl("cannot read from connection", conditionMessage(e)) ||
-          grepl("cannot open the connection", conditionMessage(e))
+          grepl("cannot open the connection", conditionMessage(e)) ||
+          grepl("end-of-stream sentinel", conditionMessage(e))
       ) {
         if (retry_count > 10) {
           message(
@@ -690,11 +773,36 @@ process_arrow_stream <- function(
           )
           abort_redivis_network_error(conditionMessage(e))
         }
-        if (!is.null(stream_writer)) {
-          stream_writer$close()
+        # Close the failed connection now, rather than accumulating open
+        # connections across nested retries
+        if (!is.null(con)) {
+          tryCatch(close(con), error = function(e2) {})
         }
-        if (!is.null(output_file)) {
-          output_file$close()
+        if (!is.null(stream_writer)) {
+          # Closing the writer writes the file footer, making the rows written
+          # so far readable; the retry below then resumes from stream_rows_read.
+          # If the footer can't be written the file is invalid, so remove it
+          # and re-fetch all of its rows from the file's starting offset.
+          footer_written <- tryCatch(
+            {
+              stream_writer$close()
+              TRUE
+            },
+            error = function(e2) FALSE
+          )
+          tryCatch(output_file$close(), error = function(e2) {})
+          if (!footer_written) {
+            if (!is.null(output_file_path)) {
+              unlink(output_file_path)
+            }
+            stream_rows_read <- file_start_offset
+          }
+        } else if (!is.null(output_file)) {
+          # No batches were written, so the empty file isn't a valid Arrow file
+          tryCatch(output_file$close(), error = function(e2) {})
+          if (!is.null(output_file_path)) {
+            unlink(output_file_path)
+          }
         }
         Sys.sleep(retry_count)
         return(process_arrow_stream(

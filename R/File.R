@@ -1,5 +1,4 @@
 #' @include api_request.R util.R retryable_download.R
-#' @useDynLib redivis, .registration = TRUE
 #' @importFrom R6 R6Class
 File <- R6::R6Class(
   "File",
@@ -123,6 +122,7 @@ File <- R6::R6Class(
     },
 
     open = function(mode = "r") {
+      require_native("Opening a file connection")
       if (!mode %in% c("r", "rb", "rt")) {
         abort_redivis_error(
           str_interp(
@@ -237,7 +237,8 @@ File <- R6::R6Class(
         env,
         paste0("redivis://", file_path),
         as.double(file_size),
-        mode
+        mode,
+        PACKAGE = "redivis"
       )
     }
   )
