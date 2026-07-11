@@ -37,6 +37,9 @@ RedivisBatchReader <- R6::R6Class(
       base_url <- generate_api_url('/readStreams')
       options(timeout = 3600)
       headers <- get_authorization_header()
+      # Bind con before the tryCatch so the error handler can safely reference
+      # it even if url() below fails before assigning it
+      con <- NULL
       tryCatch(
         # suppressWarnings rather than a tryCatch warning handler — a warning
         # handler would abandon the rest of this block, leaving the reader
@@ -102,7 +105,9 @@ RedivisBatchReader <- R6::R6Class(
         error = function(e) {
           # Close the connection from this failed attempt before retrying, so
           # failed attempts don't accumulate open connections
-          tryCatch(base::close(con), error = function(e2) {})
+          if (!is.null(con)) {
+            tryCatch(base::close(con), error = function(e2) {})
+          }
           self$retry_count <- self$retry_count + 1
           if (self$retry_count > 10) {
             message(
@@ -515,6 +520,9 @@ process_arrow_stream <- function(
   # be re-fetched if the file can't be finalized after an error
   file_start_offset <- stream_rows_read
   output_file_path <- NULL
+  # Bind con before the tryCatch so the error handler can safely reference it
+  # even if url() below fails before assigning it
+  con <- NULL
 
   tryCatch(
     {
@@ -767,7 +775,9 @@ process_arrow_stream <- function(
         }
         # Close the failed connection now, rather than accumulating open
         # connections across nested retries
-        tryCatch(close(con), error = function(e2) {})
+        if (!is.null(con)) {
+          tryCatch(close(con), error = function(e2) {})
+        }
         if (!is.null(stream_writer)) {
           # Closing the writer writes the file footer, making the rows written
           # so far readable; the retry below then resumes from stream_rows_read.
