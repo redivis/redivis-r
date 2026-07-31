@@ -1,23 +1,37 @@
+# Only truly static, environment-independent state lives in this env. Values
+# that depend on the runtime environment (HOME, REDIVIS_API_ENDPOINT) must NOT
+# be computed here: top-level package code runs at build/install time, so a
+# pre-built binary (e.g. from r-universe) would bake in the *build machine's*
+# environment. Those values are computed on demand via the accessors below.
 auth_vars <- new.env(parent = emptyenv())
 
-auth_vars$redivis_dir = file.path(Sys.getenv("HOME"), ".redivis")
-auth_vars$cached_credentials = NULL
-auth_vars$verify_ssl = !grepl(
-  "https://localhost",
-  Sys.getenv("REDIVIS_API_ENDPOINT", "https://redivis.com"),
-  fixed = TRUE
-)
-auth_vars$credentials_file = file.path(
-  file.path(Sys.getenv("HOME"), ".redivis"),
-  "r_credentials"
-)
-auth_vars$default_scope = list('data.edit', 'workflow.write')
-auth_vars$client_id = 'Ah850nGnQg5mFWd25nkyk9Y3'
-auth_vars$base_url = sub(
-  "(https?://.*?)(/|$).*",
-  "\\1",
-  Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com')
-)
+auth_vars$cached_credentials <- NULL
+auth_vars$default_scope <- list('data.edit', 'workflow.write')
+auth_vars$client_id <- 'Ah850nGnQg5mFWd25nkyk9Y3'
+
+get_redivis_dir <- function() {
+  file.path(Sys.getenv("HOME"), ".redivis")
+}
+
+get_credentials_file <- function() {
+  file.path(get_redivis_dir(), "r_credentials")
+}
+
+get_base_url <- function() {
+  sub(
+    "(https?://.*?)(/|$).*",
+    "\\1",
+    Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com')
+  )
+}
+
+get_verify_ssl <- function() {
+  !grepl(
+    "https://localhost",
+    Sys.getenv("REDIVIS_API_ENDPOINT", "https://redivis.com"),
+    fixed = TRUE
+  )
+}
 
 get_auth_token <- function(scope = NULL) {
   if (is.null(scope)) {
@@ -36,13 +50,13 @@ get_auth_token <- function(scope = NULL) {
     return(Sys.getenv("REDIVIS_API_TOKEN"))
   } else if (
     is.null(auth_vars$cached_credentials) &&
-      file.exists(auth_vars$credentials_file)
+      file.exists(get_credentials_file())
   ) {
     tryCatch(
       {
         auth_vars$cached_credentials <- jsonlite::fromJSON(
           readLines(
-            auth_vars$credentials_file,
+            get_credentials_file(),
             warn = FALSE # Otherwise will print a warning since there's not a line break at the end
           )
         )
@@ -53,7 +67,7 @@ get_auth_token <- function(scope = NULL) {
     )
   }
 
-  missing_scope = setdiff(scope, get_current_credential_scope())
+  missing_scope <- setdiff(scope, get_current_credential_scope())
 
   if (
     !is.null(auth_vars$cached_credentials) &&
@@ -70,8 +84,8 @@ get_auth_token <- function(scope = NULL) {
 
     return(auth_vars$cached_credentials$access_token)
   } else {
-    if (!dir.exists(auth_vars$redivis_dir)) {
-      dir.create(auth_vars$redivis_dir)
+    if (!dir.exists(get_redivis_dir())) {
+      dir.create(get_redivis_dir())
     }
 
     perform_oauth_login(
@@ -84,8 +98,8 @@ get_auth_token <- function(scope = NULL) {
 
 clear_cached_credentials <- function() {
   auth_vars$cached_credentials <- NULL
-  if (file.exists(auth_vars$credentials_file)) {
-    file.remove(auth_vars$credentials_file)
+  if (file.exists(get_credentials_file())) {
+    file.remove(get_credentials_file())
   }
 }
 
@@ -99,7 +113,7 @@ perform_oauth_login <- function(
   verifier <- pkce$verifier
 
   req <- httr2::request(paste0(
-    auth_vars$base_url,
+    get_base_url(),
     "/oauth/device_authorization"
   )) |>
     httr2::req_method("POST") |>
@@ -113,7 +127,7 @@ perform_oauth_login <- function(
       access_type = 'offline'
     ))
 
-  if (!auth_vars$verify_ssl) {
+  if (!get_verify_ssl()) {
     req <- req |> httr2::req_options(ssl_verifypeer = 0L)
   }
 
@@ -157,7 +171,7 @@ perform_oauth_login <- function(
       parsed_response$interval
     ))
 
-    poll_req <- httr2::request(paste0(auth_vars$base_url, "/oauth/token")) |>
+    poll_req <- httr2::request(paste0(get_base_url(), "/oauth/token")) |>
       httr2::req_method("POST") |>
       httr2::req_headers(!!!headers) |>
       httr2::req_body_form(
@@ -168,7 +182,7 @@ perform_oauth_login <- function(
       ) |>
       httr2::req_error(is_error = function(resp) FALSE)
 
-    if (!auth_vars$verify_ssl) {
+    if (!get_verify_ssl()) {
       poll_req <- poll_req |> httr2::req_options(ssl_verifypeer = 0L)
     }
 
@@ -199,19 +213,13 @@ perform_oauth_login <- function(
       pretty = TRUE,
       auto_unbox = TRUE
     ),
-    auth_vars$credentials_file
+    get_credentials_file()
   )
 
   return(auth_vars$cached_credentials)
 }
 
 refresh_credentials <- function(scope = NULL, amr_values = NULL) {
-  # Recreate, in case REDIVIS_API_ENDPOINT has changed
-  auth_vars$base_url <- sub(
-    "(https?://.*?)(/|$).*",
-    "\\1",
-    Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com')
-  )
   if (!is.null(scope) || !is.null(amr_values)) {
     perform_oauth_login(
       scope = if (is.null(scope)) get_current_credential_scope() else scope,
@@ -219,7 +227,7 @@ refresh_credentials <- function(scope = NULL, amr_values = NULL) {
       upgrade_credentials = TRUE
     )
   } else if (!is.null(auth_vars$cached_credentials$refresh_token)) {
-    refresh_req <- httr2::request(paste0(auth_vars$base_url, "/oauth/token")) |>
+    refresh_req <- httr2::request(paste0(get_base_url(), "/oauth/token")) |>
       httr2::req_method("POST") |>
       httr2::req_body_form(
         client_id = auth_vars$client_id,
@@ -228,7 +236,7 @@ refresh_credentials <- function(scope = NULL, amr_values = NULL) {
       ) |>
       httr2::req_error(is_error = function(resp) FALSE)
 
-    if (!auth_vars$verify_ssl) {
+    if (!get_verify_ssl()) {
       refresh_req <- refresh_req |> httr2::req_options(ssl_verifypeer = 0L)
     }
 
@@ -247,7 +255,7 @@ refresh_credentials <- function(scope = NULL, amr_values = NULL) {
           pretty = TRUE,
           auto_unbox = TRUE
         ),
-        auth_vars$credentials_file
+        get_credentials_file()
       )
     }
   } else {
@@ -261,7 +269,7 @@ get_current_credential_scope <- function() {
   tryCatch(
     {
       if (!is.null(auth_vars$cached_credentials)) {
-        token_payload = strsplit(
+        token_payload <- strsplit(
           auth_vars$cached_credentials$access_token,
           ".",
           fixed = TRUE
