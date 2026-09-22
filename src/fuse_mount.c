@@ -17,7 +17,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #include <dlfcn.h>
 #include <curl/curl.h>
@@ -373,6 +378,7 @@ resolve:
 /*  Constants & data structures                                       */
 /* ------------------------------------------------------------------ */
 
+#undef BLOCK_SIZE  /* <sys/mount.h> on Linux defines its own */
 #define BLOCK_SIZE (4 * 1024 * 1024)
 
 typedef struct redivis_file_entry {
@@ -401,7 +407,11 @@ typedef struct redivis_mount_ctx {
     dir_entry_t *dirs; size_t n_dirs;
     struct fuse *fuse; struct fuse_chan *chan;
     int api_version; pthread_t thread; int running;
+    /* Set once mounting succeeds: the FUSE thread must then be joined before ctx is freed */
+    int thread_live;
     char error_msg[512];
+    /* When mount() was called, reported as every inode's st_ctime. See getattr_impl. */
+    time_t mounted_at;
     /* Condition variable to signal mount success/failure without polling */
     pthread_mutex_t startup_mutex;
     pthread_cond_t  startup_cond;
@@ -603,19 +613,34 @@ static int getattr_impl(const char *path, struct stat *stbuf) {
     while (*rel == '/') rel++;
 
     if (strlen(rel) == 0) {
-        stbuf->st_mode = S_IFDIR | 0555; stbuf->st_nlink = 2; return 0;
+        stbuf->st_mode = S_IFDIR | 0555; stbuf->st_nlink = 2;
+        /* Directories have no added_at, so the mount time is the only thing we know. Without this
+           the memset above leaves them at the epoch, which reads as a broken filesystem. */
+        stbuf->st_mtime = stbuf->st_atime = stbuf->st_ctime = ctx->mounted_at;
+        return 0;
     }
     redivis_file_entry_t *entry = find_entry(ctx, path);
     if (entry) {
         stbuf->st_mode = S_IFREG | 0444; stbuf->st_nlink = 1;
         stbuf->st_size = (off_t)entry->size;
         stbuf->st_mtime = entry->added_at;
+        /* We do not track access, so atime tracks mtime — the resting state of a file that has been
+           written and not read since, which is what relatime would leave behind anyway. */
         stbuf->st_atime = entry->added_at;
-        stbuf->st_ctime = entry->added_at;
+        /* ctime is when the file appeared on THIS filesystem, not when it was added to Redivis.
+           This deliberately diverges from the usual FUSE convention of ctime == mtime: Redivis
+           notebooks select which files under /out to persist by sorting on ctime oldest-first, and
+           reporting the source timestamp would let a mounted directory — whose files are typically
+           far older than anything the session produced — claim the whole storage budget ahead of
+           freshly written output. See selectPersistentFiles.sh in the redivis app, and keep this in
+           step with the equivalent in redivis-python's mount_directory.py. */
+        stbuf->st_ctime = ctx->mounted_at;
         return 0;
     }
     if (ht_lookup(&ctx->dir_ht, rel)) {
-        stbuf->st_mode = S_IFDIR | 0555; stbuf->st_nlink = 2; return 0;
+        stbuf->st_mode = S_IFDIR | 0555; stbuf->st_nlink = 2;
+        stbuf->st_mtime = stbuf->st_atime = stbuf->st_ctime = ctx->mounted_at;
+        return 0;
     }
     return -ENOENT;
 }
@@ -745,6 +770,16 @@ static const void *build_fuse_ops(int version, size_t *ops_size) {
 /*  Background thread                                                 */
 /* ------------------------------------------------------------------ */
 
+/* Called by the FUSE thread once its loop exits. After an unmount the loop can exit at any moment,
+   so ctx->fuse is handed over under the mutex, which is what stop_fuse_loop() checks it under. */
+static struct fuse *take_fuse(redivis_mount_ctx_t *ctx) {
+    pthread_mutex_lock(&ctx->startup_mutex);
+    struct fuse *f = ctx->fuse;
+    ctx->fuse = NULL; ctx->running = 0;
+    pthread_mutex_unlock(&ctx->startup_mutex);
+    return f;
+}
+
 static void *fuse_thread_func(void *arg) {
     redivis_mount_ctx_t *ctx = (redivis_mount_ctx_t *)arg;
     ctx->error_msg[0] = '\0';
@@ -786,10 +821,11 @@ static void *fuse_thread_func(void *arg) {
         pthread_mutex_unlock(&ctx->startup_mutex);
 
         dl_fuse_loop(ctx->fuse);
+        struct fuse *f = take_fuse(ctx);
         dl_fuse2_unmount(ctx->mount_point, ctx->chan);
-        dl_fuse_destroy(ctx->fuse);
+        dl_fuse_destroy(f);
         rmdir(ctx->mount_point);
-        ctx->fuse = NULL; ctx->chan = NULL; ctx->running = 0;
+        ctx->chan = NULL;
         dl_fuse_opt_free_args(&fargs);
         return NULL;
     } else {
@@ -829,27 +865,148 @@ static void *fuse_thread_func(void *arg) {
         pthread_mutex_unlock(&ctx->startup_mutex);
 
         dl_fuse_loop(ctx->fuse);
-        dl_fuse3_unmount(ctx->fuse);
-        dl_fuse_destroy(ctx->fuse);
+        struct fuse *f = take_fuse(ctx);
+        dl_fuse3_unmount(f);
+        dl_fuse_destroy(f);
         rmdir(ctx->mount_point);
-        ctx->fuse = NULL; ctx->running = 0;
         dl_fuse_opt_free_args(&fargs);
         return NULL;
     }
 }
 
 /* ------------------------------------------------------------------ */
+/*  Kernel unmount                                                    */
+/* ------------------------------------------------------------------ */
+
+#ifndef __APPLE__
+extern char **environ;
+
+/* Runs argv (searched on PATH) and waits for it. Returns its exit status, 127 if it could not be
+   started, or -1 on any other failure. Combined stdout/stderr is left in out. */
+static int run_command(char *const argv[], char *out, size_t out_len) {
+    out[0] = '\0';
+    int fds[2];
+    if (pipe(fds) != 0) return -1;
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_adddup2(&fa, fds[1], STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&fa, fds[1], STDERR_FILENO);
+    posix_spawn_file_actions_addclose(&fa, fds[0]);
+    pid_t pid;
+    int rc = posix_spawnp(&pid, argv[0], &fa, NULL, argv, environ);
+    posix_spawn_file_actions_destroy(&fa);
+    close(fds[1]);
+    if (rc != 0) { close(fds[0]); return rc == ENOENT ? 127 : -1; }
+
+    size_t used = 0; ssize_t r;
+    char buf[256];
+    while ((r = read(fds[0], buf, sizeof(buf))) != 0) {
+        if (r < 0) { if (errno == EINTR) continue; break; }
+        size_t take = (size_t)r;
+        if (take > out_len - 1 - used) take = out_len - 1 - used;
+        memcpy(out + used, buf, take); used += take;
+    }
+    out[used] = '\0';
+    while (used > 0 && (out[used - 1] == '\n' || out[used - 1] == '\r')) out[--used] = '\0';
+    close(fds[0]);
+
+    int status;
+    while (waitpid(pid, &status, 0) < 0) if (errno != EINTR) return -1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+#endif
+
+/* Detaches the filesystem from the kernel. This must happen before the FUSE loop is asked to stop:
+   fuse_exit() only sets a flag that the loop checks between requests, so on its own it leaves the
+   loop blocked reading /dev/fuse (the hang), and once the loop does exit, libfuse closes /dev/fuse
+   before its own unmount attempt, which fails quietly for unprivileged users and leaves a dead
+   mount behind ("Transport endpoint is not connected"). Unmounting here instead makes the loop's
+   read return straight away, and when it fails, the filesystem is still being served and the
+   caller can report it. lazy detaches even while files are open, but the loop then keeps serving
+   until they close, so it is only a last resort. Returns 0 on success, otherwise describes the failure in err. */
+static int kernel_unmount(const char *mount_point, int lazy, char *err, size_t err_len) {
+#ifdef __APPLE__
+    /* FUSE-T attaches its NFS mount asynchronously after fuse_mount() returns, so right after
+       mounting the kernel can still report EINVAL (not a mount point). Give it a moment. */
+    for (int tries = 0; tries < 100; tries++) {
+        if (unmount(mount_point, lazy ? MNT_FORCE : 0) == 0) return 0;
+        if (errno != EINVAL) break;
+        usleep(50000);
+    }
+    snprintf(err, err_len, "unmount(\"%s\") failed: %s", mount_point, strerror(errno));
+    return -1;
+#else
+    /* Works as root or with CAP_SYS_ADMIN, which is how the mount was made in that case */
+    if (umount2(mount_point, lazy ? MNT_DETACH : 0) == 0) return 0;
+    int umount_errno = errno;
+
+    /* Unprivileged mounts go through the setuid fusermount helper, so their unmounts must too */
+    const char *helpers[] = {"fusermount3", "fusermount"};
+    for (size_t i = 0; i < sizeof(helpers) / sizeof(helpers[0]); i++) {
+        char *argv[6]; int a = 0;
+        argv[a++] = (char *)helpers[i]; argv[a++] = "-u";
+        if (lazy) argv[a++] = "-z";
+        argv[a++] = "--"; argv[a++] = (char *)mount_point; argv[a] = NULL;
+        char out[256];
+        int rc = run_command(argv, out, sizeof(out));
+        if (rc == 0) return 0;
+        if (rc == 127) continue;
+        snprintf(err, err_len, "%s -u failed (exit %d): %s", helpers[i], rc,
+                 out[0] ? out : "no output");
+        return -1;
+    }
+    snprintf(err, err_len, "umount2(\"%s\") failed (%s), and neither fusermount3 nor fusermount "
+             "was found on PATH", mount_point, strerror(umount_errno));
+    return -1;
+#endif
+}
+
+/* ------------------------------------------------------------------ */
 /*  R interface                                                       */
 /* ------------------------------------------------------------------ */
+
+/* Stops the loop of a filesystem kernel_unmount() has already detached, and waits for it */
+static void stop_fuse_loop(redivis_mount_ctx_t *ctx) {
+    /* With the mount gone, FUSE-T's connection is closed, and fuse_exit() writing to it raises
+       SIGPIPE, for which R's handler throws an R error. Ignoring it discards the signal. */
+    struct sigaction ignore, prev;
+    memset(&ignore, 0, sizeof(ignore)); ignore.sa_handler = SIG_IGN;
+    sigaction(SIGPIPE, &ignore, &prev);
+    pthread_mutex_lock(&ctx->startup_mutex);
+    if (ctx->fuse) dl_fuse_exit(ctx->fuse);
+    pthread_mutex_unlock(&ctx->startup_mutex);
+    pthread_join(ctx->thread, NULL);
+    ctx->thread_live = 0;
+    sigaction(SIGPIPE, &prev, NULL);
+}
+
+/* Unmounts and stops the FUSE thread. Returns -1, with err filled and nothing changed, if the
+   kernel refused the unmount; the filesystem is then still being served. */
+static int unmount_ctx(redivis_mount_ctx_t *ctx, char *err, size_t err_len) {
+    if (!ctx->thread_live) return 0;
+    pthread_mutex_lock(&ctx->startup_mutex);
+    int running = ctx->running;
+    pthread_mutex_unlock(&ctx->startup_mutex);
+    /* Not running means the loop already exited, e.g. after an external fusermount -u */
+    if (running && kernel_unmount(ctx->mount_point, 0, err, err_len) != 0) return -1;
+    stop_fuse_loop(ctx);
+    /* The FUSE thread removes it too, but only when its own unmount has succeeded */
+    rmdir(ctx->mount_point);
+    return 0;
+}
 
 static void fuse_mount_finalizer(SEXP ptr) {
     redivis_mount_ctx_t *ctx = (redivis_mount_ctx_t *)R_ExternalPtrAddr(ptr);
     if (!ctx) return;
-    if (ctx->running && ctx->fuse) {
-        dl_fuse_exit(ctx->fuse);
-        if (ctx->api_version == 2 && ctx->chan)
-            dl_fuse2_unmount(ctx->mount_point, ctx->chan);
-        pthread_join(ctx->thread, NULL);
+    char err[512];
+    if (unmount_ctx(ctx, err, sizeof(err)) != 0) {
+        /* Nobody can be told about the failure here, so detach lazily rather than leave the mount
+           in place. The loop keeps serving from ctx until open files close, so neither wait for it
+           nor free ctx. */
+        kernel_unmount(ctx->mount_point, 1, err, sizeof(err));
+        pthread_detach(ctx->thread);
+        R_ClearExternalPtr(ptr);
+        return;
     }
     pthread_mutex_destroy(&ctx->startup_mutex);
     pthread_cond_destroy(&ctx->startup_cond);
@@ -901,6 +1058,7 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
     ctx->mount_point = strdup(mount_point); ctx->cache_dir = strdup(cache_dir);
     ctx->api_base_url = strdup(api_base_url); ctx->auth_token = strdup(auth_token);
     ctx->api_version = api_ver; ctx->n_entries = (size_t)n;
+    ctx->mounted_at = time(NULL);
     ctx->entries = calloc((size_t)n, sizeof(redivis_file_entry_t));
     ht_init(&ctx->file_ht, (size_t)n);
     ht_init(&ctx->dir_ht, (size_t)n_dirs);
@@ -1027,6 +1185,7 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
 #endif
     }
 
+    ctx->thread_live = 1;
     SEXP ptr = PROTECT(R_MakeExternalPtr(ctx, R_NilValue, R_NilValue));
     R_RegisterCFinalizerEx(ptr, fuse_mount_finalizer, TRUE);
     UNPROTECT(1);
@@ -1036,11 +1195,13 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
 SEXP C_fuse_unmount(SEXP ext_ptr) {
     redivis_mount_ctx_t *ctx = (redivis_mount_ctx_t *)R_ExternalPtrAddr(ext_ptr);
     if (!ctx) return R_NilValue;
-    if (ctx->running && ctx->fuse) {
-        dl_fuse_exit(ctx->fuse);
-        if (ctx->api_version == 2 && ctx->chan)
-            dl_fuse2_unmount(ctx->mount_point, ctx->chan);
-        pthread_join(ctx->thread, NULL);
+    char err[512];
+    if (unmount_ctx(ctx, err, sizeof(err)) != 0) {
+        /* The mount is untouched and still being served, so the caller can retry */
+        Rf_error("fuse_unmount: could not unmount '%s'.\n"
+                 "  - Close any files open under it (including a shell or R session whose "
+                 "working directory is inside it), then try again\n"
+                 "  - Detail: %s", ctx->mount_point, err);
     }
     fuse_mount_finalizer(ext_ptr);
     return R_NilValue;
