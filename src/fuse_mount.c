@@ -2,10 +2,12 @@
 /*
  * fuse_mount.c — FUSE read-only filesystem for Redivis Directory objects
  *
- * FUSE libraries are loaded at RUNTIME via dlopen/dlsym, so no FUSE
- * headers or dev packages are needed at compile time. Only the runtime
- * shared library (libfuse3.so.3, libfuse-t.dylib, or libfuse.2.dylib)
- * must be present on the system when mount() is called.
+ * FUSE and libcurl are loaded at RUNTIME via dlopen/dlsym, so no headers
+ * or dev packages are needed at compile time. Only the runtime shared
+ * libraries (libfuse3.so.3, libfuse-t.dylib, or libfuse.2.dylib; and
+ * libcurl.so.4 / libcurl.4.dylib) must be present when mount() is called.
+ * libcurl is effectively always present, since the curl R package (a hard
+ * dependency) links against it.
  */
 
 #include <R.h>
@@ -25,7 +27,6 @@
 #include <time.h>
 #include <unistd.h>
 #include <dlfcn.h>
-#include <curl/curl.h>
 
 /* ================================================================== */
 /*  FUSE ABI declarations (replaces #include <fuse.h>)                */
@@ -374,6 +375,82 @@ resolve:
 }
 #pragma GCC diagnostic pop
 
+/* ================================================================== */
+/*  libcurl ABI declarations & dlopen (replaces #include <curl/curl.h>) */
+/* ================================================================== */
+
+/* These values are part of libcurl's stable ABI (unchanged since the
+ * libcurl.so.4 soname was introduced), so it is safe to hardcode them. */
+typedef void CURL;
+struct curl_slist;
+typedef int CURLcode;
+#define CURLE_OK               0
+#define CURL_GLOBAL_DEFAULT    3L
+#define CURLOPT_WRITEDATA      10001
+#define CURLOPT_URL            10002
+#define CURLOPT_RANGE          10007
+#define CURLOPT_TIMEOUT        13
+#define CURLOPT_WRITEFUNCTION  20011
+#define CURLOPT_HTTPHEADER     10023
+#define CURLOPT_FAILONERROR    45
+#define CURLOPT_FOLLOWLOCATION 52
+
+static void *curl_lib_handle = NULL;
+
+static CURLcode (*dl_curl_global_init)(long);
+static CURL *(*dl_curl_easy_init)(void);
+static CURLcode (*dl_curl_easy_setopt)(CURL *, int, ...);
+static CURLcode (*dl_curl_easy_perform)(CURL *);
+static void (*dl_curl_easy_cleanup)(CURL *);
+static struct curl_slist *(*dl_curl_slist_append)(struct curl_slist *,
+                                                  const char *);
+static void (*dl_curl_slist_free_all)(struct curl_slist *);
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+/* Must be called from the main thread: curl_global_init is not thread-safe. */
+static int load_curl_library(void)
+{
+    if (curl_lib_handle) return 1;
+
+    const char *curl_names[] = {
+        "libcurl.so.4", "libcurl-gnutls.so.4", "libcurl-nss.so.4",
+        "libcurl.so",
+        "libcurl.4.dylib", "libcurl.dylib",
+        "/usr/lib/libcurl.4.dylib",
+        "/opt/homebrew/opt/curl/lib/libcurl.4.dylib",
+        "/usr/local/opt/curl/lib/libcurl.4.dylib",
+        NULL
+    };
+#ifdef RTLD_NOLOAD
+    /* Prefer a copy that is already loaded (e.g., by the curl R package). */
+    for (const char **name = curl_names; *name && !curl_lib_handle; name++)
+        curl_lib_handle = dlopen(*name, RTLD_LAZY | RTLD_NOLOAD);
+#endif
+    for (const char **name = curl_names; *name && !curl_lib_handle; name++)
+        curl_lib_handle = dlopen(*name, RTLD_LAZY);
+    if (!curl_lib_handle) return 0;
+
+    dl_curl_global_init    = dlsym(curl_lib_handle, "curl_global_init");
+    dl_curl_easy_init      = dlsym(curl_lib_handle, "curl_easy_init");
+    dl_curl_easy_setopt    = dlsym(curl_lib_handle, "curl_easy_setopt");
+    dl_curl_easy_perform   = dlsym(curl_lib_handle, "curl_easy_perform");
+    dl_curl_easy_cleanup   = dlsym(curl_lib_handle, "curl_easy_cleanup");
+    dl_curl_slist_append   = dlsym(curl_lib_handle, "curl_slist_append");
+    dl_curl_slist_free_all = dlsym(curl_lib_handle, "curl_slist_free_all");
+
+    if (!dl_curl_global_init || !dl_curl_easy_init || !dl_curl_easy_setopt ||
+        !dl_curl_easy_perform || !dl_curl_easy_cleanup ||
+        !dl_curl_slist_append || !dl_curl_slist_free_all ||
+        dl_curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+        dlclose(curl_lib_handle);
+        curl_lib_handle = NULL;
+        return 0;
+    }
+    return 1;
+}
+#pragma GCC diagnostic pop
+
 /* ------------------------------------------------------------------ */
 /*  Constants & data structures                                       */
 /* ------------------------------------------------------------------ */
@@ -567,28 +644,28 @@ static int ensure_blocks_cached(redivis_mount_ctx_t *ctx,
         snprintf(range_val, sizeof(range_val), "%lld-%lld",
                  (long long)byte_start, (long long)byte_end);
 
-        CURL *curl = curl_easy_init();
+        CURL *curl = dl_curl_easy_init();
         if (!curl) { pthread_mutex_unlock(&entry->mutex); return -EIO; }
 
         char auth_hdr[2048];
         snprintf(auth_hdr, sizeof(auth_hdr), "Authorization: Bearer %s",
                  ctx->auth_token);
         struct curl_slist *hdrs = NULL;
-        hdrs = curl_slist_append(hdrs, auth_hdr);
+        hdrs = dl_curl_slist_append(hdrs, auth_hdr);
 
         range_write_ctx_t wctx = { .fd = fd, .offset = byte_start, .written = 0 };
-        curl_easy_setopt(curl, CURLOPT_URL, url);
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
-        curl_easy_setopt(curl, CURLOPT_RANGE, range_val);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_range_write_cb);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &wctx);
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
+        dl_curl_easy_setopt(curl, CURLOPT_URL, url);
+        dl_curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+        dl_curl_easy_setopt(curl, CURLOPT_RANGE, range_val);
+        dl_curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_range_write_cb);
+        dl_curl_easy_setopt(curl, CURLOPT_WRITEDATA, &wctx);
+        dl_curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        dl_curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+        dl_curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
 
-        CURLcode res = curl_easy_perform(curl);
-        curl_slist_free_all(hdrs);
-        curl_easy_cleanup(curl);
+        CURLcode res = dl_curl_easy_perform(curl);
+        dl_curl_slist_free_all(hdrs);
+        dl_curl_easy_cleanup(curl);
         if (res != CURLE_OK) { pthread_mutex_unlock(&entry->mutex); return -EIO; }
 
         for (size_t b = run_start; b < run_end; b++)
@@ -1042,6 +1119,12 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
         Rf_error("No FUSE library found. Install one of:\n"
                  "  - Linux:  sudo apt install fuse3  (or libfuse3-3)\n"
                  "  - macOS:  FUSE-T (https://www.fuse-t.org/) or macFUSE\n"
+                 "No development headers or packages are needed.");
+    }
+    if (!load_curl_library()) {
+        Rf_error("libcurl could not be loaded. Install the libcurl runtime:\n"
+                 "  - Debian/Ubuntu: sudo apt install libcurl4\n"
+                 "  - Fedora/RHEL:   sudo dnf install libcurl\n"
                  "No development headers or packages are needed.");
     }
 

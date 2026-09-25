@@ -48,10 +48,14 @@ perform_retryable_download <- function(
           supports_range_requests <<- TRUE
         }
         content_range <- response_headers[["content-range"]]
+        content_length <- response_headers[["content-length"]]
         if (!is.null(content_range)) {
           size <<- as.numeric(sub(".*/", "", content_range))
+        } else if (!is.null(content_length)) {
+          size <<- as.numeric(content_length)
         } else {
-          size <<- as.numeric(response_headers[["content-length"]])
+          # Unknown, e.g. for a compressed response sent in chunks
+          size <<- NULL
         }
         # Prefer content-digest (values wrapped in colons, e.g. "md5=:uE0r1xmbDXTJAGiWL6xlHw==:")
         # over x-goog-hash (no colons, e.g. "md5=uE0r1xmbDXTJAGiWL6xlHw==")
@@ -88,7 +92,7 @@ perform_retryable_download <- function(
             recursive = TRUE
           )
         }
-        if (size > 0) {
+        if (!is.null(size) && size > 0) {
           pb_multiplier <<- 100 / size
         }
       }
@@ -132,8 +136,13 @@ perform_retryable_download <- function(
       )
     },
     error = function(e) {
+      # e.g. no access to the file, or a file already at download_path: fail
+      # now, rather than retrying for a minute and reporting a network error
+      if (!is_retryable_error(e)) {
+        stop(e)
+      }
       if (retry_count < 10) {
-        Sys.sleep(retry_count)
+        retry_sleep(retry_count)
         args$retry_count <- retry_count + 1
         if (supports_range_requests) {
           args$start_byte <- if (file.exists(download_path)) {
@@ -340,7 +349,19 @@ perform_parallel_download_worker <- function(
   TARGET_ACTIVE_BYTES <- 1e9 # 1 GB
 
   # helper to schedule (or re‐schedule) a download
-  schedule_download <- function(index, retry_count = 0L, start_byte = 0L) {
+  download_error <- NULL
+  record_download_error <- function(error) {
+    if (is.null(download_error)) {
+      download_error <<- error
+    }
+  }
+
+  schedule_download <- function(
+    index,
+    retry_count = 0L,
+    start_byte = 0L,
+    auth_failures = character()
+  ) {
     max_retries <- 10L
     download_path <- download_paths[[index]]
     url <- generate_api_url(uris[[index]])
@@ -372,7 +393,7 @@ perform_parallel_download_worker <- function(
     }
 
     if (retry_count > 0) {
-      Sys.sleep(retry_count)
+      retry_sleep(retry_count)
     }
 
     # build a fresh handle
@@ -430,7 +451,8 @@ perform_parallel_download_worker <- function(
           pending[[length(pending) + 1]] <<- list(
             index = index,
             retry_count = retry_count + 1L,
-            start_byte = resume_byte
+            start_byte = resume_byte,
+            auth_failures = auth_failures
           )
           return(FALSE)
         }
@@ -464,17 +486,25 @@ perform_parallel_download_worker <- function(
               )
             }
 
+            auth_failure <- auth_failure_signature(
+              status,
+              if (is_json) response_content,
+              authenticated = TRUE
+            )
+            # As in make_request(), only re-authenticate while it makes
+            # progress; otherwise a token the server keeps rejecting would be
+            # refreshed and retried forever
             if (
-              status == 401L ||
+              (status == 401L ||
                 (status == 403L &&
                   is_json &&
-                  identical(response_content$error, "insufficient_scope"))
+                  identical(response_content$error, "insufficient_scope"))) &&
+                !(auth_failure %in% auth_failures) &&
+                length(auth_failures) < MAX_AUTH_ATTEMPTS
             ) {
               refresh_credentials(
-                scope = if (is.null(response_content$scope)) {
-                  NULL
-                } else {
-                  strsplit(response_content$scope, " ")
+                scope = if (!is.null(response_content$scope)) {
+                  strsplit(response_content$scope, " ")[[1]]
                 },
                 amr_values = response_content$amr_values
               )
@@ -482,13 +512,18 @@ perform_parallel_download_worker <- function(
               pending[[length(pending) + 1]] <<- list(
                 index = index,
                 retry_count = 0L,
-                start_byte = 0L
+                start_byte = 0L,
+                auth_failures = c(auth_failures, auth_failure)
               )
               return(FALSE)
             }
           }
 
-          stop(sprintf("HTTP %d for path %s", status, url))
+          record_download_error(list(
+            status = status,
+            body = tryCatch(rawToChar(chunk), error = function(e) NULL)
+          ))
+          return(FALSE)
         }
         headers <- parse_curl_headers(res)
 
@@ -623,10 +658,11 @@ perform_parallel_download_worker <- function(
           pending[[length(pending) + 1]] <<- list(
             index = index,
             retry_count = retry_count + 1L,
-            start_byte = resume_byte
+            start_byte = resume_byte,
+            auth_failures = auth_failures
           )
         } else {
-          stop(sprintf(
+          record_download_error(sprintf(
             "Download incomplete for %s: got %d of %d bytes after %d retries",
             download_path,
             bytes_written,
@@ -660,11 +696,12 @@ perform_parallel_download_worker <- function(
         pending[[length(pending) + 1]] <<- list(
           index = index,
           retry_count = retry_count + 1L,
-          start_byte = resume_byte
+          start_byte = resume_byte,
+          auth_failures = auth_failures
         )
       } else {
         did_short_circuit <<- TRUE
-        stop(err)
+        record_download_error(err)
       }
     }
 
@@ -691,7 +728,17 @@ perform_parallel_download_worker <- function(
     current_index <- current_index + 1
   }
 
-  # drive the pool until everything (including retries) is done
+  # Drive the pool until everything (including retries) is done.
+  #
+  # An error raised in a curl callback doesn't propagate out of multi_run():
+  # curl prints it, aborts that transfer (calling its fail callback), and keeps
+  # running, unless it was raised by the transfer's final callback. So the
+  # callbacks record a download that has failed for good in download_error,
+  # and it's raised from here, after cancelling the rest of the run.
+  #
+  # (That's also how a redivis_short_circuit condition skips a file: raising
+  # it aborts the transfer, and fail_cb ignores it. The handler below only
+  # sees one raised by a final callback.)
   while (active_downloads > 0L) {
     tryCatch(
       {
@@ -708,17 +755,28 @@ perform_parallel_download_worker <- function(
       }
     )
 
+    if (!is.null(download_error)) {
+      # Don't spend time on the other files; the download has failed
+      for (h in handles) {
+        if (!is.null(h)) {
+          try(curl::multi_cancel(h), silent = TRUE)
+        }
+      }
+      break
+    }
+
     # schedule any pending retries
     if (length(pending) > 0L) {
       for (task in pending) {
         schedule_download(
           task$index,
           retry_count = task$retry_count,
-          start_byte = task$start_byte
+          start_byte = task$start_byte,
+          auth_failures = task$auth_failures %||% character()
         )
       }
       # Make sure we wait for all retries to enqueue. Add 0.1s as additional buffer
-      Sys.sleep(
+      retry_sleep(
         max(vapply(pending, function(task) task$retry_count, 1)) + 0.1
       )
       pending <- list()
@@ -727,6 +785,28 @@ perform_parallel_download_worker <- function(
       schedule_download(current_index)
       current_index <- current_index + 1
     }
+  }
+
+  if (is.list(download_error)) {
+    # An HTTP error: raise it as make_request() would
+    response_json <- tryCatch(
+      jsonlite::fromJSON(download_error$body, simplifyVector = FALSE),
+      error = function(e) NULL
+    )
+    raise_api_error(
+      response_json = response_json,
+      response_text = download_error$body,
+      response = list(status_code = download_error$status)
+    )
+  } else if (!is.null(download_error)) {
+    abort_redivis_network_error(
+      "A network error occurred. Download failed",
+      original_exception = if (inherits(download_error, "condition")) {
+        download_error
+      } else {
+        simpleError(download_error)
+      }
+    )
   }
 }
 

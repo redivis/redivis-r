@@ -4,7 +4,7 @@
 \alias{handle_error_response}
 \title{Handle error responses for both streaming and non-streaming requests}
 \usage{
-handle_error_response(res, resp_body, method, args)
+handle_error_response(res, resp_body, method, args, authenticated = TRUE)
 }
 \arguments{
 \item{res}{The httr2 response object}
@@ -14,8 +14,12 @@ handle_error_response(res, resp_body, method, args)
 \item{method}{The HTTP method}
 
 \item{args}{The original request arguments (for retrying after credential refresh)}
+
+\item{authenticated}{Whether the request carried credentials}
 }
 \description{
-Handle error responses for both streaming and non-streaming requests
+Authentication failures are retried after logging in or refreshing
+credentials, returning the retried request's result; any other error is
+raised.
 }
 \keyword{internal}

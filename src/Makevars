@@ -1,0 +1,6 @@
+# Makevars for redivis
+#
+# FUSE and libcurl are loaded at runtime via dlopen (see fuse_mount.c), so no
+# headers, dev packages, or configure-time detection are needed.
+
+PKG_LIBS = -lpthread -ldl

@@ -15,7 +15,8 @@ make_request <- function(
   start_byte = 0,
   end_byte = NULL,
   resumable_byte = 0,
-  retry_count = 0
+  retry_count = 0,
+  auth_failures = character()
 ) {
   args <- list(
     method = method,
@@ -33,21 +34,37 @@ make_request <- function(
     start_byte = start_byte,
     end_byte = end_byte,
     resumable_byte = resumable_byte,
-    retry_count = retry_count
+    retry_count = retry_count,
+    auth_failures = auth_failures
   )
 
   if (start_byte || resumable_byte) {
     if (!is.null(end_byte)) {
-      headers$Range = str_interp(
+      headers$Range <- str_interp(
         "bytes=${start_byte+resumable_byte}-${end_byte}"
       )
     } else {
-      headers$Range = str_interp("bytes=${start_byte+resumable_byte}-")
+      headers$Range <- str_interp("bytes=${start_byte+resumable_byte}-")
     }
   }
 
-  auth_headers <- get_authorization_header(as_list = TRUE)
+  # Only authenticate when we already have credentials on hand; otherwise the
+  # request goes out anonymously, since the resource may be publicly
+  # accessible. If it isn't, handle_error_response() logs in and retries.
+  auth_headers <- get_authorization_header(
+    as_list = TRUE,
+    allow_anonymous = TRUE
+  )
   all_headers <- c(auth_headers, headers)
+  authenticated <- !is.null(auth_headers$Authorization)
+
+  # Only methods that are safe to repeat are retried on a 503: a POST may have
+  # been processed before the 503 was returned (e.g. by a proxy timing out),
+  # and replaying it could duplicate an upload or re-run a query. PATCH
+  # requests are idempotent in this API.
+  can_retry_503 <- toupper(method) %in%
+    c("GET", "HEAD", "PATCH") &&
+    retry_count < 10
 
   req <- httr2::request(generate_api_url(path)) |>
     httr2::req_method(method) |>
@@ -95,10 +112,10 @@ make_request <- function(
 
     status <- httr2::resp_status(res)
 
-    if (status == 503 && retry_count < 10) {
+    if (status == 503 && can_retry_503) {
       close(res)
       on.exit(NULL, add = FALSE)
-      Sys.sleep(retry_count)
+      retry_sleep(retry_count)
       args$retry_count <- args$retry_count + 1
       return(do.call(make_request, args))
     }
@@ -107,8 +124,8 @@ make_request <- function(
       resp_body <- httr2::resp_body_string(res)
       close(res)
       on.exit(NULL, add = FALSE)
-      handle_error_response(res, resp_body, method, args)
-      return(invisible(NULL))
+      # Returns the retried request's result if re-authenticating fixed it
+      return(handle_error_response(res, resp_body, method, args, authenticated))
     }
 
     resp_headers <- httr2::resp_headers(res)
@@ -151,8 +168,8 @@ make_request <- function(
 
   status <- httr2::resp_status(res)
 
-  if (status == 503 && retry_count < 10) {
-    Sys.sleep(retry_count)
+  if (status == 503 && can_retry_503) {
+    retry_sleep(retry_count)
     args$retry_count <- args$retry_count + 1
     return(do.call(make_request, args))
   }
@@ -174,8 +191,8 @@ make_request <- function(
 
   if (status >= 400) {
     resp_body <- if (method == "HEAD") NULL else httr2::resp_body_string(res)
-    handle_error_response(res, resp_body, method, args)
-    return(invisible(NULL))
+    # Returns the retried request's result if re-authenticating fixed it
+    return(handle_error_response(res, resp_body, method, args, authenticated))
   }
 
   # Parse successful response
@@ -194,13 +211,45 @@ make_request <- function(
   response_content
 }
 
+# A backstop on authentication retries, in case the server's failures keep
+# changing without ever succeeding. See handle_error_response()
+MAX_AUTH_ATTEMPTS <- 5
+
+# Identifies an authentication failure, so that retries can tell whether
+# logging in again made any progress
+auth_failure_signature <- function(status, response_content, authenticated) {
+  as.character(jsonlite::toJSON(
+    list(
+      status = status,
+      authenticated = authenticated,
+      error = response_content$error,
+      error_description = response_content$error_description,
+      scope = response_content$scope,
+      amr_values = response_content$amr_values
+    ),
+    auto_unbox = TRUE,
+    null = "null"
+  ))
+}
+
 #' Handle error responses for both streaming and non-streaming requests
+#'
+#' Authentication failures are retried after logging in or refreshing
+#' credentials, returning the retried request's result; any other error is
+#' raised.
 #' @param res The httr2 response object
 #' @param resp_body The response body as a string, or NULL for HEAD requests
 #' @param method The HTTP method
 #' @param args The original request arguments (for retrying after credential refresh)
+#' @param authenticated Whether the request carried credentials
 #' @keywords internal
-handle_error_response <- function(res, resp_body, method, args) {
+handle_error_response <- function(
+  res,
+  resp_body,
+  method,
+  args,
+  authenticated = TRUE
+) {
   status <- httr2::resp_status(res)
   resp_headers <- httr2::resp_headers(res)
 
@@ -231,22 +280,38 @@ handle_error_response <- function(res, resp_body, method, args) {
     }
   }
 
+  is_auth_failure <- status == 401 ||
+    (status == 403 &&
+      is_json &&
+      identical(response_content$error, 'insufficient_scope'))
+
+  # Authenticating is only worth retrying while it makes progress, i.e. each
+  # attempt fails differently than the ones before it: an anonymous request
+  # that's rejected, then a scope upgrade after logging in, and so on. Once a
+  # failure repeats, re-authenticating can't help, and retrying anyway would
+  # loop forever rather than surfacing the server's error.
+  auth_failure <- if (is_auth_failure) {
+    auth_failure_signature(
+      status,
+      if (is_json) response_content,
+      authenticated
+    )
+  }
+
   if (
-    (status == 401 ||
-      (status == 403 &&
-        is_json &&
-        response_content$error == 'insufficient_scope')) &&
+    is_auth_failure &&
       is.na(Sys.getenv("REDIVIS_API_TOKEN", unset = NA)) &&
-      is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA))
+      is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA)) &&
+      !(auth_failure %in% args$auth_failures) &&
+      length(args$auth_failures) < MAX_AUTH_ATTEMPTS
   ) {
     refresh_credentials(
-      scope = if (is.null(response_content$scope)) {
-        NULL
-      } else {
-        strsplit(response_content$scope, " ")
+      scope = if (is_json && !is.null(response_content$scope)) {
+        strsplit(response_content$scope, " ")[[1]]
       },
-      amr_values = response_content$amr_values
+      amr_values = if (is_json) response_content$amr_values
     )
+    args$auth_failures <- c(args$auth_failures, auth_failure)
     return(do.call(make_request, args))
   }
 
@@ -270,7 +335,7 @@ parse_curl_headers <- function(res_data) {
     tolower(strsplit(header, ':')[[1]][[1]])
   })
   header_contents <- purrr::map(vec, function(header) {
-    split = strsplit(header, ':\\s+')[[1]]
+    split <- strsplit(header, ':\\s+')[[1]]
     paste0(tail(split, -1), collapse = ':')
   })
   headers <- purrr::set_names(header_contents, header_names)
@@ -291,7 +356,7 @@ make_paginated_request <- function(
       break
     }
 
-    response = make_request(
+    response <- make_request(
       method = "GET",
       path = path,
       parse_response = TRUE,
@@ -330,21 +395,19 @@ generate_api_url <- function(path) {
 
 version_info <- R.Version()
 redivis_version <- packageVersion("redivis")
-get_authorization_header <- function(as_list = FALSE) {
-  auth_token <- get_auth_token()
-  if (as_list) {
-    list(
-      "Authorization" = str_interp("Bearer ${auth_token}"),
-      "User-Agent" = str_interp(
-        "redivis-r/${redivis_version} (${version_info$platform}; R/${version_info$major}.${version_info$minor})"
-      )
+# With allow_anonymous, the Authorization header is omitted when no
+# credentials are available, rather than prompting for a login
+get_authorization_header <- function(as_list = FALSE, allow_anonymous = FALSE) {
+  headers <- list(
+    "User-Agent" = str_interp(
+      "redivis-r/${redivis_version} (${version_info$platform}; R/${version_info$major}.${version_info$minor})"
     )
-  } else {
-    c(
-      "Authorization" = str_interp("Bearer ${auth_token}"),
-      "User-Agent" = str_interp(
-        "redivis-r/${redivis_version} (${version_info$platform}; R/${version_info$major}.${version_info$minor})"
-      )
+  )
+  if (!allow_anonymous || has_credentials()) {
+    headers <- c(
+      list("Authorization" = str_interp("Bearer ${get_auth_token()}")),
+      headers
     )
   }
+  if (as_list) headers else unlist(headers)
 }

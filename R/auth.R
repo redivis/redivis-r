@@ -33,22 +33,8 @@ get_verify_ssl <- function() {
   )
 }
 
-get_auth_token <- function(scope = NULL) {
-  if (is.null(scope)) {
-    scope <- auth_vars$default_scope
-  }
-
-  if (!is.na(Sys.getenv("REDIVIS_API_TOKEN", unset = NA))) {
-    if (
-      is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA)) && interactive()
-    ) {
-      warning(
-        "Setting the REDIVIS_API_TOKEN for interactive sessions is deprecated and highly discouraged.\nPlease delete the token on Redivis and remove it from your code, and follow the authentication prompts here instead.\n\nThis environment variable should only ever be set in a non-interactive environment, such as in an automated script or service.",
-        call. = FALSE
-      )
-    }
-    return(Sys.getenv("REDIVIS_API_TOKEN"))
-  } else if (
+load_cached_credentials <- function() {
+  if (
     is.null(auth_vars$cached_credentials) &&
       file.exists(get_credentials_file())
   ) {
@@ -66,6 +52,52 @@ get_auth_token <- function(scope = NULL) {
       }
     )
   }
+}
+
+# Whether an auth token can be obtained without an interactive login. When it
+# can't, make_request() sends requests anonymously, since the resource may be
+# publicly accessible, and only prompts for a login if the server rejects it.
+has_credentials <- function() {
+  if (!is.na(Sys.getenv("REDIVIS_API_TOKEN", unset = NA))) {
+    return(TRUE)
+  }
+  load_cached_credentials()
+  !is.null(auth_vars$cached_credentials)
+}
+
+write_cached_credentials <- function() {
+  # Not necessarily created yet: a login can be prompted by a request that was
+  # sent anonymously, rather than by get_auth_token()
+  dir.create(get_redivis_dir(), showWarnings = FALSE, recursive = TRUE)
+  write(
+    jsonlite::toJSON(
+      auth_vars$cached_credentials,
+      pretty = TRUE,
+      auto_unbox = TRUE
+    ),
+    get_credentials_file()
+  )
+  # The file holds a refresh token; keep it private to this user
+  Sys.chmod(get_credentials_file(), mode = "0600")
+}
+
+get_auth_token <- function(scope = NULL) {
+  if (is.null(scope)) {
+    scope <- auth_vars$default_scope
+  }
+
+  if (!is.na(Sys.getenv("REDIVIS_API_TOKEN", unset = NA))) {
+    if (
+      is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA)) && interactive()
+    ) {
+      warning(
+        "Setting the REDIVIS_API_TOKEN for interactive sessions is deprecated and highly discouraged.\nPlease delete the token on Redivis and remove it from your code, and follow the authentication prompts here instead.\n\nThis environment variable should only ever be set in a non-interactive environment, such as in an automated script or service.",
+        call. = FALSE
+      )
+    }
+    return(Sys.getenv("REDIVIS_API_TOKEN"))
+  }
+  load_cached_credentials()
 
   missing_scope <- setdiff(scope, get_current_credential_scope())
 
@@ -75,19 +107,17 @@ get_auth_token <- function(scope = NULL) {
       "access_token" %in% names(auth_vars$cached_credentials) &&
       length(missing_scope) == 0
   ) {
+    # Refresh a token that expires in the next 5 minutes, rather than sending
+    # one the server is about to reject
     if (
       auth_vars$cached_credentials$expires_at <
-        (as.numeric(Sys.time()) - 5 * 60)
+        (as.numeric(Sys.time()) + 5 * 60)
     ) {
       refresh_credentials()
     }
 
     return(auth_vars$cached_credentials$access_token)
   } else {
-    if (!dir.exists(get_redivis_dir())) {
-      dir.create(get_redivis_dir())
-    }
-
     perform_oauth_login(
       scope = if (length(missing_scope)) missing_scope else scope,
       upgrade_credentials = length(missing_scope) > 0
@@ -108,6 +138,11 @@ perform_oauth_login <- function(
   amr_values = NULL,
   upgrade_credentials = FALSE
 ) {
+  # Always request the default scope alongside whatever else was asked for. A
+  # token without it (e.g. from a login prompted by one resource's required
+  # scope) would make get_auth_token() prompt again on the very next request.
+  scope <- unique(c(unlist(auth_vars$default_scope), unlist(scope)))
+
   pkce <- get_pkce()
   challenge <- pkce$challenge
   verifier <- pkce$verifier
@@ -207,14 +242,7 @@ perform_oauth_login <- function(
   }
 
   auth_vars$cached_credentials <- httr2::resp_body_json(res)
-  write(
-    jsonlite::toJSON(
-      auth_vars$cached_credentials,
-      pretty = TRUE,
-      auto_unbox = TRUE
-    ),
-    get_credentials_file()
-  )
+  write_cached_credentials()
 
   return(auth_vars$cached_credentials)
 }
@@ -249,14 +277,7 @@ refresh_credentials <- function(scope = NULL, amr_values = NULL) {
       auth_vars$cached_credentials$access_token <- refresh_response$access_token
       auth_vars$cached_credentials$expires_at <- refresh_response$expires_at
       auth_vars$cached_credentials$expires_in <- refresh_response$expires_in
-      write(
-        jsonlite::toJSON(
-          auth_vars$cached_credentials,
-          pretty = TRUE,
-          auto_unbox = TRUE
-        ),
-        get_credentials_file()
-      )
+      write_cached_credentials()
     }
   } else {
     clear_cached_credentials()
@@ -274,7 +295,8 @@ get_current_credential_scope <- function() {
           ".",
           fixed = TRUE
         )[[1]][2]
-        decoded_token <- jsonlite::fromJSON(rawToChar(base64enc::base64decode(
+        # JWT segments are unpadded base64url
+        decoded_token <- jsonlite::fromJSON(rawToChar(jsonlite::base64url_dec(
           token_payload
         )))
         return(strsplit(decoded_token$scope, " ")[[1]])
@@ -289,10 +311,9 @@ get_current_credential_scope <- function() {
 }
 
 get_pkce <- function() {
-  verifier <- safe_encode_base64_url(charToRaw(paste(
-    sample(c(0:9, letters, LETTERS), 64, replace = TRUE),
-    collapse = ""
-  )))
+  # Must come from a cryptographic source: sample() draws from R's RNG, which
+  # is reproducible after any set.seed() call
+  verifier <- safe_encode_base64_url(openssl::rand_bytes(48))
   challenge <- safe_encode_base64_url(openssl::sha256(charToRaw(verifier)))
   list(challenge = challenge, verifier = verifier)
 }

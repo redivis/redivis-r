@@ -1,6 +1,14 @@
 globals <- new.env(parent = emptyenv())
 globals$printed_warnings <- list()
 
+# Base R only has this since 4.4
+`%||%` <- function(x, y) if (is.null(x)) y else x
+
+# Sleep before a retry. A separate function so tests can skip the waits.
+retry_sleep <- function(seconds) {
+  Sys.sleep(seconds)
+}
+
 get_arrow_schema <- function(variables) {
   schema <- purrr::map(variables, function(variable) {
     if (variable$type == 'integer') {
