@@ -2,7 +2,8 @@
 # credentials. It runs in a background R process (the client blocks on its
 # requests, so it can't be served from the test process), and implements just
 # enough of the API to exercise the read paths (listRows, read sessions,
-# exports), retries, and authentication, with knobs for injecting failures.
+# exports, raw files), retries, and authentication, with knobs for injecting
+# failures.
 #
 # Tests call local_mock_api(), which points the client at the mock with a clean
 # state, and returns helpers for adjusting that state and inspecting requests.
@@ -33,6 +34,13 @@ mock_api_server <- function(port) {
     state$truncate_rows_once <- 0
     # A column that listRows and read streams leave out
     state$omit_column <- NULL
+    # Raw files by id, as list(content, size): their bytes are generated from
+    # content (see raw_file_contents)
+    state$raw_files <- list()
+    # The Range header of each rawFiles request ("none" if absent)
+    state$raw_file_ranges <- list()
+    # The next rawFiles response stops after this many bytes
+    state$truncate_raw_file_once <- 0
     state$requests <- list()
     state$oauth_scopes <- list()
   }
@@ -85,6 +93,42 @@ mock_api_server <- function(port) {
       sink
     )
     as.raw(sink$finish())
+  }
+
+  # Random bytes, the same for the same content (tests generate them the same
+  # way, to compare against)
+  raw_file_contents <- function(content, size) {
+    set.seed(sum(utf8ToInt(content)))
+    as.raw(sample.int(256, size, replace = TRUE) - 1L)
+  }
+
+  raw_file <- function(file, range) {
+    data <- raw_file_contents(file$content, file$size)
+    state$raw_file_ranges[[length(state$raw_file_ranges) + 1]] <- range %||% "none"
+    start <- 0
+    end <- length(data) - 1
+    if (!is.null(range)) {
+      bounds <- regmatches(range, regexec("^bytes=([0-9]+)-([0-9]*)$", range))[[1]]
+      start <- as.numeric(bounds[2])
+      if (nzchar(bounds[3])) {
+        end <- min(as.numeric(bounds[3]), end)
+      }
+    }
+    body <- data[seq_len(end - start + 1) + start]
+    if (state$truncate_raw_file_once > 0) {
+      body <- body[seq_len(min(length(body), state$truncate_raw_file_once))]
+      state$truncate_raw_file_once <- 0
+    }
+    headers <- list("Content-Type" = "application/octet-stream")
+    if (!is.null(range)) {
+      headers[["Content-Range"]] <- sprintf(
+        "bytes %.0f-%.0f/%d",
+        start,
+        start + length(body) - 1,
+        length(data)
+      )
+    }
+    list(status = if (is.null(range)) 200L else 206L, headers = headers, body = body)
   }
 
   parse_query <- function(query_string) {
@@ -166,7 +210,11 @@ mock_api_server <- function(port) {
         return(json(list(ok = TRUE)))
       }
       if (path == "/__mock/requests") {
-        return(json(list(requests = state$requests, oauth_scopes = state$oauth_scopes)))
+        return(json(list(
+          requests = state$requests,
+          oauth_scopes = state$oauth_scopes,
+          raw_file_ranges = state$raw_file_ranges
+        )))
       }
     }
 
@@ -225,6 +273,14 @@ mock_api_server <- function(port) {
         ),
         401
       ))
+    }
+
+    if (startsWith(path, "/api/v1/rawFiles/")) {
+      file <- state$raw_files[[utils::URLdecode(sub("^/api/v1/rawFiles/", "", path))]]
+      if (is.null(file)) {
+        return(json(list(status = 404, error = "not_found"), 404))
+      }
+      return(raw_file(file, req$HTTP_RANGE))
     }
 
     num_rows <- state$num_rows
@@ -456,6 +512,9 @@ local_mock_api <- function(authenticated = TRUE, env = parent.frame()) {
     set = function(...) mock_api_control("/__mock/state", body = list(...)),
     requests = function() mock_api_control("/__mock/requests")$requests,
     oauth_scopes = function() unlist(mock_api_control("/__mock/requests")$oauth_scopes),
+    raw_file_ranges = function() {
+      unlist(mock_api_control("/__mock/requests")$raw_file_ranges)
+    },
     paths = function(pattern = NULL) {
       paths <- vapply(
         mock_api_control("/__mock/requests")$requests,

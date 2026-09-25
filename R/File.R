@@ -36,7 +36,7 @@ File <- R6::R6Class(
       }
       file_hash <- properties[["md5_hash"]]
       if (!is.null(file_hash)) {
-        self$hash <- base64enc::base64decode(file_hash)
+        self$hash <- jsonlite::base64_dec(file_hash)
       }
     },
 
