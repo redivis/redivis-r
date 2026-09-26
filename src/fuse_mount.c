@@ -1647,7 +1647,7 @@ static void *fuse_thread_func(void *arg) {
 /*  Kernel unmount                                                    */
 /* ------------------------------------------------------------------ */
 
-#ifndef __APPLE__
+#ifdef __linux__
 extern char **environ;
 
 /* Runs argv (searched on PATH) and waits for it. Returns its exit status, 127 if it could not be
@@ -1704,7 +1704,7 @@ static int kernel_unmount(const char *mount_point, int lazy, char *err, size_t e
     }
     snprintf(err, err_len, "unmount(\"%s\") failed: %s", mount_point, strerror(errno));
     return -1;
-#else
+#elif defined(__linux__)
     /* Works as root or with CAP_SYS_ADMIN, which is how the mount was made in that case */
     if (umount2(mount_point, lazy ? MNT_DETACH : 0) == 0) return 0;
     int umount_errno = errno;
@@ -1726,6 +1726,11 @@ static int kernel_unmount(const char *mount_point, int lazy, char *err, size_t e
     }
     snprintf(err, err_len, "umount2(\"%s\") failed (%s), and neither fusermount3 nor fusermount "
              "was found on PATH", mount_point, strerror(umount_errno));
+    return -1;
+#else
+    /* umount2() and fusermount are Linux-only, so there is no way to unmount here */
+    (void)lazy;
+    snprintf(err, err_len, "unmounting \"%s\" is not supported on this platform", mount_point);
     return -1;
 #endif
 }

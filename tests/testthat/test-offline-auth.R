@@ -74,6 +74,19 @@ test_that("a login saves credentials privately, creating their directory", {
   expect_equal(format(file.info(get_credentials_file())$mode), "600")
 })
 
+test_that("saving credentials restricts an existing file, and restores the umask", {
+  local_mock_api()
+  dir.create(get_redivis_dir(), recursive = TRUE, showWarnings = FALSE)
+  writeLines("{}", get_credentials_file())
+  Sys.chmod(get_credentials_file(), mode = "0644")
+  umask <- Sys.umask()
+
+  write_cached_credentials()
+
+  expect_equal(format(file.info(get_credentials_file())$mode), "600")
+  expect_equal(Sys.umask(), umask)
+})
+
 test_that("the PKCE verifier doesn't depend on the RNG seed", {
   withr::local_seed(1)
   first <- get_pkce()$verifier

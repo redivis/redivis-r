@@ -206,6 +206,31 @@ test_that("downloads don't retry server errors", {
   expect_length(mock$paths(), 1)
 })
 
+# A directory download paths can't be created in
+local_unwritable_dir <- function(env = parent.frame()) {
+  dir <- withr::local_tempdir(.local_envir = env)
+  Sys.chmod(dir, mode = "0500")
+  withr::defer(Sys.chmod(dir, mode = "0700"), envir = env)
+  skip_if(file.access(dir, 2) == 0, "can't make a directory unwritable")
+  dir
+}
+
+test_that("downloads don't retry local file errors", {
+  mock <- local_mock_api()
+  mock$set(raw_files = list(f1 = list(content = "contents", size = 8)))
+
+  err <- expect_error(
+    perform_retryable_download(
+      "/rawFiles/f1",
+      download_path = file.path(local_unwritable_dir(), "f")
+    ),
+    "Failed to write to",
+    class = "redivis_error"
+  )
+  expect_false(inherits(err, "redivis_network_error"))
+  expect_length(mock$paths(), 1)
+})
+
 parallel_download <- function() {
   dir <- withr::local_tempdir(.local_envir = parent.frame())
   perform_parallel_download(
@@ -293,6 +318,22 @@ test_that("parallel downloads stop once a file has failed for good", {
   # The other files were never requested
   expect_length(mock$paths(), 1)
   expect_length(list.files(dir), 0)
+})
+
+test_that("parallel downloads don't retry local file errors", {
+  mock <- local_mock_api()
+
+  err <- expect_error(
+    perform_parallel_download(
+      uris = list("/exports/e1/download?filePart=0"),
+      download_paths = file.path(local_unwritable_dir(), "part.parquet"),
+      max_parallelization = 1
+    ),
+    "Failed to write to",
+    class = "redivis_error"
+  )
+  expect_false(inherits(err, "redivis_network_error"))
+  expect_length(mock$paths(), 1)
 })
 
 test_that("parallel download retries use retry_sleep()", {

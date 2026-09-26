@@ -102,10 +102,10 @@ perform_retryable_download <- function(
         if (exact_file_exists) {
           return(FALSE) # Stop download
         } else if (is.null(con)) {
-          con <<- base::file(
+          con <<- with_local_file_errors(download_path, base::file(
             base::file.path(download_path),
             if (start_byte == 0) "wb" else "ab"
-          )
+          ))
         }
 
         progress_bytes_written <<- progress_bytes_written + length(chunk)
@@ -114,7 +114,7 @@ perform_retryable_download <- function(
           progress_bytes_written <<- 0
           last_progress_time <<- proc.time()[["elapsed"]]
         }
-        writeBin(chunk, con)
+        with_local_file_errors(download_path, writeBin(chunk, con))
         return(NULL)
       }
       on.exit(if (!is.null(con)) close(con), add = TRUE)
@@ -419,6 +419,21 @@ perform_parallel_download_worker <- function(
     estimated_size <- get_estimated_size(index)
     supports_range_requests <- FALSE
 
+    # Fails the download for good on a local error, e.g. an unwritable
+    # download_path. Raising it instead would abort the transfer as a curl
+    # write error, which fail_cb would retry as a network failure.
+    fail_locally <- function(error) {
+      did_error <<- TRUE
+      active_downloads <<- active_downloads - 1L
+      active_bytes <<- active_bytes - estimated_size
+      if (!is.null(file_con)) {
+        tryCatch(close(file_con), error = function(e) {})
+        file_connections[[index]] <<- NULL
+      }
+      record_download_error(error)
+      FALSE
+    }
+
     # callback: write chunks
     write_cb <- function(chunk, final) {
       if (did_error || did_short_circuit) {
@@ -608,17 +623,30 @@ perform_parallel_download_worker <- function(
           showWarnings = FALSE,
           recursive = TRUE
         )
-        file_con <<- base::file(
-          download_path,
-          if (start_byte == 0) "wb" else "ab"
+        opened <- tryCatch(
+          with_local_file_errors(download_path, base::file(
+            download_path,
+            if (start_byte == 0) "wb" else "ab"
+          )),
+          redivis_error = function(e) e
         )
+        if (inherits(opened, "error")) {
+          return(fail_locally(opened))
+        }
+        file_con <<- opened
         file_connections[[index]] <<- file_con
       }
 
       # write the chunk
       if (length(chunk)) {
         bytes_written <<- bytes_written + length(chunk)
-        writeBin(chunk, file_con)
+        write_error <- tryCatch(
+          with_local_file_errors(download_path, writeBin(chunk, file_con)),
+          redivis_error = function(e) e
+        )
+        if (inherits(write_error, "error")) {
+          return(fail_locally(write_error))
+        }
         # NOTE: progress updates don't work within the curl handler; we can't do this
         progress_bytes_written <<- progress_bytes_written + length(chunk)
         if (proc.time()[["elapsed"]] - last_progress_time > 1) {
@@ -787,7 +815,10 @@ perform_parallel_download_worker <- function(
     }
   }
 
-  if (is.list(download_error)) {
+  if (inherits(download_error, "redivis_error")) {
+    # A local failure, e.g. download_path couldn't be written
+    stop(download_error)
+  } else if (is.list(download_error) && !inherits(download_error, "condition")) {
     # An HTTP error: raise it as make_request() would
     response_json <- tryCatch(
       jsonlite::fromJSON(download_error$body, simplifyVector = FALSE),
@@ -858,4 +889,23 @@ check_download_filename <- function(
     }
   }
   FALSE
+}
+
+
+# Raises a failure to open or write download_path (e.g. permission denied, or
+# a full disk) as a redivis_error, which is_retryable_error() won't retry:
+# retrying can't fix it, and it would be reported as a network error. Warnings
+# are caught too, since base::file() only describes why it failed in one.
+with_local_file_errors <- function(download_path, expr) {
+  on_error <- function(e) {
+    abort_redivis_error(
+      paste0(
+        "Failed to write to '",
+        download_path,
+        "': ",
+        conditionMessage(e)
+      )
+    )
+  }
+  tryCatch(expr, warning = on_error, error = on_error)
 }

@@ -1,2 +1,12 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^\.Rhistory$
+^\.RData$
+^\.Ruserdata$
+^\.env$
+^\.vscode$
+^\.claude$
+^Users$
+^CONTRIBUTING\.md$
+(^|/)\.DS_Store$
+^src/.*\.(o|so|dylib|dll)$

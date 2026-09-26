@@ -69,16 +69,24 @@ write_cached_credentials <- function() {
   # Not necessarily created yet: a login can be prompted by a request that was
   # sent anonymously, rather than by get_auth_token()
   dir.create(get_redivis_dir(), showWarnings = FALSE, recursive = TRUE)
+  # The file holds a refresh token; keep it private to this user. The umask
+  # makes a new file private from the moment it's created, and chmod covers an
+  # existing one (whose mode writing it doesn't change)
+  credentials_file <- get_credentials_file()
+  old_umask <- Sys.umask("077")
+  on.exit(Sys.umask(old_umask), add = TRUE)
+  if (file.exists(credentials_file)) {
+    Sys.chmod(credentials_file, mode = "0600")
+  }
   write(
     jsonlite::toJSON(
       auth_vars$cached_credentials,
       pretty = TRUE,
       auto_unbox = TRUE
     ),
-    get_credentials_file()
+    credentials_file
   )
-  # The file holds a refresh token; keep it private to this user
-  Sys.chmod(get_credentials_file(), mode = "0600")
+  Sys.chmod(credentials_file, mode = "0600")
 }
 
 get_auth_token <- function(scope = NULL) {
