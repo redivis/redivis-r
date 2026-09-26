@@ -58,13 +58,7 @@ make_request <- function(
   all_headers <- c(auth_headers, headers)
   authenticated <- !is.null(auth_headers$Authorization)
 
-  # Only methods that are safe to repeat are retried on a 503: a POST may have
-  # been processed before the 503 was returned (e.g. by a proxy timing out),
-  # and replaying it could duplicate an upload or re-run a query. PATCH
-  # requests are idempotent in this API.
-  can_retry_503 <- toupper(method) %in%
-    c("GET", "HEAD", "PATCH") &&
-    retry_count < 10
+  can_retry_503 <- retry_count < 10
 
   req <- httr2::request(generate_api_url(path)) |>
     httr2::req_method(method) |>
@@ -394,7 +388,7 @@ generate_api_url <- function(path) {
 }
 
 version_info <- R.Version()
-redivis_version <- packageVersion("redivis")
+redivis_version <- utils::packageVersion("redivis")
 # With allow_anonymous, the Authorization header is omitted when no
 # credentials are available, rather than prompting for a login
 get_authorization_header <- function(as_list = FALSE, allow_anonymous = FALSE) {

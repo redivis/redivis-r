@@ -175,6 +175,18 @@ test_that("random reads fetch only the blocks they need", {
   )
 })
 
+test_that("a server ignoring the range is read from the right place", {
+  mock <- local_mock_api()
+  mock$set(ignore_raw_file_range = TRUE)
+  cache <- local_mount_cache(mock)
+
+  expect_identical(
+    cache_read(cache, 4 * BLOCK - 10, 20),
+    file_bytes("data")[4 * BLOCK - 10 + seq_len(20)]
+  )
+  expect_identical(cache_read_all(cache), file_bytes("data"))
+})
+
 test_that("a read continuing from cached data streams the rest", {
   mock <- local_mock_api()
   cache <- local_mount_cache(mock)

@@ -41,6 +41,8 @@ mock_api_server <- function(port) {
     state$raw_file_ranges <- list()
     # The next rawFiles response stops after this many bytes
     state$truncate_raw_file_once <- 0
+    # rawFiles responses ignore the Range header, sending the whole file
+    state$ignore_raw_file_range <- FALSE
     state$requests <- list()
     state$oauth_scopes <- list()
   }
@@ -280,7 +282,10 @@ mock_api_server <- function(port) {
       if (is.null(file)) {
         return(json(list(status = 404, error = "not_found"), 404))
       }
-      return(raw_file(file, req$HTTP_RANGE))
+      return(raw_file(
+        file,
+        if (!isTRUE(state$ignore_raw_file_range)) req$HTTP_RANGE
+      ))
     }
 
     num_rows <- state$num_rows

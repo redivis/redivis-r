@@ -88,10 +88,22 @@ Directory <- R6::R6Class(
 
       mount_path <- normalizePath(mount_path, mustWork = FALSE)
 
-      if (file.exists(mount_path)) {
-        abort_redivis_value_error(str_interp(
-          "Mount path '${mount_path}' already exists. Please provide a path that does not exist."
-        ))
+      # An existing directory is fine as long as it's empty, e.g. one left
+      # behind by an earlier mount whose R session was killed. A directory
+      # mount() creates is removed again on unmount; an existing one is left in
+      # place. (That it isn't already a mount point is checked in C_fuse_mount.)
+      remove_mount_point <- !file.exists(mount_path)
+      if (!remove_mount_point) {
+        if (!dir.exists(mount_path)) {
+          abort_redivis_value_error(str_interp(
+            "Mount path '${mount_path}' already exists and is not a directory."
+          ))
+        }
+        if (length(list.files(mount_path, all.files = TRUE, no.. = TRUE)) > 0) {
+          abort_redivis_value_error(str_interp(
+            "Mount path '${mount_path}' already exists and is not empty. Please provide an empty directory or a path that does not exist."
+          ))
+        }
       }
       if (
         !is.null(max_cache_size) &&
@@ -142,10 +154,11 @@ Directory <- R6::R6Class(
           as.character(api_base_url),
           as.character(auth_token),
           get_verify_ssl(),
+          remove_mount_point,
           PACKAGE = "redivis"
         ),
         error = function(e) {
-          unlink(mount_path, recursive = TRUE)
+          if (remove_mount_point) unlink(mount_path, recursive = TRUE)
           stop(e)
         }
       )

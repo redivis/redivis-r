@@ -572,6 +572,8 @@ struct redivis_mount_ctx {
 
     struct fuse *fuse; struct fuse_chan *chan;
     int api_version; pthread_t thread; int running;
+    /* Whether mount() created the mount point, and so removes it again on unmount */
+    int remove_mount_point;
     /* Set once mounting succeeds: the FUSE thread must then be joined before ctx is freed */
     int thread_live;
     char error_msg[512];
@@ -654,6 +656,15 @@ static void mkdirs(const char *dir) {
         if (*p == '/') { *p = '\0'; mkdir(tmp, 0755); *p = '/'; }
     }
     mkdir(tmp, 0755);
+}
+
+/* Whether dir is the root of a mount, i.e. on a different device from its parent */
+static int is_mount_point(const char *dir) {
+    char parent[4096];
+    struct stat st, parent_st;
+    if (snprintf(parent, sizeof(parent), "%s/..", dir) >= (int)sizeof(parent)) return 0;
+    if (stat(dir, &st) != 0 || stat(parent, &parent_st) != 0) return 0;
+    return st.st_dev != parent_st.st_dev;
 }
 
 static int64_t now_ns(void) {
@@ -809,6 +820,7 @@ typedef struct {
     unsigned char *block_buf;   /* In memory: the block being received */
     CURL *curl;
     int status_checked, complete, abandoned;
+    size_t discard;             /* Bytes to skip from the start of the response */
 } transfer_t;
 
 static int stream_abandoned(redivis_stream_t *s) {
@@ -855,12 +867,17 @@ static size_t transfer_write_cb(char *ptr, size_t size, size_t nmemb, void *user
     if (!t->status_checked) {
         long code = 0;
         dl_curl_easy_getinfo(t->curl, CURLINFO_RESPONSE_CODE, &code);
-        /* Every request sends a Range header, so a response for anything but that range (e.g. from a
-           server ignoring it) would be written at the wrong offset. A whole file is fine from its start. */
-        if (code != 206 && !(code == 200 && t->pos == 0)) return 0;
+        if (code != 206 && code != 200) return 0;
+        /* The whole file, rather than the range asked for (as storage sends for some encoded files),
+           so skip ahead to where this is reading from */
+        if (code == 200) t->discard = t->pos;
         t->status_checked = 1;
     }
 
+    if (t->discard > 0) {
+        size_t skip = total < t->discard ? total : t->discard;
+        t->discard -= skip; done += skip;
+    }
     while (done < total) {
         if (t->pos > t->end) {
             /* More than was asked for; everything wanted has arrived */
@@ -915,7 +932,7 @@ static int transfer_attempt(transfer_t *t) {
     }
     pthread_mutex_unlock(&ctx->auth_mutex);
 
-    t->curl = curl; t->status_checked = 0; t->complete = 0; t->abandoned = 0;
+    t->curl = curl; t->status_checked = 0; t->complete = 0; t->abandoned = 0; t->discard = 0;
     dl_curl_easy_setopt(curl, CURLOPT_URL, url);
     if (hdrs) dl_curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
     dl_curl_easy_setopt(curl, CURLOPT_RANGE, range);
@@ -1415,11 +1432,43 @@ static struct fuse *take_fuse(redivis_mount_ctx_t *ctx) {
     return f;
 }
 
+#ifdef __linux__
+/* Whether libfuse can exec fusermount3, which it looks for in its install directory and on PATH */
+static int fusermount3_available(void) {
+    if (access("/usr/bin/fusermount3", X_OK) == 0 || access("/bin/fusermount3", X_OK) == 0) return 1;
+    const char *path = getenv("PATH");
+    if (!path) return 0;
+    char candidate[4096];
+    while (*path) {
+        size_t len = strcspn(path, ":");
+        if (len > 0 && len + sizeof("/fusermount3") <= sizeof(candidate)) {
+            memcpy(candidate, path, len);
+            memcpy(candidate + len, "/fusermount3", sizeof("/fusermount3"));
+            if (access(candidate, X_OK) == 0) return 1;
+        }
+        path += len;
+        if (*path == ':') path++;
+    }
+    return 0;
+}
+#endif
+
 static void *fuse_thread_func(void *arg) {
     redivis_mount_ctx_t *ctx = (redivis_mount_ctx_t *)arg;
     ctx->error_msg[0] = '\0';
     struct fuse_args fargs = FUSE_ARGS_INIT(0, NULL);
     dl_fuse_opt_add_arg(&fargs, "redivis");
+#ifdef __linux__
+    /* Have fusermount3 unmount the directory if this process exits without unmounting it (e.g. an R
+       session restart), rather than leave a dead mount behind that fails every access with
+       "Transport endpoint is not connected". With this option libfuse always mounts through
+       fusermount3, even as root, so it's only asked for when that's installed; otherwise a root
+       process that can mount(2) directly would stop being able to mount at all. */
+    if (ctx->api_version == 3 && fusermount3_available()) {
+        dl_fuse_opt_add_arg(&fargs, "-o");
+        dl_fuse_opt_add_arg(&fargs, "auto_unmount");
+    }
+#endif
 
     size_t ops_size;
     const void *ops = build_fuse_ops(ctx->api_version, &ops_size);
@@ -1459,7 +1508,7 @@ static void *fuse_thread_func(void *arg) {
         struct fuse *f = take_fuse(ctx);
         dl_fuse2_unmount(ctx->mount_point, ctx->chan);
         dl_fuse_destroy(f);
-        rmdir(ctx->mount_point);
+        if (ctx->remove_mount_point) rmdir(ctx->mount_point);
         ctx->chan = NULL;
         dl_fuse_opt_free_args(&fargs);
         return NULL;
@@ -1503,7 +1552,7 @@ static void *fuse_thread_func(void *arg) {
         struct fuse *f = take_fuse(ctx);
         dl_fuse3_unmount(f);
         dl_fuse_destroy(f);
-        rmdir(ctx->mount_point);
+        if (ctx->remove_mount_point) rmdir(ctx->mount_point);
         dl_fuse_opt_free_args(&fargs);
         return NULL;
     }
@@ -1626,7 +1675,7 @@ static int unmount_ctx(redivis_mount_ctx_t *ctx, char *err, size_t err_len) {
     if (running && kernel_unmount(ctx->mount_point, 0, err, err_len) != 0) return -1;
     stop_fuse_loop(ctx);
     /* The FUSE thread removes it too, but only when its own unmount has succeeded */
-    rmdir(ctx->mount_point);
+    if (ctx->remove_mount_point) rmdir(ctx->mount_point);
     return 0;
 }
 
@@ -1780,7 +1829,8 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
                   SEXP s_keys, SEXP s_added_ats,
                   SEXP s_dir_paths, SEXP s_dir_child_names,
                   SEXP s_dir_child_is_dir,
-                  SEXP s_api_base_url, SEXP s_auth_token, SEXP s_verify_ssl) {
+                  SEXP s_api_base_url, SEXP s_auth_token, SEXP s_verify_ssl,
+                  SEXP s_remove_mount_point) {
     int api_ver = load_fuse_library();
     if (api_ver == 0) {
         Rf_error("No FUSE library found. Install one of:\n"
@@ -1796,12 +1846,15 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
     }
 
     const char *mount_point = CHAR(STRING_ELT(s_mount_point, 0));
+    /* mount() accepts an existing empty directory, but mounting over another mount would hide it */
+    if (is_mount_point(mount_point)) Rf_error("Mount path '%s' is already a mount point.", mount_point);
     redivis_mount_ctx_t *ctx = build_ctx(
         mount_point, s_cache_dir, s_remove_cache_dir, s_max_cache_size,
         s_rel_paths, s_sizes, s_file_ids, s_keys, s_added_ats,
         s_dir_paths, s_dir_child_names, s_dir_child_is_dir,
         s_api_base_url, s_auth_token, s_verify_ssl, DEFAULT_BLOCK_SIZE);
     ctx->api_version = api_ver;
+    ctx->remove_mount_point = Rf_asLogical(s_remove_mount_point) == TRUE;
 
     mkdirs(mount_point);
     ctx->startup_done = 0;
