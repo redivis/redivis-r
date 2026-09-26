@@ -32,7 +32,7 @@ Query <- R6::R6Class(
     },
 
     print = function(...) {
-      cat(str_interp("<Query ${self$properties$id %||% [uninitialized]}>\n"))
+      cat(str_interp("<Query ${self$properties$id %||% '[uninitialized]'}>\n"))
       invisible(self)
     },
 
@@ -80,17 +80,28 @@ initiate_query <- function(query) {
   }
 }
 
-query_wait_for_finish <- function(query, count = 0) {
+query_wait_for_finish <- function(query) {
   initiate_query(query)
-  if (
-    query$properties$status == 'running' ||
-      query$properties$status == 'queued'
-  ) {
+  # A loop rather than recursion: one frame per poll would exhaust R's
+  # expression nesting limit on queries that run for over an hour
+  while (query$properties$status %in% c('running', 'queued')) {
     Sys.sleep(1)
     query$properties <- make_request(
       method = 'GET',
       path = str_interp("/queries/${query$properties$id}")
     )
-    query_wait_for_finish(query, count + 1)
+  }
+  if (query$properties$status == 'failed') {
+    abort_redivis_job_error(
+      message = query$properties$errorMessage,
+      kind = query$properties$kind,
+      status = query$properties$status
+    )
+  } else if (query$properties$status == 'cancelled') {
+    abort_redivis_job_error(
+      message = "Query job was cancelled",
+      kind = query$properties$kind,
+      status = query$properties$status
+    )
   }
 }

@@ -6,12 +6,10 @@ RedivisBatchReader <- R6::R6Class(
     coerce_schema = FALSE,
     retry_count = 0,
     current_stream_index = 1,
-    time_variables = NULL,
     schema = NULL,
     current_record_batch_reader = NULL,
     current_connection = NULL,
-    fields_to_add = NULL,
-    should_reorder_fields = FALSE,
+    conform_batch = NULL,
     saw_eos_sentinel = FALSE,
 
     initialize = function(
@@ -24,9 +22,6 @@ RedivisBatchReader <- R6::R6Class(
       self$coerce_schema <- coerce_schema
       self$current_stream_index <- current_stream_index
       self$schema <- schema
-      self$time_variables <- list()
-      self$fields_to_add <- list()
-      self$should_reorder_fields <- FALSE
     },
 
     get_next_reader__ = function(offset = 0) {
@@ -63,40 +58,13 @@ RedivisBatchReader <- R6::R6Class(
           # (otherwise silent)
           self$saw_eos_sentinel <- FALSE
 
-          if (self$coerce_schema) {
-            for (field in self$schema$fields) {
-              if (is(field$type, "Time64")) {
-                self$time_variables <- append(self$time_variables, field$name)
-              }
-            }
-          }
-
-          # Determine fields missing from the stream that exist in the full schema
-          self$fields_to_add <- list()
-          self$should_reorder_fields <- FALSE
-
-          i <- 0
-          for (field in stream_reader$schema$fields) {
-            i <- i + 1
-            if (
-              !self$should_reorder_fields &&
-                i != match(field$name, names(self$schema))
-            ) {
-              self$should_reorder_fields <- TRUE
-            }
-          }
-
-          for (field_name in self$schema$names) {
-            if (is.null(stream_reader$schema$GetFieldByName(field_name))) {
-              self$fields_to_add <- append(
-                self$fields_to_add,
-                self$schema$GetFieldByName(field_name)
-              )
-            }
-          }
-
-          if (!self$should_reorder_fields && length(self$fields_to_add)) {
-            self$should_reorder_fields <- TRUE
+          # Batch readers have always passed batches through as they arrive
+          # unless their types need converting (for dataset tables). Rebuilt
+          # for every connection, since each stream can have its own columns.
+          self$conform_batch <- if (self$coerce_schema) {
+            make_batch_conformer(stream_reader$schema, self$schema, TRUE)
+          } else {
+            identity
           }
 
           self$current_record_batch_reader <- stream_reader
@@ -115,7 +83,7 @@ RedivisBatchReader <- R6::R6Class(
             )
             abort_redivis_network_error(conditionMessage(e))
           }
-          Sys.sleep(self$retry_count)
+          retry_sleep(self$retry_count)
           return(self$get_next_reader__(self$current_offset))
         }
       )
@@ -155,72 +123,7 @@ RedivisBatchReader <- R6::R6Class(
               return(self$read_next_batch())
             }
           } else {
-            if (self$coerce_schema) {
-              # Note: this approach is much more performant than using %>% mutate(across())
-              # TODO: in the future, Arrow may support native conversion from time string to their type
-              for (time_variable in self$time_variables) {
-                if (!is(batch[[time_variable]]$type, 'Time64')) {
-                  batch[[time_variable]] <- arrow::arrow_array(stringr::str_c(
-                    '2000-01-01T',
-                    batch[[time_variable]]$as_vector()
-                  ))$cast(arrow::timestamp(unit = 'us'))
-                }
-              }
-
-              # Add all missing fields at once to avoid repeated AddColumn copies
-              if (length(self$fields_to_add) > 0) {
-                null_columns <- lapply(self$fields_to_add, function(field) {
-                  if (is(field$type, "Date32")) {
-                    arrow::arrow_array(rep(
-                      NA_integer_,
-                      batch$num_rows
-                    ))$cast(arrow::date32())
-                  } else if (is(field$type, "Time64")) {
-                    arrow::arrow_array(rep(
-                      NA_integer_,
-                      batch$num_rows
-                    ))$cast(arrow::int64())$cast(arrow::time64())
-                  } else if (is(field$type, "Float64")) {
-                    arrow::arrow_array(rep(NA_real_, batch$num_rows))
-                  } else if (is(field$type, "Boolean")) {
-                    arrow::arrow_array(rep(NA, batch$num_rows))
-                  } else if (is(field$type, "Int64")) {
-                    arrow::arrow_array(rep(
-                      NA_integer_,
-                      batch$num_rows
-                    ))$cast(arrow::int64())
-                  } else if (is(field$type, "Timestamp")) {
-                    arrow::arrow_array(rep(
-                      NA_integer_,
-                      batch$num_rows
-                    ))$cast(arrow::int64())$cast(
-                      arrow::timestamp(unit = "us", timezone = "")
-                    )
-                  } else {
-                    arrow::arrow_array(rep(NA_character_, batch$num_rows))
-                  }
-                })
-                names(null_columns) <- sapply(self$fields_to_add, function(f) {
-                  f$name
-                })
-                existing_columns <- setNames(
-                  lapply(batch$schema$names, function(name) batch[[name]]),
-                  batch$schema$names
-                )
-                all_columns <- c(existing_columns, null_columns)
-                batch <- do.call(
-                  arrow::record_batch,
-                  all_columns[names(self$schema)]
-                )
-              } else if (self$should_reorder_fields) {
-                batch <- batch[, names(self$schema)]
-              }
-
-              batch <- arrow::as_record_batch(
-                batch,
-                schema = self$schema
-              )
-            }
+            batch <- self$conform_batch(batch)
             self$current_offset <- self$current_offset + batch$num_rows
             self$retry_count <- 0
             return(batch)
@@ -234,7 +137,7 @@ RedivisBatchReader <- R6::R6Class(
             )
             abort_redivis_network_error(conditionMessage(e))
           }
-          Sys.sleep(self$retry_count)
+          retry_sleep(self$retry_count)
           self$get_next_reader__(self$current_offset)
           return(self$read_next_batch())
         }
@@ -246,6 +149,315 @@ RedivisBatchReader <- R6::R6Class(
     }
   )
 )
+
+# Reads at or below this estimated size go through table.listRows rather than
+# a read session. See should_use_list_rows()
+LIST_ROWS_MAX_BYTES <- 1e8
+
+# Whether to read an instance's rows via table.listRows. listRows returns every
+# row in a single request, avoiding the read session round trip: small reads
+# don't meaningfully benefit from the parallelization read sessions provide,
+# and listRows can also be read without credentials when the table is public.
+#
+# What matters is the size of the read, not of the table, so a capped read of
+# a large table is sized by the fraction of its rows that were requested (the
+# same approximation the server makes).
+should_use_list_rows <- function(instance, max_results = NULL) {
+  if (!inherits(instance, "Table")) {
+    return(FALSE)
+  }
+  num_bytes <- instance$properties$numBytes
+  if (is.null(num_bytes)) {
+    return(FALSE)
+  }
+  num_bytes <- as.numeric(num_bytes)
+  num_rows <- as.numeric(instance$properties$numRows %||% 0)
+  if (!is.null(max_results) && num_rows > 0) {
+    num_bytes <- num_bytes * min(max_results, num_rows) / num_rows
+  }
+  num_bytes < LIST_ROWS_MAX_BYTES
+}
+
+get_expected_list_rows <- function(instance, max_results = NULL) {
+  num_rows <- instance$properties$numRows
+  if (is.null(num_rows)) {
+    return(NULL)
+  }
+  num_rows <- as.numeric(num_rows)
+  if (is.null(max_results)) num_rows else min(num_rows, max_results)
+}
+
+# Whether an error from a read could plausibly succeed on a retry: network
+# failures and truncated responses. API errors aren't: a 503 is the only
+# transient one, and make_request() has already retried it. That covers 503s
+# at any point in a read, since a status only arrives ahead of a response's
+# body: a failure partway through the body is a network error, and the request
+# made to recover from it gets make_request()'s 503 retries of its own.
+is_retryable_error <- function(e) {
+  !inherits(e, "redivis_error")
+}
+
+# Fetches rows via table.listRows, returning list(schema, batches).
+#
+# listRows can't be resumed and has no end-of-stream sentinel, so rather than
+# streaming it, the whole response is fetched and its row count checked before
+# any of it is used: an interrupted or truncated response is simply requested
+# again, and no rows are ever handed to the caller twice. Reads are bounded by
+# LIST_ROWS_MAX_BYTES, so holding the response in memory is fine.
+fetch_list_rows <- function(
+  uri,
+  selected_variable_names = NULL,
+  max_results = NULL,
+  expected_rows = NULL
+) {
+  query <- list(format = "arrow")
+  if (!is.null(selected_variable_names)) {
+    query$selectedVariables <- paste(
+      unlist(selected_variable_names),
+      collapse = ","
+    )
+  }
+  if (!is.null(max_results)) {
+    query$maxResults <- max_results
+  }
+
+  retry_count <- 0
+  repeat {
+    result <- tryCatch(
+      {
+        res <- make_request(
+          method = "GET",
+          path = str_interp("${uri}/rows"),
+          query = query,
+          parse_response = FALSE
+        )
+        reader <- arrow::RecordBatchStreamReader$create(
+          arrow::buffer(httr2::resp_body_raw(res))
+        )
+        batches <- list()
+        rows_read <- 0
+        while (!is.null(batch <- reader$read_next_batch())) {
+          batches[[length(batches) + 1]] <- batch
+          rows_read <- rows_read + batch$num_rows
+        }
+        if (!is.null(expected_rows) && rows_read < expected_rows) {
+          stop(str_interp(
+            "Received ${rows_read} of ${expected_rows} rows (truncated download)"
+          ))
+        }
+        list(schema = reader$schema, batches = batches)
+      },
+      error = function(e) e
+    )
+
+    if (!inherits(result, "error")) {
+      return(result)
+    }
+    if (!is_retryable_error(result)) {
+      stop(result)
+    }
+    retry_count <- retry_count + 1
+    if (retry_count > 10) {
+      abort_redivis_network_error(
+        "Download connection failed after too many retries",
+        original_exception = result
+      )
+    }
+    retry_sleep(retry_count)
+  }
+}
+
+# The listRows counterpart to the read session path in make_rows_request()
+read_list_rows <- function(
+  instance,
+  uri,
+  max_results,
+  selected_variable_names,
+  type,
+  variables,
+  coerce_schema,
+  batch_preprocessor
+) {
+  schema <- get_arrow_schema(variables)
+  result <- fetch_list_rows(
+    uri,
+    selected_variable_names = selected_variable_names,
+    max_results = max_results,
+    expected_rows = get_expected_list_rows(instance, max_results)
+  )
+  if (type == 'arrow_stream') {
+    # Like RedivisBatchReader, only convert batches whose types need it
+    batches <- if (coerce_schema) {
+      conform_batch <- make_batch_conformer(result$schema, schema, TRUE)
+      lapply(result$batches, conform_batch)
+    } else {
+      result$batches
+    }
+    return(BufferedBatchReader$new(batches, schema))
+  }
+
+  conform_batch <- make_batch_conformer(result$schema, schema, coerce_schema)
+  batches <- lapply(result$batches, conform_batch)
+  if (!is.null(batch_preprocessor)) {
+    batches <- Filter(Negate(is.null), lapply(batches, batch_preprocessor))
+  }
+
+  tbl <- if (length(batches)) {
+    do.call(arrow::arrow_table, batches)
+  } else {
+    arrow::arrow_table(schema = schema)
+  }
+
+  if (type == 'arrow_dataset') {
+    folder <- file.path(get_temp_dir(), "tables", uuid::UUIDgenerate())
+    dir.create(folder, recursive = TRUE)
+    arrow::write_feather(tbl, file.path(folder, "rows.feather"))
+    return(arrow::open_dataset(folder, format = "feather"))
+  }
+
+  arrow_table_to_type(tbl, type)
+}
+
+# A batch reader over batches already in memory, with the same interface as
+# RedivisBatchReader. See fetch_list_rows()
+BufferedBatchReader <- R6::R6Class(
+  "BufferedBatchReader",
+  public = list(
+    batches = NULL,
+    schema = NULL,
+    index = 0,
+
+    initialize = function(batches, schema) {
+      self$batches <- batches
+      self$schema <- schema
+    },
+
+    read_next_batch = function() {
+      if (self$index >= length(self$batches)) {
+        return(NULL)
+      }
+      self$index <- self$index + 1
+      self$batches[[self$index]]
+    },
+
+    close = function() {
+      self$batches <- list()
+      invisible(NULL)
+    }
+  )
+)
+
+arrow_table_to_type <- function(tbl, type) {
+  if (type == 'arrow_table') {
+    tbl
+  } else if (type == 'tibble') {
+    tibble::as_tibble(tbl)
+  } else if (type == 'data_frame') {
+    as.data.frame(tbl)
+  } else if (type == 'data_table') {
+    data.table::as.data.table(tbl)
+  }
+}
+
+# Returns a function that conforms a batch read from the API (whose stream has
+# `stream_schema`) to `schema`. Dataset tables (coerce_schema) may store values
+# with a different type than their logical one, so their time columns are cast,
+# and columns missing from the stream are added as nulls (e.g. an unreleased
+# table made up of uploads with inconsistent variables). Columns are also
+# reordered to match `schema`.
+make_batch_conformer <- function(stream_schema, schema, coerce_schema) {
+  fields_to_add <- list()
+  should_reorder_fields <- FALSE
+  time_variables_to_coerce <- c()
+
+  i <- 0
+  # Only consider the fields in the stream, since the stream may lack some
+  for (field in stream_schema$fields) {
+    i <- i + 1
+    if (coerce_schema && is(schema[[field$name]]$type, "Time64")) {
+      time_variables_to_coerce <- append(time_variables_to_coerce, field$name)
+    }
+    if (!should_reorder_fields && i != match(field$name, names(schema))) {
+      should_reorder_fields <- TRUE
+    }
+  }
+
+  for (field_name in schema$names) {
+    if (is.null(stream_schema$GetFieldByName(field_name))) {
+      fields_to_add <- append(fields_to_add, schema$GetFieldByName(field_name))
+    }
+  }
+
+  if (!should_reorder_fields && length(fields_to_add)) {
+    should_reorder_fields <- TRUE
+  }
+
+  function(batch) {
+    if (coerce_schema) {
+      # Note: this approach is much more performant than using %>% mutate(across())
+      # TODO: in the future, Arrow may support native conversion from time string to their type
+      # To test if supported: arrow::arrow_array(rep('10:30:04.123', 2))$cast(arrow::time64(unit="us"))
+      for (time_variable in time_variables_to_coerce) {
+        if (!is(batch[[time_variable]]$type, 'Time64')) {
+          batch[[time_variable]] <- arrow::arrow_array(stringr::str_c(
+            '2000-01-01T',
+            batch[[time_variable]]$as_vector()
+          ))$cast(arrow::timestamp(unit = 'us'))
+        }
+      }
+
+      # Add all missing fields at once to avoid repeated AddColumn copies
+      if (length(fields_to_add) > 0) {
+        null_columns <- lapply(fields_to_add, function(field) {
+          if (is(field$type, "Date32")) {
+            arrow::arrow_array(rep(
+              NA_integer_,
+              batch$num_rows
+            ))$cast(arrow::date32())
+          } else if (is(field$type, "Time64")) {
+            arrow::arrow_array(rep(
+              NA_integer_,
+              batch$num_rows
+            ))$cast(arrow::int64())$cast(arrow::time64())
+          } else if (is(field$type, "Float64")) {
+            arrow::arrow_array(rep(NA_real_, batch$num_rows))
+          } else if (is(field$type, "Boolean")) {
+            arrow::arrow_array(rep(NA, batch$num_rows))
+          } else if (is(field$type, "Int64")) {
+            arrow::arrow_array(rep(
+              NA_integer_,
+              batch$num_rows
+            ))$cast(arrow::int64())
+          } else if (is(field$type, "Timestamp")) {
+            arrow::arrow_array(rep(
+              NA_integer_,
+              batch$num_rows
+            ))$cast(arrow::int64())$cast(
+              arrow::timestamp(unit = "us", timezone = "")
+            )
+          } else {
+            arrow::arrow_array(rep(NA_character_, batch$num_rows))
+          }
+        })
+        names(null_columns) <- sapply(fields_to_add, function(f) f$name)
+        existing_columns <- setNames(
+          lapply(batch$schema$names, function(name) batch[[name]]),
+          batch$schema$names
+        )
+        all_columns <- c(existing_columns, null_columns)
+        batch <- do.call(arrow::record_batch, all_columns[names(schema)])
+      } else if (should_reorder_fields) {
+        batch <- batch[, names(schema)] # reorder fields
+      }
+
+      batch <- arrow::as_record_batch(batch, schema = schema)
+    } else if (should_reorder_fields) {
+      batch <- batch[, names(schema)] # reorder fields
+      batch <- arrow::as_record_batch(batch, schema = schema)
+    }
+    batch
+  }
+}
 
 
 #' @include util.R
@@ -286,12 +498,27 @@ make_rows_request <- function(
 
     arrow::set_cpu_count(max_parallelization)
     arrow::set_io_thread_count(max(max_parallelization, 2))
+    # Any table, query, or upload can be exported, via instance$download()
     use_export_api <- use_export_api &&
-      inherits(instance, "table") &&
       type != 'arrow_stream' &&
       is.null(selected_variable_names) &&
       is.null(batch_preprocessor) &&
       is.null(max_results)
+    use_list_rows <- !use_export_api &&
+      should_use_list_rows(instance, max_results)
+
+    if (use_list_rows) {
+      return(read_list_rows(
+        instance,
+        uri,
+        max_results = max_results,
+        selected_variable_names = selected_variable_names,
+        type = type,
+        variables = variables,
+        coerce_schema = coerce_schema,
+        batch_preprocessor = batch_preprocessor
+      ))
+    }
 
     if (!use_export_api) {
       read_session <- make_request(
@@ -391,15 +618,7 @@ make_rows_request <- function(
       }
     }
   } else {
-    if (type == 'arrow_table') {
-      return(result)
-    } else if (type == 'tibble') {
-      return(tibble::as_tibble(result))
-    } else if (type == 'data_frame') {
-      return(as.data.frame(result))
-    } else if (type == 'data_table') {
-      return(data.table::as.data.table(result))
-    }
+    arrow_table_to_type(result, type)
   }
 }
 
@@ -574,37 +793,11 @@ process_arrow_stream <- function(
         }
       }
 
-      fields_to_add <- list()
-      should_reorder_fields <- FALSE
-      time_variables_to_coerce = c()
-
-      i <- 0
-      # Make sure to first only get the fields in the reader, to handle when reading from an unreleased table made up of uploads with inconsistent variables
-      for (field in stream_reader$schema$fields) {
-        i <- i + 1
-        if (coerce_schema && is(schema[[field$name]]$type, "Time64")) {
-          time_variables_to_coerce <- append(
-            time_variables_to_coerce,
-            field$name
-          )
-        }
-        if (!should_reorder_fields && i != match(field$name, names(schema))) {
-          should_reorder_fields <- TRUE
-        }
-      }
-
-      for (field_name in schema$names) {
-        if (is.null(stream_reader$schema$GetFieldByName(field_name))) {
-          fields_to_add <- append(
-            fields_to_add,
-            schema$GetFieldByName(field_name)
-          )
-        }
-      }
-
-      if (!should_reorder_fields && length(fields_to_add)) {
-        should_reorder_fields <- TRUE
-      }
+      conform_batch <- make_batch_conformer(
+        stream_reader$schema,
+        schema,
+        coerce_schema
+      )
 
       last_measured_time <- proc.time()[3]
       current_progress_rows <- 0
@@ -627,73 +820,7 @@ process_arrow_stream <- function(
           saw_eos_sentinel <- TRUE
         } else {
           batch_rows <- batch$num_rows
-
-          # We need to coerce_schema for all dataset tables, since their underlying storage type may not be the same as the logical type
-          if (coerce_schema) {
-            # Note: this approach is much more performant than using %>% mutate(across())
-            # TODO: in the future, Arrow may support native conversion from time string to their type
-            # To test if supported: arrow::arrow_array(rep('10:30:04.123', 2))$cast(arrow::time64(unit="us"))
-            for (time_variable in time_variables_to_coerce) {
-              if (!is(batch[[time_variable]]$type, 'Time64')) {
-                batch[[time_variable]] <- arrow::arrow_array(stringr::str_c(
-                  '2000-01-01T',
-                  batch[[time_variable]]$as_vector()
-                ))$cast(arrow::timestamp(unit = 'us'))
-              }
-            }
-
-            # Add all missing fields at once to avoid repeated AddColumn copies
-            if (length(fields_to_add) > 0) {
-              null_columns <- lapply(fields_to_add, function(field) {
-                if (is(field$type, "Date32")) {
-                  arrow::arrow_array(rep(
-                    NA_integer_,
-                    batch$num_rows
-                  ))$cast(arrow::date32())
-                } else if (is(field$type, "Time64")) {
-                  arrow::arrow_array(rep(
-                    NA_integer_,
-                    batch$num_rows
-                  ))$cast(arrow::int64())$cast(arrow::time64())
-                } else if (is(field$type, "Float64")) {
-                  arrow::arrow_array(rep(NA_real_, batch$num_rows))
-                } else if (is(field$type, "Boolean")) {
-                  arrow::arrow_array(rep(NA, batch$num_rows))
-                } else if (is(field$type, "Int64")) {
-                  arrow::arrow_array(rep(
-                    NA_integer_,
-                    batch$num_rows
-                  ))$cast(arrow::int64())
-                } else if (is(field$type, "Timestamp")) {
-                  arrow::arrow_array(rep(
-                    NA_integer_,
-                    batch$num_rows
-                  ))$cast(arrow::int64())$cast(
-                    arrow::timestamp(unit = "us", timezone = "")
-                  )
-                } else {
-                  arrow::arrow_array(rep(NA_character_, batch$num_rows))
-                }
-              })
-              names(null_columns) <- sapply(fields_to_add, function(f) f$name)
-              existing_columns <- setNames(
-                lapply(batch$schema$names, function(name) batch[[name]]),
-                batch$schema$names
-              )
-              all_columns <- c(existing_columns, null_columns)
-              batch <- do.call(
-                arrow::record_batch,
-                all_columns[names(schema)]
-              )
-            } else if (should_reorder_fields) {
-              batch <- batch[, names(schema)] # reorder fields
-            }
-
-            batch <- arrow::as_record_batch(batch, schema = schema)
-          } else if (should_reorder_fields) {
-            batch <- batch[, names(schema)] # reorder fields
-            batch <- arrow::as_record_batch(batch, schema = schema)
-          }
+          batch <- conform_batch(batch)
 
           if (!is.null(batch_preprocessor)) {
             batch <- batch_preprocessor(batch)
@@ -804,7 +931,7 @@ process_arrow_stream <- function(
             unlink(output_file_path)
           }
         }
-        Sys.sleep(retry_count)
+        retry_sleep(retry_count)
         return(process_arrow_stream(
           stream,
           folder,

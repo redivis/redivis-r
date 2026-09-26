@@ -1,7 +1,7 @@
 Package: redivis
 Type: Package
 Title: R interface for Redivis
-Version: 0.12.12
+Version: 0.12.13
 Author: Redivis Inc.
 Maintainer: Redivis <support@redivis.com>
 Description: Supports working with Redivis API through R. 
@@ -35,8 +35,12 @@ Encoding: UTF-8
 Language: en-US
 RoxygenNote: 7.3.3
 Suggests: 
+    callr,
+    httpuv,
     sf (>= 1.0),
-    testthat (>= 2.1.0)
+    testthat (>= 3.1.7),
+    withr
+Config/testthat/edition: 3
 Collate: 
     'util.R'
     'auth.R'

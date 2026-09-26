@@ -87,7 +87,7 @@ TabularReader <- R6::R6Class(
         parse_response = FALSE
       )
 
-      start_time = Sys.time()
+      start_time <- Sys.time()
 
       # 304 Not Modified — return cached directory
       if (httr2::resp_status(res) == 304L) {
@@ -125,6 +125,39 @@ TabularReader <- R6::R6Class(
       self$directory$last_cached_at <- current_timestamp_ms
       cached_directories[[self$uri]] <- dir
       dir
+    },
+
+    download = function(
+      path = NULL,
+      format = 'csv',
+      overwrite = FALSE,
+      progress = TRUE,
+      max_parallelization = NULL,
+      max_concurrency = NULL
+    ) {
+      if (inherits(self, "ReadStream")) {
+        abort_redivis_value_error("Cannot call $download() on a ReadStream.")
+      }
+      check_is_ready(self)
+      res <- make_request(
+        method = "POST",
+        path = paste0(self$uri, "/exports"),
+        payload = list(format = format)
+      )
+      export_job <- Export$new(
+        table = if (inherits(self, "Table")) self,
+        query = if (inherits(self, "Query")) self,
+        upload = if (inherits(self, "Upload")) self,
+        properties = res
+      )
+
+      export_job$download_files(
+        path = path,
+        overwrite = overwrite,
+        progress = progress,
+        max_parallelization = max_parallelization,
+        max_concurrency = max_concurrency
+      )
     },
 
     to_arrow_dataset = function(
@@ -322,13 +355,13 @@ TabularReader <- R6::R6Class(
         )
       }
       params <- get_table_request_params(self, variables = variables)
-      payload = list(
+      payload <- list(
         "requestedStreamCount" = target_count,
         format = "arrow"
       )
 
       if (!is.null(params$selected_variable_names)) {
-        payload$selectedVariables = params$selected_variable_names
+        payload$selectedVariables <- params$selected_variable_names
       }
 
       read_session <- make_request(
@@ -430,6 +463,18 @@ check_is_ready <- function(instance) {
     inherits(instance, "Table") && is.null(instance$properties$container)
   ) {
     instance$get()
+  } else if (inherits(instance, "Upload")) {
+    if (
+      is.null(instance$properties$status) ||
+        !identical(instance$properties$status, "completed")
+    ) {
+      instance$get()
+    }
+    if (!identical(instance$properties$status, "completed")) {
+      abort_redivis_value_error(str_interp(
+        "Cannot read data from an upload with status: ${instance$properties$status}"
+      ))
+    }
   }
 }
 
@@ -437,7 +482,8 @@ get_table_request_params <- function(
   instance,
   max_results = NULL,
   variables = NULL,
-  geography_variable = NULL
+  geography_variable = NULL,
+  refresh = TRUE
 ) {
   if (inherits(instance, "ReadStream")) {
     res <- get_table_request_params(
@@ -450,12 +496,26 @@ get_table_request_params <- function(
       },
       max_results = max_results,
       variables = instance$selected_variable_names,
-      geography_variable = geography_variable
+      geography_variable = geography_variable,
+      # The parent was fetched when the read session was created, and
+      # refetching it for every stream would multiply requests by the stream
+      # count
+      refresh = FALSE
     )
     res$use_export_api <- FALSE
     return(res)
   }
-  check_is_ready(instance)
+
+  if (inherits(instance, "Table") && refresh) {
+    # Refetch rather than trusting properties cached on this object by an
+    # earlier call, since the read depends on them being current: e.g. a
+    # listRows read verifies completion against numRows, which changes when the
+    # table is written to. For a newly constructed table, this is the same
+    # fetch check_is_ready() would have made, so it costs nothing extra.
+    instance$get()
+  } else {
+    check_is_ready(instance)
+  }
 
   # TODO: do we need all this variable fetching complexity still? Can we just handle everything on the BE?
   all_variables <- make_paginated_request(
@@ -466,7 +526,7 @@ get_table_request_params <- function(
   if (is.null(variables)) {
     variables_list <- all_variables
   } else {
-    variables = as.list(variables)
+    variables <- as.list(variables)
     lower_variable_names <- Map(function(variable) tolower(variable), variables)
     variables_list <- Filter(
       function(variable) tolower(variable$name) %in% lower_variable_names,
@@ -491,7 +551,7 @@ get_table_request_params <- function(
   }
 
   if (!is.null(geography_variable) && geography_variable == '') {
-    geography_variable = NULL
+    geography_variable <- NULL
     for (variable in variables_list) {
       if (variable$type == 'geography') {
         geography_variable <- variable$name
@@ -500,17 +560,19 @@ get_table_request_params <- function(
     }
   }
 
-  should_use_export_api <- FALSE
-  if (inherits(instance, "Table")) {
-    max_streaming_bytes <- if (
-      is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA))
-    ) {
-      1e9
-    } else {
-      1e11
-    }
-    should_use_export_api <- instance$properties$numBytes > max_streaming_bytes
+  max_streaming_bytes <- if (
+    is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA))
+  ) {
+    1e9
+  } else {
+    1e11
   }
+  num_bytes <- if (inherits(instance, "Query")) {
+    instance$properties$outputNumBytes
+  } else {
+    instance$properties$numBytes
+  }
+  should_use_export_api <- isTRUE(as.numeric(num_bytes) > max_streaming_bytes)
 
   list(
     "max_results" = max_results,

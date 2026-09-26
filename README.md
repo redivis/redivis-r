@@ -10,7 +10,13 @@ tasks!
 The easiest way to get started is to [create a new R notebook on Redivis](https://docs.redivis.com/reference/workflows/notebooks/r-notebooks).
 This package, alongside other common data science R packages, are all preinstalled.
 
-You can also install the latest version of this package in any other R environment:
+You can also install the latest release of this package in any other R environment from [R-universe](https://redivis.r-universe.dev):
+
+```r
+install.packages("redivis", repos = c("https://redivis.r-universe.dev", "https://cloud.r-project.org"))
+```
+
+Or, to install the development version directly from GitHub:
 
 ```r
 devtools::install_github("redivis/redivis-r", ref="main")

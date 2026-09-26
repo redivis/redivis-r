@@ -1,0 +1,3 @@
+# Makevars.win for redivis
+#
+# FUSE mounting (the only code needing pthread/dl) is not built on Windows.

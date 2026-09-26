@@ -3,20 +3,56 @@ Export <- R6::R6Class(
   "Export",
   public = list(
     table = NULL,
+    query = NULL,
+    upload = NULL,
     properties = NULL,
     uri = NULL,
 
-    initialize = function(table = NULL, properties = list()) {
+    initialize = function(
+      table = NULL,
+      query = NULL,
+      upload = NULL,
+      properties = list()
+    ) {
       self$table <- table
+      self$query <- query
+      self$upload <- upload
       self$uri <- properties$uri
       self$properties <- properties
     },
 
     print = function(...) {
-      cat(str_interp(
-        "<Export ${self$uri} on ${self$table$qualified_reference}>\n"
-      ))
+      cat(str_interp("<Export ${self$uri} of ${self$get_download_name()}>\n"))
       invisible(self)
+    },
+
+    # The name of the file (or directory, for multi-part exports) that the
+    # export is downloaded to when a path to a directory is given
+    get_download_name = function() {
+      escape <- function(name) {
+        tolower(stringr::str_replace_all(name, "\\W+", "_"))
+      }
+      if (!is.null(self$table)) {
+        escape(self$table$properties$name %||% self$table$name %||% "table")
+      } else if (!is.null(self$query)) {
+        finished_at <- self$query$properties$finishedAt
+        if (is.null(finished_at)) {
+          return("query")
+        }
+        finished_at <- as.POSIXct(
+          as.numeric(finished_at) / 1000,
+          origin = "1970-01-01"
+        )
+        paste0(
+          "query_",
+          format(finished_at, "%Y-%m-%dT%H_%M_%S_"),
+          sprintf("%06d", round(as.numeric(finished_at) %% 1 * 1e6))
+        )
+      } else if (!is.null(self$upload)) {
+        escape(self$upload$properties$name %||% self$upload$name %||% "upload")
+      } else {
+        escape(self$properties$table$name %||% "export")
+      }
     },
 
     get = function(wait_for_statistics = FALSE) {
@@ -46,12 +82,7 @@ Export <- R6::R6Class(
           path <- getwd()
         }
         if (file_count > 1) {
-          escaped_table_name <- tolower(stringr::str_replace_all(
-            self$properties$table$name,
-            "\\W+",
-            "_"
-          ))
-          path <- file.path(path, escaped_table_name)
+          path <- file.path(path, self$get_download_name())
         }
       } else if (
         grepl("[/\\]$", path) || (!file.exists(path) && !grepl("\\.", path))
@@ -67,14 +98,9 @@ Export <- R6::R6Class(
       if (is_dir) {
         dir.create(path, showWarnings = FALSE, recursive = TRUE)
         if (file_count == 1) {
-          escaped_table_name <- tolower(stringr::str_replace_all(
-            self$properties$table$name,
-            "\\W+",
-            "_"
-          ))
           path <- file.path(
             path,
-            str_interp("${escaped_table_name}.${self$properties$format}")
+            str_interp("${self$get_download_name()}.${self$properties$format}")
           )
         }
       } else {
@@ -83,7 +109,8 @@ Export <- R6::R6Class(
 
       if (file_count == 1) {
         args <- list(
-          uri = self$uri,
+          # NB: the export itself lives at self$uri; its contents are here
+          uri = paste0(self$uri, "/download?filePart=0"),
           download_path = path,
           overwrite = overwrite,
           size = self$properties$size,
@@ -124,7 +151,7 @@ Export <- R6::R6Class(
     wait_for_finish = function() {
       iter_count <- 0
       pb <- progressr::progressor(steps = 100)
-      pb(message = "Preparing download...")
+      pb(amount = 0, message = "Preparing download...")
       previous_progress <- 0
       while (TRUE) {
         if (self$properties$status == "completed") {

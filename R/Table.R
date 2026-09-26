@@ -331,32 +331,6 @@ Table <- R6::R6Class(
       )
       update_table_properties(self, res)
       self
-    },
-
-    download = function(
-      path = NULL,
-      format = 'csv',
-      overwrite = FALSE,
-      progress = TRUE,
-      max_parallelization = NULL,
-      max_concurrency = NULL
-    ) {
-      res <- make_request(
-        method = "POST",
-        path = paste0(self$uri, "/exports"),
-        payload = list(format = format)
-      )
-      export_job <- Export$new(table = self, properties = res)
-
-      res <- export_job$download_files(
-        path = path,
-        overwrite = overwrite,
-        progress = progress,
-        max_parallelization = max_parallelization,
-        max_concurrency = max_concurrency
-      )
-
-      return(res)
     }
   )
 )

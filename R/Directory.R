@@ -80,7 +80,7 @@ Directory <- R6::R6Class(
       result
     },
 
-    mount = function(mount_path, cache_dir = NULL) {
+    mount = function(mount_path, cache_dir = NULL, max_cache_size = NULL) {
       if (.Platform$OS.type == "windows") {
         abort_redivis_error("FUSE mounting is not supported on Windows.")
       }
@@ -88,120 +88,53 @@ Directory <- R6::R6Class(
 
       mount_path <- normalizePath(mount_path, mustWork = FALSE)
 
-      if (file.exists(mount_path)) {
-        abort_redivis_value_error(str_interp(
-          "Mount path '${mount_path}' already exists. Please provide a path that does not exist."
-        ))
+      # An existing directory is fine as long as it's empty, e.g. one left
+      # behind by an earlier mount whose R session was killed. A directory
+      # mount() creates is removed again on unmount; an existing one is left in
+      # place. (That it isn't already a mount point is checked in C_fuse_mount.)
+      remove_mount_point <- !file.exists(mount_path)
+      if (!remove_mount_point) {
+        if (!dir.exists(mount_path)) {
+          abort_redivis_value_error(str_interp(
+            "Mount path '${mount_path}' already exists and is not a directory."
+          ))
+        }
+        if (length(list.files(mount_path, all.files = TRUE, no.. = TRUE)) > 0) {
+          abort_redivis_value_error(str_interp(
+            "Mount path '${mount_path}' already exists and is not empty. Please provide an empty directory or a path that does not exist."
+          ))
+        }
       }
-
-      if (is.null(cache_dir)) {
-        cache_dir <- file.path(
-          tempdir(),
-          "redivis_fuse_cache",
-          digest::digest(mount_path, algo = "md5")
+      if (
+        !is.null(max_cache_size) &&
+          (!is.numeric(max_cache_size) ||
+            length(max_cache_size) != 1 ||
+            is.na(max_cache_size) ||
+            max_cache_size < 0)
+      ) {
+        abort_redivis_value_error(
+          "max_cache_size must be a non-negative number of bytes."
         )
       }
+
+      manifest <- fuse_manifest(self)
+
+      # Without an explicit cache_dir, files are cached in a temporary directory
+      # that is removed on unmount. C_fuse_mount makes it in the system's
+      # temporary directory, rather than this session's tempdir(), so that a
+      # later session can remove it if this one is killed while mounted. An
+      # explicit cache_dir is kept, so later mounts can reuse it.
+      temporary_cache <- is.null(cache_dir)
+      if (temporary_cache) {
+        cache_dir <- dirname(tempdir())
+      }
       cache_dir <- normalizePath(cache_dir, mustWork = FALSE)
-      dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+      if (!temporary_cache) {
+        dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
+      }
       parent_dir <- dirname(mount_path)
       dir.create(parent_dir, recursive = TRUE, showWarnings = FALSE)
       dir.create(mount_path, showWarnings = FALSE)
-
-      # Collect all files recursively
-      files <- self$list(mode = "files", recursive = TRUE)
-      if (length(files) == 0) {
-        abort_redivis_value_error("Directory contains no files to mount.")
-      }
-
-      # Build the file manifest
-      self_path <- gsub("^/+|/+$", "", as.character(self$path))
-
-      rel_paths <- vapply(
-        files,
-        function(f) {
-          fp <- gsub("^/+|/+$", "", as.character(f$path))
-          if (nchar(self_path) > 0) {
-            sub(paste0("^", self_path, "/?"), "", fp)
-          } else {
-            fp
-          }
-        },
-        character(1)
-      )
-
-      sizes <- vapply(
-        files,
-        function(f) {
-          if (is.null(f$size)) 0 else as.double(f$size)
-        },
-        double(1)
-      )
-
-      file_ids <- vapply(
-        files,
-        function(f) {
-          as.character(f$id)
-        },
-        character(1)
-      )
-
-      added_ats <- vapply(
-        files,
-        function(f) {
-          if (
-            is.null(f$added_at) || length(f$added_at) == 0 || is.na(f$added_at)
-          ) {
-            0
-          } else {
-            as.double(f$added_at)
-          }
-        },
-        double(1)
-      )
-
-      # Build directory tree from the R Directory tree (already computed).
-      # Walk the tree and collect each dir's immediate children.
-      # Use an environment to accumulate results, avoiding <<- which
-      # triggers spurious warnings from R5 class field checking.
-      tree_env <- new.env(parent = emptyenv())
-      tree_env$dir_paths <- character(0)
-      tree_env$dir_child_names <- base::list()
-      tree_env$dir_child_is_dir <- base::list()
-
-      walk_dir <- function(node, rel_prefix, env) {
-        child_names_vec <- character(0)
-        child_is_dir_vec <- logical(0)
-
-        for (child_name in ls(node$children)) {
-          child <- node$children[[child_name]]
-          child_names_vec <- c(child_names_vec, child_name)
-          child_is_dir_vec <- c(child_is_dir_vec, inherits(child, "Directory"))
-        }
-
-        idx <- length(env$dir_paths) + 1L
-        env$dir_paths[[idx]] <- rel_prefix
-        env$dir_child_names[[idx]] <- child_names_vec
-        env$dir_child_is_dir[[idx]] <- child_is_dir_vec
-
-        # Recurse into subdirectories
-        for (child_name in ls(node$children)) {
-          child <- node$children[[child_name]]
-          if (inherits(child, "Directory")) {
-            child_rel <- if (nchar(rel_prefix) == 0) {
-              child_name
-            } else {
-              paste0(rel_prefix, "/", child_name)
-            }
-            walk_dir(child, child_rel, env)
-          }
-        }
-      }
-
-      walk_dir(self, "", tree_env)
-
-      dir_paths <- tree_env$dir_paths
-      dir_child_names <- tree_env$dir_child_names
-      dir_child_is_dir <- tree_env$dir_child_is_dir
 
       # Get auth info
       api_base_url <- generate_api_url("")
@@ -212,24 +145,30 @@ Directory <- R6::R6Class(
           "C_fuse_mount",
           as.character(mount_path),
           as.character(cache_dir),
-          as.character(rel_paths),
-          as.double(sizes),
-          as.character(file_ids),
-          as.double(added_ats),
-          as.character(dir_paths),
-          dir_child_names,
-          dir_child_is_dir,
+          temporary_cache,
+          if (is.null(max_cache_size)) NA_real_ else as.double(max_cache_size),
+          manifest$rel_paths,
+          manifest$sizes,
+          manifest$file_ids,
+          manifest$keys,
+          manifest$added_ats,
+          manifest$dir_paths,
+          manifest$dir_child_names,
+          manifest$dir_child_is_dir,
           as.character(api_base_url),
           as.character(auth_token),
+          get_verify_ssl(),
+          remove_mount_point,
           PACKAGE = "redivis"
         ),
         error = function(e) {
-          unlink(mount_path, recursive = TRUE)
+          if (remove_mount_point) unlink(mount_path, recursive = TRUE)
           stop(e)
         }
       )
 
       private$.mount_path <- mount_path
+      private$.keep_mount_token_fresh()
       message(str_interp("Mounted at ${mount_path}"))
       invisible(mount_path)
     },
@@ -418,9 +357,176 @@ Directory <- R6::R6Class(
 
   private = list(
     .mount_ptr = NULL,
-    .mount_path = NULL
+    .mount_path = NULL,
+
+    # The mount's requests are made from C, with the token it was given, so
+    # while it's mounted, keep it supplied with a fresh one. This runs whenever
+    # R is idle (via later), so a single long-running call that reads from the
+    # mount can still outlast its token.
+    .keep_mount_token_fresh = function() {
+      mount_ptr <- private$.mount_ptr
+      refresh <- function() {
+        # Stop once unmounted (or remounted, which starts its own refreshes)
+        if (!identical(private$.mount_ptr, mount_ptr)) {
+          return(invisible(NULL))
+        }
+        refresh_mount_token(mount_ptr)
+        later::later(refresh, 60)
+      }
+      later::later(refresh, 60)
+    }
   )
 )
+
+# The files and directories under a directory, as C_fuse_mount takes them
+fuse_manifest <- function(directory) {
+  # Collect all files recursively
+  files <- directory$list(mode = "files", recursive = TRUE)
+  if (length(files) == 0) {
+    abort_redivis_value_error("Directory contains no files to mount.")
+  }
+
+  # Build the file manifest
+  self_path <- gsub("^/+|/+$", "", as.character(directory$path))
+
+  rel_paths <- vapply(
+    files,
+    function(f) {
+      fp <- gsub("^/+|/+$", "", as.character(f$path))
+      if (nchar(self_path) > 0) {
+        sub(paste0("^", self_path, "/?"), "", fp)
+      } else {
+        fp
+      }
+    },
+    character(1)
+  )
+
+  sizes <- vapply(
+    files,
+    function(f) {
+      if (is.null(f$size)) 0 else as.double(f$size)
+    },
+    double(1)
+  )
+
+  file_ids <- vapply(
+    files,
+    function(f) {
+      as.character(f$id)
+    },
+    character(1)
+  )
+
+  added_ats <- vapply(
+    files,
+    function(f) {
+      if (
+        is.null(f$added_at) || length(f$added_at) == 0 || is.na(f$added_at)
+      ) {
+        0
+      } else {
+        as.double(f$added_at)
+      }
+    },
+    double(1)
+  )
+
+  # Build directory tree from the R Directory tree (already computed).
+  # Walk the tree and collect each dir's immediate children.
+  # Use an environment to accumulate results, avoiding <<- which
+  # triggers spurious warnings from R5 class field checking.
+  tree_env <- new.env(parent = emptyenv())
+  tree_env$dir_paths <- character(0)
+  tree_env$dir_child_names <- base::list()
+  tree_env$dir_child_is_dir <- base::list()
+
+  walk_dir <- function(node, rel_prefix, env) {
+    child_names_vec <- character(0)
+    child_is_dir_vec <- logical(0)
+
+    for (child_name in ls(node$children)) {
+      child <- node$children[[child_name]]
+      child_names_vec <- c(child_names_vec, child_name)
+      child_is_dir_vec <- c(child_is_dir_vec, inherits(child, "Directory"))
+    }
+
+    idx <- length(env$dir_paths) + 1L
+    env$dir_paths[[idx]] <- rel_prefix
+    env$dir_child_names[[idx]] <- child_names_vec
+    env$dir_child_is_dir[[idx]] <- child_is_dir_vec
+
+    # Recurse into subdirectories
+    for (child_name in ls(node$children)) {
+      child <- node$children[[child_name]]
+      if (inherits(child, "Directory")) {
+        child_rel <- if (nchar(rel_prefix) == 0) {
+          child_name
+        } else {
+          paste0(rel_prefix, "/", child_name)
+        }
+        walk_dir(child, child_rel, env)
+      }
+    }
+  }
+
+  walk_dir(directory, "", tree_env)
+
+  dir_paths <- tree_env$dir_paths
+  dir_child_names <- tree_env$dir_child_names
+  dir_child_is_dir <- tree_env$dir_child_is_dir
+
+  list(
+    rel_paths = as.character(rel_paths),
+    sizes = as.double(sizes),
+    file_ids = as.character(file_ids),
+    keys = vapply(files, fuse_cache_key, character(1)),
+    added_ats = as.double(added_ats),
+    dir_paths = as.character(dir_paths),
+    dir_child_names = dir_child_names,
+    dir_child_is_dir = dir_child_is_dir
+  )
+}
+
+# A file's hash uniquely identifies its contents, so files with the same
+# contents share one cached copy, and a file that changes on Redivis is never
+# served from a stale one. redivis-python keys its cache the same way, so the
+# two can share a cache_dir.
+fuse_cache_key <- function(file) {
+  if (length(file$hash) > 0) {
+    return(paste(as.character(file$hash), collapse = ""))
+  }
+  paste0(
+    gsub("[^A-Za-z0-9._-]", "_", file$id),
+    "-",
+    format(if (is.null(file$size)) 0 else file$size, scientific = FALSE)
+  )
+}
+
+# Supplies a mount with a fresh token, first refreshing it if it's past half
+# its lifetime
+refresh_mount_token <- function(mount_ptr) {
+  # API tokens don't expire
+  if (!is.na(Sys.getenv("REDIVIS_API_TOKEN", unset = NA))) {
+    return(invisible(NULL))
+  }
+  credentials <- auth_vars$cached_credentials
+  if (is.null(credentials$access_token) || is.null(credentials$refresh_token)) {
+    return(invisible(NULL))
+  }
+  lifetime <- if (is.null(credentials$expires_in)) 3600 else credentials$expires_in
+  if (
+    is.null(credentials$expires_at) ||
+      credentials$expires_at < as.numeric(Sys.time()) + lifetime / 2
+  ) {
+    tryCatch(refresh_credentials(), error = function(e) NULL)
+  }
+  token <- auth_vars$cached_credentials$access_token
+  if (!is.null(token)) {
+    .Call("C_fuse_set_auth_token", mount_ptr, token, PACKAGE = "redivis")
+  }
+  invisible(NULL)
+}
 
 add_directory_file <- function(dir, file) {
   # Normalize: strip all leading/trailing slashes, then re-add single leading /
