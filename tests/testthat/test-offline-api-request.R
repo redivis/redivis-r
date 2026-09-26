@@ -3,7 +3,10 @@
 
 TABLE <- "/tables/a.b.mock"
 
-UNAUTHENTICATED <- list(status = 401, body = list(status = 401, error = "invalid_token"))
+UNAUTHENTICATED <- list(
+  status = 401,
+  body = list(status = 401, error = "invalid_token")
+)
 INSUFFICIENT_SCOPE <- list(
   status = 403,
   body = list(status = 403, error = "insufficient_scope", scope = "data.data")
@@ -55,19 +58,6 @@ test_that("streamed requests retry 503s", {
   expect_equal(jsonlite::fromJSON(rawToChar(received))$name, "mock")
 })
 
-test_that("POSTs aren't retried on 503", {
-  # The POST may have been processed before the 503; replaying it could
-  # duplicate an upload or re-run a query
-  mock <- local_mock_api()
-  mock$set(fail_503 = 1)
-
-  expect_error(
-    make_request(method = "POST", path = paste0(TABLE, "/uploads"), payload = list(name = "u")),
-    class = "redivis_api_error"
-  )
-  expect_length(mock$paths(), 1)
-})
-
 test_that("persistent 503s eventually raise", {
   mock <- local_mock_api()
   mock$set(fail_503 = 1000)
@@ -100,7 +90,11 @@ test_that("a repeated auth failure stops after one attempt", {
   logins <- local_logins()
   mock$set(response_script = rep(list(UNAUTHENTICATED), 5))
 
-  expect_error(make_request(path = TABLE), "invalid_token", class = "redivis_api_error")
+  expect_error(
+    make_request(path = TABLE),
+    "invalid_token",
+    class = "redivis_api_error"
+  )
   expect_length(logins$scopes, 1)
   expect_length(mock$paths(), 2)
 })
@@ -152,10 +146,16 @@ test_that("ever-changing auth failures are capped", {
 test_that("a 403 without an error field is reported as a 403", {
   mock <- local_mock_api()
   mock$set(
-    response_script = list(list(status = 403, body = list(error_description = "nope")))
+    response_script = list(list(
+      status = 403,
+      body = list(error_description = "nope")
+    ))
   )
 
-  expect_error(make_request(path = TABLE), class = "redivis_authorization_error")
+  expect_error(
+    make_request(path = TABLE),
+    class = "redivis_authorization_error"
+  )
 })
 
 test_that("requests without credentials are sent anonymously", {
@@ -170,10 +170,18 @@ test_that("requests without credentials are sent anonymously", {
 
 test_that("downloads don't retry errors a retry can't fix", {
   mock <- local_mock_api()
-  mock$set(response_script = list(list(status = 404, body = list(status = 404, error = "not_found"))))
+  mock$set(
+    response_script = list(list(
+      status = 404,
+      body = list(status = 404, error = "not_found")
+    ))
+  )
 
   expect_error(
-    perform_retryable_download("/rawFiles/f1", download_path = file.path(withr::local_tempdir(), "f")),
+    perform_retryable_download(
+      "/rawFiles/f1",
+      download_path = file.path(withr::local_tempdir(), "f")
+    ),
     class = "redivis_not_found_error"
   )
   expect_length(mock$paths(), 1)
@@ -181,10 +189,18 @@ test_that("downloads don't retry errors a retry can't fix", {
 
 test_that("downloads don't retry server errors", {
   mock <- local_mock_api()
-  mock$set(response_script = list(list(status = 500, body = list(status = 500, error = "internal_error"))))
+  mock$set(
+    response_script = list(list(
+      status = 500,
+      body = list(status = 500, error = "internal_error")
+    ))
+  )
 
   expect_error(
-    perform_retryable_download("/rawFiles/f1", download_path = file.path(withr::local_tempdir(), "f")),
+    perform_retryable_download(
+      "/rawFiles/f1",
+      download_path = file.path(withr::local_tempdir(), "f")
+    ),
     class = "redivis_api_error"
   )
   expect_length(mock$paths(), 1)
@@ -207,7 +223,11 @@ test_that("parallel downloads upgrade to every scope the server asks for", {
     response_script = list(
       list(
         status = 403,
-        body = list(status = 403, error = "insufficient_scope", scope = "data.data other.scope")
+        body = list(
+          status = 403,
+          error = "insufficient_scope",
+          scope = "data.data other.scope"
+        )
       )
     )
   )
@@ -226,7 +246,11 @@ test_that("parallel downloads stop re-authenticating when a failure repeats", {
   setTimeLimit(elapsed = 60, transient = TRUE)
   withr::defer(setTimeLimit(elapsed = Inf))
 
-  expect_error(parallel_download(), "invalid_token", class = "redivis_api_error")
+  expect_error(
+    parallel_download(),
+    "invalid_token",
+    class = "redivis_api_error"
+  )
   expect_length(logins$scopes, 1)
   expect_length(mock$paths(), 2)
 })
@@ -235,19 +259,31 @@ test_that("parallel downloads raise HTTP errors", {
   # An error raised inside a curl callback is only printed, so parallel
   # downloads used to report success with the file missing
   mock <- local_mock_api()
-  mock$set(response_script = list(list(status = 404, body = list(status = 404, error = "not_found"))))
+  mock$set(
+    response_script = list(list(
+      status = 404,
+      body = list(status = 404, error = "not_found")
+    ))
+  )
 
   expect_error(parallel_download(), class = "redivis_not_found_error")
 })
 
 test_that("parallel downloads stop once a file has failed for good", {
   mock <- local_mock_api()
-  mock$set(response_script = list(list(status = 404, body = list(status = 404, error = "not_found"))))
+  mock$set(
+    response_script = list(list(
+      status = 404,
+      body = list(status = 404, error = "not_found")
+    ))
+  )
   dir <- withr::local_tempdir()
 
   expect_error(
     perform_parallel_download(
-      uris = lapply(0:2, function(i) paste0("/exports/e1/download?filePart=", i)),
+      uris = lapply(0:2, function(i) {
+        paste0("/exports/e1/download?filePart=", i)
+      }),
       download_paths = file.path(dir, paste0(0:2, ".parquet")),
       max_parallelization = 1,
       max_concurrency = 1

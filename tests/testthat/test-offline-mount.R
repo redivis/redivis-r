@@ -28,6 +28,7 @@ local_mount_cache <- function(
   files = list(data.bin = list(content = "data")),
   cache_dir = withr::local_tempdir(.local_envir = env),
   max_cache_size = NULL,
+  temporary_cache = FALSE,
   auth_token = get_auth_token(),
   env = parent.frame()
 ) {
@@ -59,7 +60,7 @@ local_mount_cache <- function(
   .Call(
     "C_fuse_cache_open",
     cache_dir,
-    FALSE,
+    temporary_cache,
     if (is.null(max_cache_size)) NA_real_ else as.double(max_cache_size),
     manifest$rel_paths,
     manifest$sizes,
@@ -227,6 +228,67 @@ test_that("files with the same contents share a cached copy", {
   expect_identical(cache_read_all(cache, path = "b.bin"), file_bytes("data"))
   expect_equal(mock$raw_file_ranges(), "bytes=0-")
   expect_equal(cached_names(cache_dir), cached_copy("data"))
+})
+
+# A temporary cache made in temp_dir
+local_temporary_cache <- function(mock, temp_dir, env = parent.frame()) {
+  local_mount_cache(mock, cache_dir = temp_dir, temporary_cache = TRUE, env = env)
+}
+
+close_cache <- function(cache) {
+  .Call("C_fuse_unmount", cache, PACKAGE = "redivis")
+}
+
+# A temporary cache as left by a session killed while mounted
+make_orphaned_cache_dir <- function(temp_dir, name, lock_contents = "12345\n") {
+  path <- file.path(temp_dir, paste0("redivis_mount_cache_", name))
+  dir.create(path)
+  writeBin(file_bytes("data"), file.path(path, paste0(cache_key("data"), ".data")))
+  if (!is.null(lock_contents)) {
+    cat(lock_contents, file = file.path(path, ".lock"))
+  }
+  path
+}
+
+test_that("a temporary cache is removed on unmount", {
+  mock <- local_mock_api()
+  temp_dir <- withr::local_tempdir()
+  cache <- local_temporary_cache(mock, temp_dir)
+  expect_identical(cache_read_all(cache), file_bytes("data"))
+  cache_dirs <- list.files(temp_dir, full.names = TRUE)
+  expect_length(cache_dirs, 1)
+  expect_setequal(
+    list.files(cache_dirs, all.files = TRUE, no.. = TRUE),
+    c(".lock", cached_copy("data"))
+  )
+
+  close_cache(cache)
+
+  expect_equal(list.files(temp_dir, all.files = TRUE, no.. = TRUE), character(0))
+})
+
+test_that("temporary caches of exited sessions are removed", {
+  mock <- local_mock_api()
+  temp_dir <- withr::local_tempdir()
+  live <- local_temporary_cache(mock, temp_dir)
+  live_dir <- list.files(temp_dir)
+  orphaned <- make_orphaned_cache_dir(temp_dir, "orphaned")
+  # Not yet locked by the session making it
+  being_made <- make_orphaned_cache_dir(temp_dir, "being_made", lock_contents = "")
+  unlocked <- make_orphaned_cache_dir(temp_dir, "unlocked", lock_contents = NULL)
+  writeLines("not a cache", file.path(temp_dir, "notes.txt"))
+
+  before <- list.files(temp_dir)
+  new <- local_temporary_cache(mock, temp_dir)
+  new_dir <- setdiff(list.files(temp_dir), before)
+
+  expect_length(new_dir, 1)
+  expect_setequal(
+    list.files(temp_dir),
+    c(live_dir, basename(being_made), basename(unlocked), new_dir, "notes.txt")
+  )
+  close_cache(live)
+  close_cache(new)
 })
 
 test_that("a cache_dir is reused by a later mount", {

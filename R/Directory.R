@@ -119,15 +119,19 @@ Directory <- R6::R6Class(
 
       manifest <- fuse_manifest(self)
 
-      # Without an explicit cache_dir, files are cached in a private temporary
-      # directory that is removed on unmount. An explicit cache_dir is kept, so
-      # later mounts can reuse it.
-      remove_cache_dir <- is.null(cache_dir)
-      if (remove_cache_dir) {
-        cache_dir <- tempfile("redivis_mount_cache_")
+      # Without an explicit cache_dir, files are cached in a temporary directory
+      # that is removed on unmount. C_fuse_mount makes it in the system's
+      # temporary directory, rather than this session's tempdir(), so that a
+      # later session can remove it if this one is killed while mounted. An
+      # explicit cache_dir is kept, so later mounts can reuse it.
+      temporary_cache <- is.null(cache_dir)
+      if (temporary_cache) {
+        cache_dir <- dirname(tempdir())
       }
       cache_dir <- normalizePath(cache_dir, mustWork = FALSE)
-      dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
+      if (!temporary_cache) {
+        dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE, mode = "0700")
+      }
       parent_dir <- dirname(mount_path)
       dir.create(parent_dir, recursive = TRUE, showWarnings = FALSE)
       dir.create(mount_path, showWarnings = FALSE)
@@ -141,7 +145,7 @@ Directory <- R6::R6Class(
           "C_fuse_mount",
           as.character(mount_path),
           as.character(cache_dir),
-          remove_cache_dir,
+          temporary_cache,
           if (is.null(max_cache_size)) NA_real_ else as.double(max_cache_size),
           manifest$rel_paths,
           manifest$sizes,

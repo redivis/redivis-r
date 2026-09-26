@@ -21,6 +21,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
+#include <sys/file.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -495,6 +496,14 @@ static int load_curl_library(void)
    of it, so that eviction runs occasionally rather than on every block downloaded. */
 #define EVICTION_TARGET 0.9
 
+/* Without an explicit cache_dir, a mount caches files in a directory of its own in the system's
+   temporary directory, named with this prefix. It holds a lock on the TEMPORARY_CACHE_LOCK file inside
+   for as long as its process is alive, so that a later mount can remove the cache of a process that
+   was killed while mounted (e.g. by a notebook kernel restart), and so never removed its own. Keep in
+   step with redivis-python's mount_directory.py, so that each cleans up after the other. */
+#define TEMPORARY_CACHE_PREFIX "redivis_mount_cache_"
+#define TEMPORARY_CACHE_LOCK ".lock"
+
 /* Consecutive failed requests (ones that received nothing) before a read gives up */
 #define MAX_RETRIES 10
 
@@ -563,7 +572,8 @@ struct redivis_mount_ctx {
     hash_table_t file_ht; hash_table_t dir_ht;
     dir_entry_t *dirs; size_t n_dirs;
 
-    char *cache_dir; int remove_cache_dir; size_t block_size;
+    /* A temporary cache_dir is removed with the mount, and locked by cache_lock_fd until then */
+    char *cache_dir; int remove_cache_dir; int cache_lock_fd; size_t block_size;
     redivis_content_t **contents; size_t n_contents; size_t contents_cap;
     hash_table_t content_ht;
     /* The total size of the cache, and whether a thread is evicting from it, guarded by cache_mutex */
@@ -656,6 +666,81 @@ static void mkdirs(const char *dir) {
         if (*p == '/') { *p = '\0'; mkdir(tmp, 0755); *p = '/'; }
     }
     mkdir(tmp, 0755);
+}
+
+/* Removes a temporary cache directory, which only ever holds files */
+static void remove_temporary_cache_dir(const char *dir) {
+    DIR *d = opendir(dir);
+    if (d) {
+        struct dirent *e;
+        char path[4096];
+        while ((e = readdir(d)) != NULL) {
+            if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+            snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+            unlink(path);
+        }
+        closedir(d);
+    }
+    rmdir(dir);
+}
+
+/* Removes the temporary caches in parent of processes that exited while mounted */
+static void remove_orphaned_cache_dirs(const char *parent) {
+    DIR *d = opendir(parent);
+    if (!d) return;
+    struct dirent *e;
+    char path[4096], lock_path[4096 + sizeof(TEMPORARY_CACHE_LOCK) + 1];
+    while ((e = readdir(d)) != NULL) {
+        if (strncmp(e->d_name, TEMPORARY_CACHE_PREFIX, strlen(TEMPORARY_CACHE_PREFIX)) != 0) continue;
+        snprintf(path, sizeof(path), "%s/%s", parent, e->d_name);
+        /* Only this user's own directories, so as never to follow a link somewhere else */
+        struct stat st;
+        if (lstat(path, &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != getuid()) continue;
+        snprintf(lock_path, sizeof(lock_path), "%s/" TEMPORARY_CACHE_LOCK, path);
+        /* Missing if not a cache set up this way, or not yet */
+        int fd = open(lock_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (fd < 0) continue;
+        char pid[32];
+        /* Locked by a live process, or empty while its owner is still setting it up */
+        if (flock(fd, LOCK_EX | LOCK_NB) == 0 && read(fd, pid, sizeof(pid)) > 0)
+            remove_temporary_cache_dir(path);
+        close(fd);
+    }
+    closedir(d);
+}
+
+/* Makes a temporary cache directory in parent, locked by *lock_fd for as long as this process is
+   alive. Returns its path, or NULL with errno set. */
+static char *make_temporary_cache_dir(const char *parent, int *lock_fd) {
+    remove_orphaned_cache_dirs(parent);
+    char path[4096], lock_path[4096 + sizeof(TEMPORARY_CACHE_LOCK) + 1];
+    if (snprintf(path, sizeof(path), "%s/" TEMPORARY_CACHE_PREFIX "XXXXXX", parent)
+        >= (int)sizeof(path)) {
+        errno = ENAMETOOLONG;
+        return NULL;
+    }
+    if (!mkdtemp(path)) return NULL;
+    snprintf(lock_path, sizeof(lock_path), "%s/" TEMPORARY_CACHE_LOCK, path);
+    int fd = open(lock_path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    char pid[32];
+    int len = snprintf(pid, sizeof(pid), "%ld\n", (long)getpid());
+    /* Written once locked, since until then another process could take the lock itself */
+    if (fd < 0 || flock(fd, LOCK_EX) != 0 || write(fd, pid, (size_t)len) != len) {
+        int err = errno;
+        if (fd >= 0) close(fd);
+        remove_temporary_cache_dir(path);
+        errno = err;
+        return NULL;
+    }
+    char *result = strdup(path);
+    if (!result) {
+        close(fd);
+        remove_temporary_cache_dir(path);
+        errno = ENOMEM;
+        return NULL;
+    }
+    *lock_fd = fd;
+    return result;
 }
 
 /* Whether dir is the root of a mount, i.e. on a different device from its parent */
@@ -1691,14 +1776,13 @@ static void ctx_free(redivis_mount_ctx_t *ctx) {
         streams_join(reap, n_reap);
         if (c->fd >= 0) close(c->fd);
         memory_free(c);
-        if (ctx->remove_cache_dir) { unlink(c->data_path); unlink(c->blocks_path); }
         pthread_mutex_destroy(&c->mutex);
         pthread_cond_destroy(&c->cond);
         free(c->key); free(c->file_id); free(c->data_path); free(c->blocks_path);
         free(c->blocks); free(c->fetching); free(c);
     }
-    /* Only succeeds once empty, so never removes anything but the cache's own files */
-    if (ctx->remove_cache_dir && ctx->cache_dir) rmdir(ctx->cache_dir);
+    if (ctx->remove_cache_dir) remove_temporary_cache_dir(ctx->cache_dir);
+    if (ctx->cache_lock_fd >= 0) close(ctx->cache_lock_fd);
     free(ctx->contents);
     for (size_t i = 0; i < ctx->n_entries; i++) free(ctx->entries[i].rel_path);
     free(ctx->entries);
@@ -1739,7 +1823,7 @@ static void fuse_mount_finalizer(SEXP ptr) {
 /* Builds the filesystem from the directory's manifest (see Directory$mount), without mounting it.
    Files with the same contents (by key) share one cached copy. */
 static redivis_mount_ctx_t *build_ctx(const char *mount_point, SEXP s_cache_dir,
-                                      SEXP s_remove_cache_dir, SEXP s_max_cache_size,
+                                      SEXP s_temporary_cache, SEXP s_max_cache_size,
                                       SEXP s_rel_paths, SEXP s_sizes, SEXP s_file_ids,
                                       SEXP s_keys, SEXP s_added_ats,
                                       SEXP s_dir_paths, SEXP s_dir_child_names,
@@ -1756,9 +1840,9 @@ static redivis_mount_ctx_t *build_ctx(const char *mount_point, SEXP s_cache_dir,
     pthread_mutex_init(&ctx->cache_mutex, NULL);
     pthread_mutex_init(&ctx->auth_mutex, NULL);
 
+    ctx->cache_lock_fd = -1;
     ctx->mount_point = strdup(mount_point);
     ctx->cache_dir = strdup(CHAR(STRING_ELT(s_cache_dir, 0)));
-    ctx->remove_cache_dir = Rf_asLogical(s_remove_cache_dir) == TRUE;
     ctx->api_base_url = strdup(CHAR(STRING_ELT(s_api_base_url, 0)));
     ctx->auth_token = strdup(CHAR(STRING_ELT(s_auth_token, 0)));
     ctx->verify_ssl = Rf_asLogical(s_verify_ssl) != FALSE;
@@ -1774,7 +1858,22 @@ static redivis_mount_ctx_t *build_ctx(const char *mount_point, SEXP s_cache_dir,
         ctx_free(ctx);
         Rf_error("fuse_mount: allocation failed");
     }
-    mkdirs(ctx->cache_dir);
+    if (Rf_asLogical(s_temporary_cache) == TRUE) {
+        /* A cache of its own, made in s_cache_dir (see TEMPORARY_CACHE_PREFIX) */
+        char *dir = make_temporary_cache_dir(ctx->cache_dir, &ctx->cache_lock_fd);
+        if (!dir) {
+            char msg[4096 + 256];
+            snprintf(msg, sizeof(msg), "fuse_mount: could not create a cache directory in '%s': %s",
+                     ctx->cache_dir, strerror(errno));
+            ctx_free(ctx);
+            Rf_error("%s", msg);
+        }
+        free(ctx->cache_dir);
+        ctx->cache_dir = dir;
+        ctx->remove_cache_dir = 1;
+    } else {
+        mkdirs(ctx->cache_dir);
+    }
 
     for (R_xlen_t i = 0; i < n; i++) {
         redivis_file_entry_t *entry = &ctx->entries[ctx->n_entries++];
@@ -1824,7 +1923,7 @@ static redivis_mount_ctx_t *build_ctx(const char *mount_point, SEXP s_cache_dir,
 }
 
 SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
-                  SEXP s_remove_cache_dir, SEXP s_max_cache_size,
+                  SEXP s_temporary_cache, SEXP s_max_cache_size,
                   SEXP s_rel_paths, SEXP s_sizes, SEXP s_file_ids,
                   SEXP s_keys, SEXP s_added_ats,
                   SEXP s_dir_paths, SEXP s_dir_child_names,
@@ -1849,7 +1948,7 @@ SEXP C_fuse_mount(SEXP s_mount_point, SEXP s_cache_dir,
     /* mount() accepts an existing empty directory, but mounting over another mount would hide it */
     if (is_mount_point(mount_point)) Rf_error("Mount path '%s' is already a mount point.", mount_point);
     redivis_mount_ctx_t *ctx = build_ctx(
-        mount_point, s_cache_dir, s_remove_cache_dir, s_max_cache_size,
+        mount_point, s_cache_dir, s_temporary_cache, s_max_cache_size,
         s_rel_paths, s_sizes, s_file_ids, s_keys, s_added_ats,
         s_dir_paths, s_dir_child_names, s_dir_child_is_dir,
         s_api_base_url, s_auth_token, s_verify_ssl, DEFAULT_BLOCK_SIZE);
@@ -1937,7 +2036,7 @@ SEXP C_fuse_set_auth_token(SEXP ext_ptr, SEXP s_auth_token) {
 
 /* The filesystem's cache, without mounting it, for tests. Its files are read with C_fuse_cache_file,
    exactly as the FUSE callbacks read them, so none of this needs a FUSE installation. */
-SEXP C_fuse_cache_open(SEXP s_cache_dir, SEXP s_remove_cache_dir, SEXP s_max_cache_size,
+SEXP C_fuse_cache_open(SEXP s_cache_dir, SEXP s_temporary_cache, SEXP s_max_cache_size,
                        SEXP s_rel_paths, SEXP s_sizes, SEXP s_file_ids, SEXP s_keys,
                        SEXP s_api_base_url, SEXP s_auth_token, SEXP s_verify_ssl,
                        SEXP s_block_size) {
@@ -1947,7 +2046,7 @@ SEXP C_fuse_cache_open(SEXP s_cache_dir, SEXP s_remove_cache_dir, SEXP s_max_cac
     SEXP no_dirs = PROTECT(Rf_allocVector(STRSXP, 0));
     SEXP no_children = PROTECT(Rf_allocVector(VECSXP, 0));
     redivis_mount_ctx_t *ctx = build_ctx(
-        "", s_cache_dir, s_remove_cache_dir, s_max_cache_size,
+        "", s_cache_dir, s_temporary_cache, s_max_cache_size,
         s_rel_paths, s_sizes, s_file_ids, s_keys, added_ats,
         no_dirs, no_children, no_children,
         s_api_base_url, s_auth_token, s_verify_ssl, (size_t)Rf_asReal(s_block_size));
