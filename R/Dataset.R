@@ -45,13 +45,15 @@ Dataset <- R6::R6Class(
 
       parsed_name <- strsplit(parsed_name, ":")[[1]][1]
 
-      if (
-        !is.null(version) &&
-          version != "current" &&
-          version != "next" &&
-          !startsWith(tolower(version), "v")
-      ) {
-        version_arg <- str_interp("v${version}")
+      if (!is.null(version) && version != "current" && version != "next") {
+        if (!grepl("^[vV]?\\d+[._]\\d+$", version)) {
+          abort_redivis_value_error(str_interp(
+            'Invalid version "${version}". Must be "current", "next", or a version tag of the form "v1.0" (or "1.0", "v1_0")'
+          ))
+        }
+        if (!startsWith(tolower(version), "v")) {
+          version_arg <- str_interp("v${version}")
+        }
       } else if (
         is.null(version) &&
           !is.na(stringr::str_match(name, ":(v\\d+[._]\\d+|current|next)")[2])
