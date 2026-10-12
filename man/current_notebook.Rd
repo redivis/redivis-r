@@ -13,5 +13,7 @@ class<Notebook>
 DEPRECATED: please use redivis$current_notebook
 }
 \examples{
+\dontrun{
 redivis::current_notebook()$create_output_table(df)
+}
 }

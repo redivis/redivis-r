@@ -204,8 +204,12 @@ setMethod("dbListTables", "RedivisConnection", function(conn, ...) {
   if (is.null(conn@owner)) {
     return(character(0))
   }
-  tables <- conn@owner$list_tables()
-  vapply(tables, function(t) t$name, character(1))
+  tables <- if (inherits(conn@owner, "Workflow")) {
+    conn@owner$list_tables(include_datasources = TRUE)
+  } else {
+    conn@owner$list_tables()
+  }
+  table_sql_names(tables)
 })
 
 #' @export
@@ -366,7 +370,10 @@ setMethod(
   "dbQuoteString",
   signature("RedivisConnection", "character"),
   function(conn, x, ...) {
-    DBI::SQL(paste0("'", gsub("'", "\\\\'", x), "'"))
+    escaped <- gsub("'", "\\\\'", gsub("\\", "\\\\", x, fixed = TRUE))
+    out <- paste0("'", escaped, "'")
+    out[is.na(x)] <- "NULL"
+    DBI::SQL(out)
   }
 )
 
@@ -375,6 +382,28 @@ setMethod(
 #' @importFrom dbplyr dbplyr_edition
 #' @export
 dbplyr_edition.RedivisConnection <- function(con) 2L
+
+#' @importFrom dbplyr sql_escape_date
+#' @export
+sql_escape_date.RedivisConnection <- function(con, x) {
+  out <- paste0("DATE '", format(x, "%Y-%m-%d"), "'")
+  out[is.na(x)] <- "NULL"
+  DBI::SQL(out)
+}
+
+# Redivis dateTime variables are DATETIMEs (no time zone), which can't be
+# compared with dbplyr's default ISO 8601 "...Z" string literals
+#' @importFrom dbplyr sql_escape_datetime
+#' @export
+sql_escape_datetime.RedivisConnection <- function(con, x) {
+  out <- paste0(
+    "DATETIME '",
+    format(x, "%Y-%m-%d %H:%M:%OS6", tz = "UTC"),
+    "'"
+  )
+  out[is.na(x)] <- "NULL"
+  DBI::SQL(out)
+}
 
 #' @importFrom dbplyr db_connection_describe
 #' @export
@@ -392,7 +421,15 @@ sql_translation.RedivisConnection <- function(con) {
 
       # Operators
       `^` = dbplyr::sql_prefix("POW"),
-      `%%` = dbplyr::sql_prefix("MOD"),
+      # Like R, rounds toward negative infinity, so that the remainder takes
+      # the sign of the divisor (DIV and MOD truncate toward zero, and only
+      # accept integers)
+      `%/%` = function(x, y) {
+        dbplyr::build_sql("FLOOR(", x, " / ", y, ")")
+      },
+      `%%` = function(x, y) {
+        dbplyr::build_sql("(", x, " - ", y, " * FLOOR(", x, " / ", y, "))")
+      },
       `%||%` = dbplyr::sql_prefix("IFNULL"),
 
       # Type coercion
@@ -411,8 +448,18 @@ sql_translation.RedivisConnection <- function(con) {
       as.logical = function(x) {
         dbplyr::build_sql("CAST(", x, " AS BOOLEAN)")
       },
-      as.Date = function(x) {
-        dbplyr::build_sql("CAST(", x, " AS DATE)")
+      as.Date = function(x, format = NULL, ...) {
+        sql_as_date(x, format)
+      },
+      as_date = function(x, format = NULL, ...) {
+        sql_as_date(x, format)
+      },
+      # Redivis dateTime variables are DATETIMEs; there is no TIMESTAMP type
+      as.POSIXct = function(x, ...) {
+        dbplyr::build_sql("CAST(", x, " AS DATETIME)")
+      },
+      as_datetime = function(x, ...) {
+        dbplyr::build_sql("CAST(", x, " AS DATETIME)")
       },
 
       # String functions
@@ -428,11 +475,25 @@ sql_translation.RedivisConnection <- function(con) {
       trimws = function(x) {
         dbplyr::build_sql("TRIM(", x, ")")
       },
+      startsWith = dbplyr::sql_prefix("STARTS_WITH", 2),
+      endsWith = dbplyr::sql_prefix("ENDS_WITH", 2),
+      # GoogleSQL has no CONCAT_WS, and ARRAY_TO_STRING requires strings
       paste = function(..., sep = " ") {
-        dbplyr::build_sql("CONCAT_WS(", sep, ", ", ..., ")")
+        args <- lapply(list(...), function(x) {
+          dbplyr::build_sql("CAST(", int_arg(x), " AS STRING)")
+        })
+        dbplyr::build_sql(
+          "ARRAY_TO_STRING([",
+          dbplyr::sql(paste(unlist(args), collapse = ", ")),
+          "], ",
+          sep,
+          ")"
+        )
       },
       paste0 = dbplyr::sql_prefix("CONCAT"),
       substr = function(x, start, stop) {
+        start <- int_arg(start)
+        stop <- int_arg(stop)
         dbplyr::build_sql(
           "SUBSTR(",
           x,
@@ -446,9 +507,11 @@ sql_translation.RedivisConnection <- function(con) {
         )
       },
       substring = function(x, first, last = NULL) {
+        first <- int_arg(first)
         if (is.null(last)) {
           dbplyr::build_sql("SUBSTR(", x, ", ", first, ")")
         } else {
+          last <- int_arg(last)
           dbplyr::build_sql(
             "SUBSTR(",
             x,
@@ -464,10 +527,41 @@ sql_translation.RedivisConnection <- function(con) {
       },
 
       # stringr equivalents
-      str_detect = dbplyr::sql_prefix("REGEXP_CONTAINS", 2),
+      str_detect = function(string, pattern, negate = FALSE) {
+        out <- dbplyr::build_sql("REGEXP_CONTAINS(", string, ", ", pattern, ")")
+        if (isTRUE(negate)) dbplyr::build_sql("NOT ", out) else out
+      },
+      str_starts = function(string, pattern, negate = FALSE) {
+        out <- dbplyr::build_sql(
+          "REGEXP_CONTAINS(",
+          string,
+          ", ",
+          anchored_pattern(pattern, "^(?:", ")"),
+          ")"
+        )
+        if (isTRUE(negate)) dbplyr::build_sql("NOT ", out) else out
+      },
+      str_ends = function(string, pattern, negate = FALSE) {
+        out <- dbplyr::build_sql(
+          "REGEXP_CONTAINS(",
+          string,
+          ", ",
+          anchored_pattern(pattern, "(?:", ")$"),
+          ")"
+        )
+        if (isTRUE(negate)) dbplyr::build_sql("NOT ", out) else out
+      },
       str_extract = dbplyr::sql_prefix("REGEXP_EXTRACT", 2),
-      str_replace = dbplyr::sql_prefix("REGEXP_REPLACE", 3),
+      str_replace = function(string, pattern, replacement) {
+        sql_regexp_replace_first(string, pattern, replacement)
+      },
       str_replace_all = dbplyr::sql_prefix("REGEXP_REPLACE", 3),
+      str_remove = function(string, pattern) {
+        sql_regexp_replace_first(string, pattern, "")
+      },
+      str_remove_all = function(string, pattern) {
+        dbplyr::build_sql("REGEXP_REPLACE(", string, ", ", pattern, ", '')")
+      },
       str_trim = function(x, side = "both") {
         switch(
           side,
@@ -477,23 +571,43 @@ sql_translation.RedivisConnection <- function(con) {
           stop("Unknown side: ", side)
         )
       },
+      str_squish = function(x) {
+        dbplyr::build_sql("TRIM(REGEXP_REPLACE(", x, ", '\\\\s+', ' '))")
+      },
+      str_pad = function(string, width, side = "left", pad = " ") {
+        fn <- switch(
+          side,
+          "left" = "LPAD(",
+          "right" = "RPAD(",
+          abort_redivis_value_error(
+            "str_pad() on Redivis only supports side = \"left\" or \"right\""
+          )
+        )
+        dbplyr::build_sql(dbplyr::sql(fn), string, ", ", int_arg(width), ", ", pad, ")")
+      },
       str_to_lower = function(x) dbplyr::build_sql("LOWER(", x, ")"),
       str_to_upper = function(x) dbplyr::build_sql("UPPER(", x, ")"),
       str_to_title = function(x) dbplyr::build_sql("INITCAP(", x, ")"),
       str_c = dbplyr::sql_prefix("CONCAT"),
       str_length = function(x) dbplyr::build_sql("LENGTH(", x, ")"),
       str_sub = function(string, start = 1L, end = -1L) {
-        dbplyr::build_sql(
-          "SUBSTR(",
-          string,
-          ", ",
-          start,
-          ", ",
-          end,
-          " - ",
-          start,
-          " + 1)"
-        )
+        start <- int_arg(start)
+        end <- int_arg(end)
+        if (identical(end, -1L)) {
+          dbplyr::build_sql("SUBSTR(", string, ", ", start, ")")
+        } else {
+          dbplyr::build_sql(
+            "SUBSTR(",
+            string,
+            ", ",
+            start,
+            ", ",
+            end,
+            " - ",
+            start,
+            " + 1)"
+          )
+        }
       },
 
       # Regex (base R)
@@ -512,17 +626,7 @@ sql_translation.RedivisConnection <- function(con) {
         )
       },
       sub = function(pattern, replacement, x) {
-        # GoogleSQL REGEXP_REPLACE replaces all by default;
-        # no single-replacement variant, so same translation
-        dbplyr::build_sql(
-          "REGEXP_REPLACE(",
-          x,
-          ", ",
-          pattern,
-          ", ",
-          replacement,
-          ")"
-        )
+        sql_regexp_replace_first(x, pattern, replacement)
       },
 
       # Conditional
@@ -533,11 +637,99 @@ sql_translation.RedivisConnection <- function(con) {
       pmax = dbplyr::sql_prefix("GREATEST"),
       pmin = dbplyr::sql_prefix("LEAST"),
 
-      # Date/time
-      Sys.date = dbplyr::sql_prefix("CURRENT_DATE"),
-      Sys.time = dbplyr::sql_prefix("CURRENT_TIMESTAMP"),
-      as.POSIXct = function(x) {
-        dbplyr::build_sql("CAST(", x, " AS TIMESTAMP)")
+      # Current date/time
+      Sys.Date = function() dbplyr::sql("CURRENT_DATE()"),
+      Sys.time = function() dbplyr::sql("CURRENT_DATETIME()"),
+      today = function(...) dbplyr::sql("CURRENT_DATE()"),
+      now = function(...) dbplyr::sql("CURRENT_DATETIME()"),
+
+      # Date/time components (lubridate)
+      year = function(x) sql_extract("YEAR", x),
+      isoyear = function(x) sql_extract("ISOYEAR", x),
+      quarter = function(x) sql_extract("QUARTER", x),
+      month = function(x, label = FALSE, ...) {
+        if (!isFALSE(label)) {
+          abort_redivis_value_error(
+            "month(label = TRUE) is not supported on Redivis"
+          )
+        }
+        sql_extract("MONTH", x)
+      },
+      # lubridate::week() counts complete 7 day periods since January 1st
+      week = function(x) {
+        dbplyr::build_sql("DIV(", sql_extract("DAYOFYEAR", x), " - 1, 7) + 1")
+      },
+      isoweek = function(x) sql_extract("ISOWEEK", x),
+      day = function(x) sql_extract("DAY", x),
+      mday = function(x) sql_extract("DAY", x),
+      yday = function(x) sql_extract("DAYOFYEAR", x),
+      wday = function(x, label = FALSE, abbr = TRUE, week_start = 7) {
+        if (!isFALSE(label) || week_start != 7) {
+          abort_redivis_value_error(
+            "wday() on Redivis only supports label = FALSE and week_start = 7"
+          )
+        }
+        sql_extract("DAYOFWEEK", x)
+      },
+      hour = function(x) sql_extract("HOUR", x),
+      minute = function(x) sql_extract("MINUTE", x),
+      second = function(x) sql_extract("SECOND", x),
+      floor_date = function(x, unit = "seconds", ...) {
+        dbplyr::build_sql("DATE_TRUNC(", x, ", ", sql_date_part(unit), ")")
+      },
+
+      # Date/time components and arithmetic (clock)
+      get_year = function(x) sql_extract("YEAR", x),
+      get_month = function(x) sql_extract("MONTH", x),
+      get_day = function(x) sql_extract("DAY", x),
+      get_hour = function(x) sql_extract("HOUR", x),
+      get_minute = function(x) sql_extract("MINUTE", x),
+      get_second = function(x) sql_extract("SECOND", x),
+      add_days = function(x, n, ...) sql_date_add(x, n, "DAY"),
+      add_weeks = function(x, n, ...) sql_date_add(x, n, "WEEK"),
+      add_months = function(x, n, ...) sql_date_add(x, n, "MONTH"),
+      add_quarters = function(x, n, ...) sql_date_add(x, n, "QUARTER"),
+      add_years = function(x, n, ...) sql_date_add(x, n, "YEAR"),
+      date_build = function(year, month = 1L, day = 1L, ...) {
+        dbplyr::build_sql(
+          "DATE(",
+          int_arg(year),
+          ", ",
+          int_arg(month),
+          ", ",
+          int_arg(day),
+          ")"
+        )
+      },
+      # Counts complete units, like clock (DATE_DIFF counts unit boundaries)
+      date_count_between = function(start, end, precision, ..., n = 1L) {
+        if (!(is.numeric(n) && length(n) == 1 && isTRUE(n == 1))) {
+          abort_redivis_value_error(
+            "date_count_between() on Redivis only supports n = 1"
+          )
+        }
+        switch(
+          precision,
+          "day" = dbplyr::build_sql("DATE_DIFF(", end, ", ", start, ", DAY)"),
+          "week" = dbplyr::build_sql(
+            "DIV(DATE_DIFF(",
+            end,
+            ", ",
+            start,
+            ", DAY), 7)"
+          ),
+          abort_redivis_value_error(
+            "date_count_between() on Redivis only supports precision = \"day\" or \"week\""
+          )
+        )
+      },
+      difftime = function(time1, time2, tz, units = "days") {
+        if (!missing(tz) || !identical(units, "days")) {
+          abort_redivis_value_error(
+            "difftime() on Redivis only supports units = \"days\" and no tz"
+          )
+        }
+        dbplyr::build_sql("DATE_DIFF(", time1, ", ", time2, ", DAY)")
       },
 
       # Math
@@ -554,8 +746,8 @@ sql_translation.RedivisConnection <- function(con) {
       log2 = function(x) dbplyr::build_sql("LOG(", x, ") / LOG(2)"),
 
       # Rounding
-      round = function(x, digits = 0) {
-        dbplyr::build_sql("ROUND(", x, ", ", digits, ")")
+      round = function(x, digits = 0L) {
+        dbplyr::build_sql("ROUND(", x, ", ", int_arg(digits), ")")
       },
       floor = function(x) dbplyr::build_sql("FLOOR(", x, ")"),
       ceiling = function(x) dbplyr::build_sql("CEIL(", x, ")")
@@ -578,6 +770,24 @@ sql_translation.RedivisConnection <- function(con) {
       },
       median = function(x, na.rm = TRUE) {
         dbplyr::build_sql("APPROX_QUANTILES(", x, ", 2)[SAFE_ORDINAL(2)]")
+      },
+      # Approximate, to the nearest 0.1 percentile
+      quantile = function(x, probs, na.rm = TRUE) {
+        if (!is.numeric(probs) || length(probs) != 1 || probs < 0 || probs > 1) {
+          abort_redivis_value_error(
+            "quantile() on Redivis requires a single `probs` value between 0 and 1"
+          )
+        }
+        dbplyr::build_sql(
+          "APPROX_QUANTILES(",
+          x,
+          ", 1000)[OFFSET(",
+          as.integer(round(probs * 1000)),
+          ")]"
+        )
+      },
+      str_flatten = function(string, collapse = "", ...) {
+        dbplyr::build_sql("STRING_AGG(", string, ", ", collapse, ")")
       }
     ),
     window = dbplyr::sql_translator(
@@ -594,7 +804,9 @@ sql_translation.RedivisConnection <- function(con) {
       cov = dbplyr::win_absent("COVAR_SAMP"),
 
       n_distinct = dbplyr::win_absent("n_distinct"),
-      median = dbplyr::win_absent("median")
+      median = dbplyr::win_absent("median"),
+      quantile = dbplyr::win_absent("quantile"),
+      str_flatten = dbplyr::win_absent("str_flatten")
     )
   )
 }
@@ -653,5 +865,90 @@ redivis_type_to_r <- function(type) {
     "geography" = "character",
     "string" = "character",
     "character"
+  )
+}
+
+# The name a table is referenced by in SQL: its scoped
+# reference without the trailing reference id, e.g. "concept_class:3jet" ->
+# "concept_class"
+sql_reference_name <- function(properties) {
+  sub(":.*$", "", properties$scopedReference %||% properties$name)
+}
+
+table_sql_names <- function(tables) {
+  vapply(tables, function(t) sql_reference_name(t$properties), character(1))
+}
+
+# dbplyr renders whole-number R doubles as e.g. `2.0`, but many GoogleSQL
+# functions only accept INT64 arguments
+int_arg <- function(x) {
+  if (is.double(x) && all(x == trunc(x), na.rm = TRUE)) as.integer(x) else x
+}
+
+is_string_literal <- function(x) {
+  is.character(x) && !inherits(x, c("sql", "ident"))
+}
+
+sql_extract <- function(part, x) {
+  dbplyr::build_sql("EXTRACT(", dbplyr::sql(part), " FROM ", x, ")")
+}
+
+sql_as_date <- function(x, format) {
+  if (is.null(format)) {
+    dbplyr::build_sql("CAST(", x, " AS DATE)")
+  } else {
+    dbplyr::build_sql("PARSE_DATE(", format, ", ", x, ")")
+  }
+}
+
+sql_date_part <- function(unit) {
+  part <- sub("s$", "", tolower(unit))
+  parts <- c("second", "minute", "hour", "day", "week", "month", "quarter", "year")
+  if (!(part %in% parts)) {
+    abort_redivis_value_error(str_interp("Unsupported date unit: ${unit}"))
+  }
+  dbplyr::sql(toupper(part))
+}
+
+sql_date_add <- function(x, n, part) {
+  dbplyr::build_sql(
+    "DATE_ADD(",
+    x,
+    ", INTERVAL ",
+    int_arg(n),
+    " ",
+    dbplyr::sql(part),
+    ")"
+  )
+}
+
+anchored_pattern <- function(pattern, prefix, suffix) {
+  if (is_string_literal(pattern)) {
+    paste0(prefix, pattern, suffix)
+  } else {
+    dbplyr::build_sql("CONCAT(", prefix, ", ", pattern, ", ", suffix, ")")
+  }
+}
+
+# GoogleSQL's REGEXP_REPLACE always replaces every match, so emulate replacing
+# only the first match by capturing (and restoring) everything before it
+sql_regexp_replace_first <- function(string, pattern, replacement) {
+  if (
+    !is_string_literal(pattern) ||
+      !is_string_literal(replacement) ||
+      grepl("\\", replacement, fixed = TRUE)
+  ) {
+    abort_redivis_value_error(
+      "Replacing only the first match on Redivis requires a literal pattern and replacement (without backreferences). Use str_replace_all() / gsub() to replace every match."
+    )
+  }
+  dbplyr::build_sql(
+    "REGEXP_REPLACE(",
+    string,
+    ", ",
+    paste0("(?s)^(.*?)(?:", pattern, ")"),
+    ", ",
+    paste0("\\1", replacement),
+    ")"
   )
 }

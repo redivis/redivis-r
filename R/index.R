@@ -8,7 +8,9 @@
 #'
 #' @return class<Query>
 #' @examples
+#' \dontrun{
 #' output_table <- redivis::query(query = 'SELECT 1 + 1 AS two')$to_tibble()
+#' }
 #' @export
 query <- function(query = "", default_workflow = NULL, default_dataset = NULL) {
   show_namespace_warning("query")
@@ -32,10 +34,12 @@ query <- function(query = "", default_workflow = NULL, default_dataset = NULL) {
 #'
 #' @return class<user>
 #' @examples
+#' \dontrun{
 #' redivis::user('my_username')$workflow('my_workflow')$table('my_table')$to_tibble(max_results=100)
 #'
-#' We can also construct a query scoped to a particular workflow, removing the need to fully qualify table names
+#' # We can also construct a query scoped to a particular workflow, removing the need to fully qualify table names
 #' redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
+#' }
 #' @export
 user <- function(name) {
   show_namespace_warning("user")
@@ -51,10 +55,12 @@ user <- function(name) {
 #'
 #' @return class<user>
 #' @examples
+#' \dontrun{
 #' redivis::organization('demo_organization')$dataset('some_dataset')$table('a_table')$to_tibble(max_results=100)
 #'
-#' We can also construct a query scoped to a particular dataset, removing the need to fully qualify table names
-#' redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
+#' # We can also construct a query scoped to a particular dataset, removing the need to fully qualify table names
+#' redivis::organization('demo_organization')$dataset('some_dataset')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
+#' }
 #' @export
 organization <- function(name) {
   show_namespace_warning("organization")
@@ -68,7 +74,9 @@ organization <- function(name) {
 #'
 #' @return class<Notebook>
 #' @examples
+#' \dontrun{
 #' redivis::current_notebook()$create_output_table(df)
+#' }
 #' @export
 current_notebook <- function() {
   show_namespace_warning("current_notebook")
@@ -143,6 +151,7 @@ current_notebook <- function() {
 #' user$list_datasets(max_results)
 #' user$list_workflows(max_results)
 #' dataset$list_tables(max_results)
+#' workflow$list_tables(max_results, include_datasources=FALSE)
 #' workflow$list_transforms(max_results)
 #' table$list_variables(max_results)
 #' #...etc, see documentation
@@ -154,16 +163,18 @@ current_notebook <- function() {
 #'
 #' @return list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, parameter, query, table, transform, user, workflow)
 #' @examples
+#' \dontrun{
 #'  df <- redivis$table("demo.ghcn_daily_weather_data.stations")$to_tibble()
 #'  df <- redivis$query("SELECT 1+1 as two")$to_tibble()
 #'
-#'  dataset <- redivis$dataset("demo.ghcn_daily_weather_data")$exists() -> TRUE
+#'  redivis$dataset("demo.ghcn_daily_weather_data")$exists() # TRUE
 #'  datasets <- redivis$organization("demo")$list_datasets(max_results=10)
 #'  workflows <- redivis$current_user()$list_workflows(10)
 #'
 #'  # Only callable from within a Redivis notebook
 #'  notebook <- redivis$current_notebook();
 #'  workflow <- redivis$current_workflow();
+#' }
 #' @export
 redivis <- local({
   e <- new.env(parent = emptyenv())

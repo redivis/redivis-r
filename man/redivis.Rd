@@ -64,6 +64,7 @@ organization$list_datasets(max_results)
 user$list_datasets(max_results)
 user$list_workflows(max_results)
 dataset$list_tables(max_results)
+workflow$list_tables(max_results, include_datasources=FALSE)
 workflow$list_transforms(max_results)
 table$list_variables(max_results)
 #...etc, see documentation
@@ -81,15 +82,17 @@ Redivis wrapper, all primary constructor accessible via redivis$<constructor>()
 Full documentation and examples available at: https://apidocs.redivis.com/client-libraries/redivis-r
 }
 \examples{
+\dontrun{
  df <- redivis$table("demo.ghcn_daily_weather_data.stations")$to_tibble()
  df <- redivis$query("SELECT 1+1 as two")$to_tibble()
 
- dataset <- redivis$dataset("demo.ghcn_daily_weather_data")$exists() -> TRUE
+ redivis$dataset("demo.ghcn_daily_weather_data")$exists() # TRUE
  datasets <- redivis$organization("demo")$list_datasets(max_results=10)
  workflows <- redivis$current_user()$list_workflows(10)
 
  # Only callable from within a Redivis notebook
  notebook <- redivis$current_notebook();
  workflow <- redivis$current_workflow();
+}
 }
 \keyword{datasets}

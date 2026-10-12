@@ -1,7 +1,7 @@
 Package: redivis
 Type: Package
 Title: R interface for Redivis
-Version: 0.12.14
+Version: 0.13.0
 Author: Redivis Inc.
 Maintainer: Redivis <support@redivis.com>
 Description: Supports working with Redivis API through R. 
@@ -36,6 +36,7 @@ Language: en-US
 RoxygenNote: 7.3.3
 Suggests: 
     callr,
+    haven,
     httpuv,
     sf (>= 1.0),
     testthat (>= 3.1.7),

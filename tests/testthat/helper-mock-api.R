@@ -49,9 +49,17 @@ mock_api_server <- function(port) {
   reset_state()
 
   variables <- list(
-    list(name = "id", type = "integer"),
+    list(name = "id", type = "integer", label = "Row id"),
     list(name = "name", type = "string"),
-    list(name = "val", type = "float")
+    list(name = "val", type = "float", label = "Half the id")
+  )
+  # Only returned when the variables list is requested with includeValueLabels
+  value_labels <- list(
+    id = list(
+      list(value = "0", label = "first"),
+      list(value = "1", label = "second")
+    ),
+    name = list(list(value = "row-0", label = "The first row"))
   )
   all_names <- c("id", "name", "val")
 
@@ -324,7 +332,14 @@ mock_api_server <- function(port) {
     }
 
     if (endsWith(path, "/variables")) {
-      return(json(list(results = variables, nextPageToken = NULL)))
+      results <- variables
+      if (identical(query$includeValueLabels, "true")) {
+        results <- lapply(results, function(v) {
+          v$valueLabels <- value_labels[[v$name]]
+          v
+        })
+      }
+      return(json(list(results = results, nextPageToken = NULL)))
     }
 
     if (endsWith(path, "/rows")) {

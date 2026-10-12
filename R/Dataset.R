@@ -272,7 +272,15 @@ Dataset <- R6::R6Class(
     update = function(
       name = NULL,
       public_access_level = NULL,
-      description = NULL
+      description = NULL,
+      methodology_markdown = NULL,
+      usage_markdown = NULL,
+      labels = NULL,
+      labels_to_add = NULL,
+      labels_to_remove = NULL,
+      tags = NULL,
+      tags_to_add = NULL,
+      tags_to_remove = NULL
     ) {
       payload <- list()
       if (!is.null(name)) {
@@ -287,6 +295,34 @@ Dataset <- R6::R6Class(
       if (!is.null(description)) {
         payload <- append(payload, list("description" = description))
       }
+      if (!is.null(methodology_markdown)) {
+        payload <- append(
+          payload,
+          list("methodologyMarkdown" = methodology_markdown)
+        )
+      }
+      if (!is.null(usage_markdown)) {
+        payload <- append(payload, list("usageMarkdown" = usage_markdown))
+      }
+      if (!is.null(labels)) {
+        payload <- append(payload, list("labels" = labels))
+      }
+      if (!is.null(labels_to_add)) {
+        payload <- append(payload, list("labelsToAdd" = labels_to_add))
+      }
+      if (!is.null(labels_to_remove)) {
+        payload <- append(payload, list("labelsToRemove" = labels_to_remove))
+      }
+      if (!is.null(tags)) {
+        payload <- append(payload, list("tags" = tags))
+      }
+      if (!is.null(tags_to_add)) {
+        payload <- append(payload, list("tagsToAdd" = tags_to_add))
+      }
+      if (!is.null(tags_to_remove)) {
+        payload <- append(payload, list("tagsToRemove" = tags_to_remove))
+      }
+
       res <- make_request(
         method = "PATCH",
         path = self$uri,
@@ -294,6 +330,22 @@ Dataset <- R6::R6Class(
       )
       update_dataset_properties(self, res)
       self
+    },
+
+    add_labels = function(labels) {
+      warning(
+        "This method is deprecated, and will be removed in a future version. Use dataset$update(labels_to_add=c(...)) instead",
+        call. = FALSE
+      )
+      self$update(labels_to_add = labels)
+    },
+
+    remove_labels = function(labels) {
+      warning(
+        "This method is deprecated, and will be removed in a future version. Use dataset$update(labels_to_remove=c(...)) instead",
+        call. = FALSE
+      )
+      self$update(labels_to_remove = labels)
     },
 
     update_variables = function(variables) {

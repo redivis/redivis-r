@@ -87,6 +87,10 @@ Variable <- R6::R6Class(
     },
 
     update = function(label = NULL, description = NULL, value_labels = NULL) {
+      if (!is.null(self$table) && is_workflow_scoped_uri(self$uri)) {
+        resolve_table_for_write(self$table)
+        self$uri <- str_interp("${self$table$uri}/variables/${self$name}")
+      }
       payload <- list()
       if (!is.null(label)) {
         payload <- append(payload, list("label" = label))
