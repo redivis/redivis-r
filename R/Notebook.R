@@ -88,6 +88,7 @@ Notebook <- R6::R6Class(
 
       if (!is.null(source_table)) {
         if (is(source_table, "Table")) {
+          resolve_table_for_write(source_table)
           payload$sourceTable <- source_table$qualified_reference
         } else {
           payload$sourceTable <- source_table

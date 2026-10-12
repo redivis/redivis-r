@@ -6,9 +6,11 @@ workflow_uri <- "/workflows/owner.workflow:abcd/tables/person"
 local_requests <- function(env = parent.frame()) {
   requests <- new.env()
   requests$log <- character(0)
+  requests$payloads <- list()
   local_mocked_bindings(
-    make_request = function(method = "GET", path = "", ...) {
+    make_request = function(method = "GET", path = "", payload = NULL, ...) {
       requests$log <- c(requests$log, paste(toupper(method), path))
+      requests$payloads[[length(requests$payloads) + 1]] <- list(payload = payload)
       if (path %in% c(workflow_uri, canonical_uri)) {
         list(
           kind = "table",
@@ -19,7 +21,7 @@ local_requests <- function(env = parent.frame()) {
           container = list(kind = "dataset")
         )
       } else {
-        list()
+        list(uri = path)
       }
     },
     .env = env
@@ -83,4 +85,18 @@ test_that("writes fetch the table's canonical URI first", {
     paste("PATCH", canonical_uri),
     paste0("PATCH ", canonical_uri, "/variables")
   ))
+})
+
+test_that("transforms and notebooks fetch their source table's canonical reference first", {
+  workflow <- redivis$workflow("owner.workflow:abcd")
+  for (node in list(workflow$transform("t"), workflow$notebook("n"))) {
+    requests <- local_requests()
+    node$update(source_table = workflow$table("person"))
+    expect_equal(requests$log[[1]], paste("GET", workflow_uri))
+    expect_equal(requests$log[[2]], paste("PATCH", node$uri))
+    expect_equal(
+      requests$payloads[[2]]$payload$sourceTable,
+      "demo.omop:abcd:v1_0.person:efgh"
+    )
+  }
 })
