@@ -136,6 +136,12 @@ test_that("labels are converted to the column's type", {
   )
   expect_equal(attr(x, "labels"), c(one = 1))
 
+  # If none of them do, the column only gets the variable label
+  x <- label_column(c(1, 2), "Var", value_labels("n/a" = "missing"))
+  expect_false(inherits(x, "haven_labelled"))
+  expect_null(attr(x, "labels"))
+  expect_equal(attr(x, "label"), "Var")
+
   # Types haven can't label only get the variable label
   dates <- as.Date(c("2020-01-01", "2020-01-02"))
   x <- label_column(dates, "Date", value_labels("2020-01-01" = "New year"))

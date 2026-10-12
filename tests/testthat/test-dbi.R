@@ -26,7 +26,10 @@ test_that("whole-number arguments are rendered as INT64", {
   expect_translation(substr(x, 1, 3), "SUBSTR(`x`, 1, 3 - 1 + 1)")
   expect_translation(str_sub(x, 2), "SUBSTR(`x`, 2)")
   expect_translation(str_pad(x, 3, pad = "0"), "LPAD(`x`, 3, '0')")
-  expect_translation(x %/% 7, "DIV(`x`, 7)")
+})
+
+test_that("integer division rounds toward negative infinity, like R", {
+  expect_translation(x %/% 7, "FLOOR(`x` / 7.0)")
 })
 
 test_that("string functions translate", {
@@ -65,6 +68,11 @@ test_that("date functions translate", {
   expect_translation(as.POSIXct(x), "CAST(`x` AS DATETIME)")
   expect_error(
     dbplyr::translate_sql(difftime(a, b, units = "weeks"), con = offline_con()),
+    class = "redivis_value_error"
+  )
+  expect_translation(date_count_between(a, b, "day", n = 1L), "DATE_DIFF(`b`, `a`, DAY)")
+  expect_error(
+    dbplyr::translate_sql(date_count_between(a, b, "day", n = 1.5), con = offline_con()),
     class = "redivis_value_error"
   )
 })
@@ -131,6 +139,7 @@ test_that("translations run on Redivis", {
       starts = str_starts(gender_source_value, "1|2"),
       rounded = round(year_of_birth / 7, 2),
       substring = str_sub("abcdef", 2),
+      floor_div = -7L %/% 3L,
       after_2000 = birth_datetime > !!as.POSIXct("2000-01-01", tz = "UTC"),
       today = today()
     ) |>
@@ -139,6 +148,7 @@ test_that("translations run on Redivis", {
   expect_equal(nrow(result), 1)
   expect_equal(result$replaced, "bXana")
   expect_equal(result$substring, "bcdef")
+  expect_equal(result$floor_div, -7L %/% 3L)
   expect_true(result$has_digit)
   expect_equal(result$built, as.Date("2020-01-15"))
   expect_equal(result$plus_30, result$birth_date + 30)

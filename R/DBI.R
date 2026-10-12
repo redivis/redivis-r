@@ -422,8 +422,10 @@ sql_translation.RedivisConnection <- function(con) {
       # Operators
       `^` = dbplyr::sql_prefix("POW"),
       `%%` = dbplyr::sql_prefix("MOD"),
+      # Like R, rounds toward negative infinity (DIV truncates toward zero, and
+      # only accepts integers)
       `%/%` = function(x, y) {
-        dbplyr::build_sql("DIV(", int_arg(x), ", ", int_arg(y), ")")
+        dbplyr::build_sql("FLOOR(", x, " / ", y, ")")
       },
       `%||%` = dbplyr::sql_prefix("IFNULL"),
 
@@ -698,7 +700,7 @@ sql_translation.RedivisConnection <- function(con) {
       },
       # Counts complete units, like clock (DATE_DIFF counts unit boundaries)
       date_count_between = function(start, end, precision, ..., n = 1L) {
-        if (!identical(as.integer(n), 1L)) {
+        if (!(is.numeric(n) && length(n) == 1 && isTRUE(n == 1))) {
           abort_redivis_value_error(
             "date_count_between() on Redivis only supports n = 1"
           )

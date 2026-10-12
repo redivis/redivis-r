@@ -88,19 +88,21 @@ get_label_attributes <- function(x, label, value_labels) {
   can_have_value_labels <- is.character(x) ||
     (is.numeric(x) && !inherits(x, "integer64"))
 
+  # Labels that don't parse as numbers can't apply to numeric columns
+  if (length(label_values) && can_have_value_labels && is.numeric(x)) {
+    label_values <- suppressWarnings(as.numeric(label_values))
+    keep <- !is.na(label_values)
+    label_values <- label_values[keep]
+    label_names <- label_names[keep]
+  }
+
   if (length(label_values) && can_have_value_labels) {
-    if (is.numeric(x)) {
-      label_values <- suppressWarnings(as.numeric(label_values))
-      keep <- !is.na(label_values)
-      label_values <- label_values[keep]
-      label_names <- label_names[keep]
-      if (is.integer(x)) {
-        if (all(label_values == round(label_values))) {
-          label_values <- as.integer(label_values)
-        } else {
-          x <- as.double(x)
-          widened <- TRUE
-        }
+    if (is.integer(x)) {
+      if (all(label_values == round(label_values))) {
+        label_values <- as.integer(label_values)
+      } else {
+        x <- as.double(x)
+        widened <- TRUE
       }
     }
     # The same attributes haven::labelled() sets
