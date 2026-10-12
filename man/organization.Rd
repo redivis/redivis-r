@@ -16,8 +16,10 @@ class<user>
 DEPRECATED: please use redivis$organization
 }
 \examples{
+\dontrun{
 redivis::organization('demo_organization')$dataset('some_dataset')$table('a_table')$to_tibble(max_results=100)
 
-We can also construct a query scoped to a particular dataset, removing the need to fully qualify table names
-redivis::user('my_username')$workflow('my_workflow')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
+# We can also construct a query scoped to a particular dataset, removing the need to fully qualify table names
+redivis::organization('demo_organization')$dataset('some_dataset')$query("SELECT * FROM table_1 INNER JOIN table_2 ON id")$to_tibble()
+}
 }

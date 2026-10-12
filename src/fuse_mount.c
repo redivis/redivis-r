@@ -98,9 +98,25 @@ struct fuse_file_info_v3 {
     uint32_t      poll_events;
 };
 
+/* libfuse 3.15 and 3.16 inserted parallel_direct_writes after keep_cache, moving every later
+ * flag along one bit, until 3.17 moved it after them again. Only the flags differ. */
+struct fuse_file_info_v3_15 {
+    int           flags;
+    unsigned int  writepage : 1;
+    unsigned int  direct_io : 1;
+    unsigned int  keep_cache : 1;
+    unsigned int  parallel_direct_writes : 1;
+    unsigned int  flush : 1;
+    unsigned int  nonseekable : 1;
+    unsigned int  flock_release : 1;
+    unsigned int  cache_readdir : 1;
+};
+
 /* Forward-declare fuse_api_version so inline accessors can reference it.
  * The actual initialization (= 0) happens in the dlopen section below. */
 static int fuse_api_version = 0;
+/* The libfuse minor version, only known (from fuse_version()) for libfuse 3 */
+static int fuse_minor_version = 0;
 
 /* Runtime accessors for fuse_file_info fields. */
 
@@ -123,6 +139,15 @@ static inline void fi_set_keep_cache(void *fi, unsigned int val) {
         ((struct fuse_file_info_v3 *)fi)->keep_cache = val;
     else
         ((struct fuse_file_info_v2 *)fi)->keep_cache = val;
+}
+
+/* Only libfuse 3.5+ has cache_readdir, so this does nothing with any other */
+static inline void fi_set_cache_readdir(void *fi, unsigned int val) {
+    if (fuse_api_version != 3 || fuse_minor_version < 5) return;
+    if (fuse_minor_version == 15 || fuse_minor_version == 16)
+        ((struct fuse_file_info_v3_15 *)fi)->cache_readdir = val;
+    else
+        ((struct fuse_file_info_v3 *)fi)->cache_readdir = val;
 }
 
 static inline int fi_get_flags(void *fi) {
@@ -354,6 +379,9 @@ resolve:
     }
 
     if (fuse_api_version == 3) {
+        /* major * 100 + minor in libfuse 3 */
+        int (*dl_fuse_version)(void) = dlsym(fuse_lib_handle, "fuse_version");
+        fuse_minor_version = dl_fuse_version ? dl_fuse_version() % 100 : 0;
         dl_fuse3_new = dlsym(fuse_lib_handle, "fuse_new_31");
         if (!dl_fuse3_new)
             dl_fuse3_new = dlsym(fuse_lib_handle, "fuse_new");
@@ -1412,6 +1440,14 @@ static int fuse3_getattr_cb(const char *path, struct stat *stbuf,
     (void)fi; return getattr_impl(path, stbuf);
 }
 
+/* Each entry's type is listed, so that e.g. `find -type f` needn't also stat every file. libfuse
+   only passes the type (from st_mode) on to the kernel. */
+static const struct stat *entry_type(int is_dir) {
+    static struct stat dir_stat = { .st_mode = S_IFDIR };
+    static struct stat file_stat = { .st_mode = S_IFREG };
+    return is_dir ? &dir_stat : &file_stat;
+}
+
 static int fuse2_readdir_cb(const char *path, void *buf,
                             fuse_fill_dir_v2_t filler, off_t offset,
                             fuse_file_info_t *fi) {
@@ -1421,10 +1457,10 @@ static int fuse2_readdir_cb(const char *path, void *buf,
     while (*rel == '/') rel++;
     dir_entry_t *d = ht_lookup(&ctx->dir_ht, rel);
     if (!d) return -ENOENT;
-    filler(buf, ".", NULL, 0);
-    filler(buf, "..", NULL, 0);
+    filler(buf, ".", entry_type(1), 0);
+    filler(buf, "..", entry_type(1), 0);
     for (size_t i = 0; i < d->n_children; i++)
-        filler(buf, d->child_names[i], NULL, 0);
+        filler(buf, d->child_names[i], entry_type(d->child_is_dir[i]), 0);
     return 0;
 }
 
@@ -1437,10 +1473,25 @@ static int fuse3_readdir_cb(const char *path, void *buf,
     while (*rel == '/') rel++;
     dir_entry_t *d = ht_lookup(&ctx->dir_ht, rel);
     if (!d) return -ENOENT;
-    filler(buf, ".", NULL, 0, 0);
-    filler(buf, "..", NULL, 0, 0);
+    filler(buf, ".", entry_type(1), 0, 0);
+    filler(buf, "..", entry_type(1), 0, 0);
     for (size_t i = 0; i < d->n_children; i++)
-        filler(buf, d->child_names[i], NULL, 0, 0);
+        filler(buf, d->child_names[i], entry_type(d->child_is_dir[i]), 0, 0);
+    return 0;
+}
+
+/* Has the kernel cache the directory's listing, as it never changes (see fuse3_init_cb). Only
+   libfuse 3.5+ can ask for this, though some later releases (3.14, at least) don't pass it on to the
+   kernel, and only Linux 4.20+ acts on it; keep_cache stops the kernel from discarding the cached
+   listing whenever the directory is opened again. Keep in step with redivis-python's
+   mount_directory.py. */
+static int fuse3_opendir_cb(const char *path, fuse_file_info_t *fi) {
+    redivis_mount_ctx_t *ctx = dl_fuse_get_context()->private_data;
+    const char *rel = path;
+    while (*rel == '/') rel++;
+    if (!ht_lookup(&ctx->dir_ht, rel)) return find_entry(ctx, path) ? -ENOTDIR : -ENOENT;
+    fi_set_cache_readdir(fi, 1);
+    fi_set_keep_cache(fi, 1);
     return 0;
 }
 
@@ -1489,7 +1540,7 @@ static const void *build_fuse_ops(int version, size_t *ops_size) {
     if (version == 3) {
         memset(&ops_v3, 0, sizeof(ops_v3));
         ops_v3.init = fuse3_init_cb; ops_v3.getattr = fuse3_getattr_cb;
-        ops_v3.readdir = fuse3_readdir_cb;
+        ops_v3.opendir = fuse3_opendir_cb; ops_v3.readdir = fuse3_readdir_cb;
         ops_v3.open = fuse_open_cb; ops_v3.read = fuse_read_cb;
         ops_v3.release = fuse_release_cb;
         *ops_size = sizeof(ops_v3); return &ops_v3;

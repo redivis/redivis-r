@@ -233,9 +233,15 @@ TabularReader <- R6::R6Class(
       variables = NULL,
       progress = TRUE,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
+      max_parallelization = parallelly::availableCores(),
+      labelled = FALSE
     ) {
-      params <- get_table_request_params(self, max_results, variables)
+      params <- get_table_request_params(
+        self,
+        max_results,
+        variables,
+        include_value_labels = labelled
+      )
 
       df <- make_rows_request(
         uri = params$uri,
@@ -251,6 +257,9 @@ TabularReader <- R6::R6Class(
         max_parallelization = max_parallelization
       )
 
+      if (labelled) {
+        df <- apply_variable_labels(df, params$variables)
+      }
       df
     },
 
@@ -260,7 +269,8 @@ TabularReader <- R6::R6Class(
       geography_variable = '',
       progress = TRUE,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
+      max_parallelization = parallelly::availableCores(),
+      labelled = FALSE
     ) {
       if (!requireNamespace("sf", quietly = TRUE)) {
         abort_redivis_error(
@@ -271,7 +281,8 @@ TabularReader <- R6::R6Class(
         self,
         max_results,
         variables,
-        geography_variable
+        geography_variable,
+        include_value_labels = labelled
       )
 
       if (is.null(params$geography_variable)) {
@@ -294,6 +305,9 @@ TabularReader <- R6::R6Class(
         max_parallelization = max_parallelization
       )
 
+      if (labelled) {
+        df <- apply_variable_labels(df, params$variables)
+      }
       sf::st_as_sf(df, wkt = params$geography_variable, crs = 4326)
     },
 
@@ -302,11 +316,17 @@ TabularReader <- R6::R6Class(
       variables = NULL,
       progress = TRUE,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
+      max_parallelization = parallelly::availableCores(),
+      labelled = FALSE
     ) {
-      params <- get_table_request_params(self, max_results, variables)
+      params <- get_table_request_params(
+        self,
+        max_results,
+        variables,
+        include_value_labels = labelled
+      )
 
-      make_rows_request(
+      df <- make_rows_request(
         uri = params$uri,
         instance = self,
         max_results = params$max_results,
@@ -319,6 +339,11 @@ TabularReader <- R6::R6Class(
         use_export_api = params$use_export_api,
         max_parallelization = max_parallelization
       )
+
+      if (labelled) {
+        df <- apply_variable_labels(df, params$variables)
+      }
+      df
     },
 
     to_data_table = function(
@@ -326,11 +351,17 @@ TabularReader <- R6::R6Class(
       variables = NULL,
       progress = TRUE,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
+      max_parallelization = parallelly::availableCores(),
+      labelled = FALSE
     ) {
-      params <- get_table_request_params(self, max_results, variables)
+      params <- get_table_request_params(
+        self,
+        max_results,
+        variables,
+        include_value_labels = labelled
+      )
 
-      make_rows_request(
+      df <- make_rows_request(
         uri = params$uri,
         instance = self,
         max_results = params$max_results,
@@ -343,6 +374,11 @@ TabularReader <- R6::R6Class(
         use_export_api = params$use_export_api,
         max_parallelization = max_parallelization
       )
+
+      if (labelled) {
+        df <- apply_variable_labels(df, params$variables)
+      }
+      df
     },
 
     to_read_streams = function(
@@ -483,7 +519,8 @@ get_table_request_params <- function(
   max_results = NULL,
   variables = NULL,
   geography_variable = NULL,
-  refresh = TRUE
+  refresh = TRUE,
+  include_value_labels = FALSE
 ) {
   if (inherits(instance, "ReadStream")) {
     res <- get_table_request_params(
@@ -500,7 +537,8 @@ get_table_request_params <- function(
       # The parent was fetched when the read session was created, and
       # refetching it for every stream would multiply requests by the stream
       # count
-      refresh = FALSE
+      refresh = FALSE,
+      include_value_labels = include_value_labels
     )
     res$use_export_api <- FALSE
     return(res)
@@ -520,6 +558,11 @@ get_table_request_params <- function(
   # TODO: do we need all this variable fetching complexity still? Can we just handle everything on the BE?
   all_variables <- make_paginated_request(
     path = str_interp("${instance$uri}/variables"),
+    query = if (include_value_labels) {
+      list(includeValueLabels = "true")
+    } else {
+      list()
+    },
     page_size = 1000
   )
 

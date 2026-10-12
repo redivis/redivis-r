@@ -407,6 +407,9 @@ perform_parallel_download_worker <- function(
     curl::handle_setheaders(h, .list = headers)
     curl::handle_setopt(h, url = url)
     curl::handle_setopt(h, buffersize = 131072L) # 128 KB
+    # Abort a stalled transfer (under 1 byte/sec for 120s) so that fail_cb
+    # retries it, rather than multi_run() waiting on it forever
+    curl::handle_setopt(h, low_speed_limit = 1L, low_speed_time = 120L)
 
     # local state for this download
     file_con <- NULL

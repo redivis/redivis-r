@@ -114,11 +114,12 @@ Workflow <- R6::R6Class(
       redivis$query(query, default_workflow = self$qualified_reference)
     },
 
-    list_tables = function(max_results = NULL) {
+    list_tables = function(max_results = NULL, include_datasources = FALSE) {
       tables <- make_paginated_request(
         path = str_interp("${self$uri}/tables"),
+        query = if (include_datasources) list(includeDataSources = "true") else list(),
         page_size = 100,
-        max_results = max_results,
+        max_results = max_results
       )
       purrr::map(tables, function(table_properties) {
         Table$new(

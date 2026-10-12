@@ -21,10 +21,12 @@ Table <- R6::R6Class(
       parsed_name <- name
       parsed_dataset <- dataset
       parsed_workflow <- workflow
+      is_workflow_table <- FALSE
       if (!is.null(dataset)) {
         parent_reference <- str_interp("${dataset$qualified_reference}.")
       } else if (!is.null(workflow)) {
         parent_reference <- str_interp("${workflow$qualified_reference}.")
+        is_workflow_table <- TRUE
       } else {
         split <- strsplit(name, "\\.")[[1]]
         if (length(split) == 3) {
@@ -37,6 +39,7 @@ Table <- R6::R6Class(
           parsed_workflow <- Workflow$new(
             name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
           )
+          is_workflow_table <- TRUE
         } else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != "") {
           parsed_dataset <- Dataset$new(
             name = Sys.getenv("REDIVIS_DEFAULT_DATASET")
@@ -61,7 +64,15 @@ Table <- R6::R6Class(
       } else {
         str_interp("${parent_reference}${parsed_name}")
       }
-      self$uri <- str_interp("/tables/${URLencode(self$qualified_reference)}")
+      # Tables are resolved within their workflow, which also finds tables
+      # inherited through the workflow's datasources
+      self$uri <- if (is_workflow_table) {
+        str_interp(
+          "${parsed_workflow$uri}/tables/${URLencode(self$scoped_reference)}"
+        )
+      } else {
+        str_interp("/tables/${URLencode(self$qualified_reference)}")
+      }
       self$properties <- properties
     },
 
@@ -96,6 +107,7 @@ Table <- R6::R6Class(
       description = NULL,
       upload_merge_strategy = NULL
     ) {
+      resolve_table_for_write(self)
       payload <- list()
       if (!is.null(name)) {
         payload <- append(payload, list("name" = name))
@@ -119,6 +131,7 @@ Table <- R6::R6Class(
     },
 
     update_variables = function(variables) {
+      resolve_table_for_write(self)
       make_request(
         method = "PATCH",
         path = str_interp("${self$uri}/variables"),
@@ -404,6 +417,21 @@ perform_table_parallel_file_upload <- function(
   })
 }
 
+
+# A workflow-scoped table URI (/workflows/:workflow/tables/:table) can also
+# resolve tables inherited through the workflow's datasources. Writes must never
+# go through it, since that would make it easy to unintentionally modify a table
+# outside of the workflow, so tables are fetched to get their canonical URI first.
+is_workflow_scoped_uri <- function(uri) {
+  grepl("^/workflows/[^/]+/tables/", uri)
+}
+
+resolve_table_for_write <- function(table) {
+  if (is_workflow_scoped_uri(table$uri)) {
+    table$get()
+  }
+  invisible(table)
+}
 
 update_table_properties <- function(instance, properties) {
   instance$properties <- properties

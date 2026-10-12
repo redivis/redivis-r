@@ -33,6 +33,93 @@ get_arrow_schema <- function(variables) {
   arrow::schema(purrr::set_names(schema, names))
 }
 
+# Attaches each variable's label and value labels to its column, following
+# haven's conventions: columns with value labels become haven::labelled
+# vectors, and any other labelled column gets a "label" attribute
+apply_variable_labels <- function(df, variables) {
+  if (!requireNamespace("haven", quietly = TRUE)) {
+    abort_redivis_error(
+      "The haven package must be installed to read data with labelled = TRUE."
+    )
+  }
+  is_data_table <- data.table::is.data.table(df)
+  lower_names <- tolower(names(df))
+  for (variable in variables) {
+    index <- match(tolower(variable$name), lower_names)
+    if (is.na(index)) {
+      next
+    }
+    labelled <- get_label_attributes(
+      df[[index]],
+      variable$label,
+      variable$valueLabels
+    )
+    if (!length(labelled$attributes)) {
+      next
+    }
+    if (is_data_table) {
+      # data.table columns are already materialized, and setting attributes
+      # on them from R would copy the whole column, so set them in place
+      if (labelled$widened) {
+        data.table::set(df, j = index, value = list(labelled$x))
+      }
+      for (name in names(labelled$attributes)) {
+        data.table::setattr(df[[index]], name, labelled$attributes[[name]])
+      }
+    } else {
+      # Unlike attr<-, structure() keeps arrow's lazily converted (ALTREP)
+      # columns from being materialized
+      df[[index]] <- do.call(
+        structure,
+        c(list(labelled$x), labelled$attributes)
+      )
+    }
+  }
+  df
+}
+
+# Returns the attributes to set on x, and x itself, which is widened to a
+# double when an integer column has non-integral value labels
+get_label_attributes <- function(x, label, value_labels) {
+  label_names <- purrr::map_chr(value_labels, "label")
+  label_values <- purrr::map_chr(value_labels, "value")
+  widened <- FALSE
+
+  can_have_value_labels <- is.character(x) ||
+    (is.numeric(x) && !inherits(x, "integer64"))
+
+  if (length(label_values) && can_have_value_labels) {
+    if (is.numeric(x)) {
+      label_values <- suppressWarnings(as.numeric(label_values))
+      keep <- !is.na(label_values)
+      label_values <- label_values[keep]
+      label_names <- label_names[keep]
+      if (is.integer(x)) {
+        if (all(label_values == round(label_values))) {
+          label_values <- as.integer(label_values)
+        } else {
+          x <- as.double(x)
+          widened <- TRUE
+        }
+      }
+    }
+    # The same attributes haven::labelled() sets
+    attributes <- list(
+      labels = purrr::set_names(label_values, label_names),
+      label = label,
+      class = c("haven_labelled", "vctrs_vctr", typeof(x))
+    )
+  } else {
+    attributes <- list(label = label)
+  }
+
+  list(
+    x = x,
+    widened = widened,
+    attributes = Filter(Negate(is.null), attributes)
+  )
+}
+
 get_parquet_rows_per_group <- function(data) {
   TARGET_GROUP_BYTES <- 128 * 1024^2 # ~128MB per row group
   MAX_RPG <- 1000000L

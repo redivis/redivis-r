@@ -16,5 +16,7 @@ class<Query>
 DEPRECATED: please use redivis$query
 }
 \examples{
+\dontrun{
 output_table <- redivis::query(query = 'SELECT 1 + 1 AS two')$to_tibble()
+}
 }
