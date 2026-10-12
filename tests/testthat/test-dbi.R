@@ -28,8 +28,10 @@ test_that("whole-number arguments are rendered as INT64", {
   expect_translation(str_pad(x, 3, pad = "0"), "LPAD(`x`, 3, '0')")
 })
 
-test_that("integer division rounds toward negative infinity, like R", {
+test_that("integer division and modulo round toward negative infinity, like R", {
   expect_translation(x %/% 7, "FLOOR(`x` / 7.0)")
+  expect_translation(x %% 7, "(`x` - 7.0 * FLOOR(`x` / 7.0))")
+  expect_translation(x %% 7 * 2, "((`x` - 7.0 * FLOOR(`x` / 7.0))) * 2.0")
 })
 
 test_that("string functions translate", {
@@ -140,6 +142,10 @@ test_that("translations run on Redivis", {
       rounded = round(year_of_birth / 7, 2),
       substring = str_sub("abcdef", 2),
       floor_div = -7L %/% 3L,
+      mod_neg_dividend = -7L %% 3L,
+      mod_neg_divisor = 7L %% -3L,
+      mod_double = 7.5 %% 2,
+      mod_precedence = 7L %% 3L * 2L,
       after_2000 = birth_datetime > !!as.POSIXct("2000-01-01", tz = "UTC"),
       today = today()
     ) |>
@@ -149,6 +155,10 @@ test_that("translations run on Redivis", {
   expect_equal(result$replaced, "bXana")
   expect_equal(result$substring, "bcdef")
   expect_equal(result$floor_div, -7L %/% 3L)
+  expect_equal(result$mod_neg_dividend, -7L %% 3L)
+  expect_equal(result$mod_neg_divisor, 7L %% -3L)
+  expect_equal(result$mod_double, 7.5 %% 2)
+  expect_equal(result$mod_precedence, 7L %% 3L * 2L)
   expect_true(result$has_digit)
   expect_equal(result$built, as.Date("2020-01-15"))
   expect_equal(result$plus_30, result$birth_date + 30)

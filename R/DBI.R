@@ -421,11 +421,14 @@ sql_translation.RedivisConnection <- function(con) {
 
       # Operators
       `^` = dbplyr::sql_prefix("POW"),
-      `%%` = dbplyr::sql_prefix("MOD"),
-      # Like R, rounds toward negative infinity (DIV truncates toward zero, and
-      # only accepts integers)
+      # Like R, rounds toward negative infinity, so that the remainder takes
+      # the sign of the divisor (DIV and MOD truncate toward zero, and only
+      # accept integers)
       `%/%` = function(x, y) {
         dbplyr::build_sql("FLOOR(", x, " / ", y, ")")
+      },
+      `%%` = function(x, y) {
+        dbplyr::build_sql("(", x, " - ", y, " * FLOOR(", x, " / ", y, "))")
       },
       `%||%` = dbplyr::sql_prefix("IFNULL"),
 
