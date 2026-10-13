@@ -16,6 +16,13 @@ You can also install the latest release of this package in any other R environme
 install.packages("redivis", repos = c("https://redivis.r-universe.dev", "https://cloud.r-project.org"))
 ```
 
+If on Linux, we recommended using `pak` to install prebuilt binaries from Posit Package Manager (PPM) and avoid long compilation times:
+```r
+install.packages("pak")
+pak::repo_add(CRAN = "PPM@latest", redivis = "https://redivis.r-universe.dev")
+pak::pkg_install("redivis")
+```
+
 Or, to install the development version directly from GitHub:
 
 ```r
