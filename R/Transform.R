@@ -81,6 +81,32 @@ Transform <- R6::R6Class(
       self
     },
 
+    create = function(source_table, query = NULL) {
+      payload <- list(name = self$name)
+
+      if (!is.null(query)) {
+        payload$query <- query
+      }
+
+      if (is(source_table, "Table")) {
+        resolve_table_for_write(source_table)
+        payload$sourceTable <- source_table$qualified_reference
+      } else {
+        payload$sourceTable <- source_table
+      }
+
+      self$properties <- make_request(
+        method = "POST",
+        path = str_interp("${self$workflow$uri}/transforms"),
+        payload = payload
+      )
+      self$name <- self$properties$name
+      self$qualified_reference <- self$properties$qualifiedReference
+      self$scoped_reference <- self$properties$scopedReference
+      self$uri <- self$properties$uri
+      self
+    },
+
     update = function(name = NULL, source_table = NULL, query = NULL) {
       payload <- list()
 
@@ -120,8 +146,8 @@ Transform <- R6::R6Class(
     source_table = function() {
       self$get()
       Table$new(
-        name = self$properties[["sourceTable"]],
-        properties = self$properties[["sourceTable"]][["qualifiedReference"]]
+        name = self$properties[["sourceTable"]][["qualifiedReference"]],
+        properties = self$properties[["sourceTable"]]
       )
     },
 

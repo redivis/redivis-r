@@ -98,7 +98,8 @@ Workflow <- R6::R6Class(
       Notebook$new(name = name, workflow = self)
     },
 
-    transform = function(name) {
+    # Allow empty string to support create flow w/ default name
+    transform = function(name = NULL) {
       Transform$new(name = name, workflow = self)
     },
 
@@ -117,7 +118,11 @@ Workflow <- R6::R6Class(
     list_tables = function(max_results = NULL, include_datasources = FALSE) {
       tables <- make_paginated_request(
         path = str_interp("${self$uri}/tables"),
-        query = if (include_datasources) list(includeDataSources = "true") else list(),
+        query = if (include_datasources) {
+          list(includeDataSources = "true")
+        } else {
+          list()
+        },
         page_size = 100,
         max_results = max_results
       )
