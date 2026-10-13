@@ -1,7 +1,7 @@
 Package: redivis
 Type: Package
 Title: R interface for Redivis
-Version: 0.13.0
+Version: 0.13.1
 Authors@R:
     person("Redivis Inc.", email = "support@redivis.com", role = c("aut", "cre", "cph"))
 Description: Supports working with Redivis API through R. 
