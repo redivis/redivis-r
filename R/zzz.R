@@ -173,7 +173,7 @@ load_native <- function(libname, pkgname) {
       "redivis: the optional native component could not be loaded; file ",
       "streaming and directory mounting are unavailable. All other ",
       "functionality works normally. This usually means the installed binary ",
-      "was built against a different version of R — reinstalling from ",
+      "was built against a different version of R - reinstalling from ",
       "source (install.packages('redivis', type = 'source')) typically ",
       "resolves it."
     )

@@ -1,10 +1,17 @@
 #' @importFrom stringr str_interp
+#' @importFrom later later
+#' @importFrom rlang :=
+#' @importFrom stats setNames
+#' @importFrom utils browseURL flush.console object.size tail URLdecode
+NULL
 
 #' @title query
 #'
 #' @description DEPRECATED: please use redivis$query
 #'
 #' @param query The query string to execute
+#' @param default_workflow Optional workflow reference used to resolve unqualified table references. Defaults to the REDIVIS_DEFAULT_WORKFLOW environment variable.
+#' @param default_dataset Optional dataset reference used to resolve unqualified table references. Defaults to the REDIVIS_DEFAULT_DATASET environment variable.
 #'
 #' @return class<Query>
 #' @examples
@@ -94,7 +101,10 @@ current_notebook <- function() {
 #'
 #' Full documentation and examples available at: https://apidocs.redivis.com/client-libraries/redivis-r
 #'
-#' @usage
+#' @usage redivis
+#'
+#' @section Overview:
+#' \preformatted{
 #' library(redivis)
 #'
 #' # Reference various resources
@@ -159,7 +169,7 @@ current_notebook <- function() {
 #' # Miscellaneous methods, for advanced use cases
 #' redivis$authenticate(scope=NULL, force_reauthentication=FALSE)
 #' redivis$make_api_request(method="GET", path, ...)
-#'
+#' }
 #'
 #' @return list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, parameter, query, table, transform, user, workflow)
 #' @examples

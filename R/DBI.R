@@ -1,6 +1,7 @@
 #' @include Query.R Dataset.R Workflow.R Table.R Variable.R
 #' @import DBI
 #' @import methods
+NULL
 
 # ===========================================================================
 # DBI / dbplyr connector for Redivis (read-only)
@@ -18,6 +19,51 @@
 # ---------------------------------------------------------------------------
 
 # --- Driver ----------------------------------------------------------------
+
+#' Redivis DBI classes and methods
+#'
+#' S4 classes implementing the DBI interface for Redivis. Create a connection
+#' with \code{DBI::dbConnect(RedivisDBI(), ...)}; see \code{\link{RedivisDBI}}.
+#' Writing tables is not supported.
+#'
+#' @name RedivisDBI-classes
+#' @keywords internal
+#' @aliases RedivisDriver-class
+#' @aliases RedivisConnection-class
+#' @aliases RedivisResult-class
+#' @aliases dbCanConnect,RedivisDriver-method
+#' @aliases dbClearResult,RedivisResult-method
+#' @aliases dbColumnInfo,RedivisResult-method
+#' @aliases dbConnect,RedivisDriver-method
+#' @aliases dbCreateTable,RedivisConnection,character,character-method
+#' @aliases dbDisconnect,RedivisConnection-method
+#' @aliases dbExistsTable,RedivisConnection,character-method
+#' @aliases dbFetch,RedivisResult-method
+#' @aliases dbGetInfo,RedivisConnection-method
+#' @aliases dbGetInfo,RedivisDriver-method
+#' @aliases dbGetQuery,RedivisConnection,character-method
+#' @aliases dbGetQuery,RedivisConnection,SQL-method
+#' @aliases dbGetRowCount,RedivisResult-method
+#' @aliases dbGetRowsAffected,RedivisResult-method
+#' @aliases dbGetStatement,RedivisResult-method
+#' @aliases dbHasCompleted,RedivisResult-method
+#' @aliases dbIsValid,RedivisConnection-method
+#' @aliases dbIsValid,RedivisDriver-method
+#' @aliases dbIsValid,RedivisResult-method
+#' @aliases dbListFields,RedivisConnection,character-method
+#' @aliases dbListTables,RedivisConnection-method
+#' @aliases dbQuoteIdentifier,RedivisConnection,character-method
+#' @aliases dbQuoteIdentifier,RedivisConnection,SQL-method
+#' @aliases dbQuoteString,RedivisConnection,character-method
+#' @aliases dbRemoveTable,RedivisConnection,character-method
+#' @aliases dbSendQuery,RedivisConnection,character-method
+#' @aliases dbSendQuery,RedivisConnection,SQL-method
+#' @aliases dbUnloadDriver,RedivisDriver-method
+#' @aliases dbWriteTable,RedivisConnection,character,data.frame-method
+#' @aliases show,RedivisConnection-method
+#' @aliases show,RedivisDriver-method
+#' @aliases show,RedivisResult-method
+NULL
 
 #' @export
 setClass("RedivisDriver", contains = "DBIDriver")
@@ -382,6 +428,16 @@ setMethod(
 #' @importFrom dbplyr dbplyr_edition
 #' @export
 dbplyr_edition.RedivisConnection <- function(con) 2L
+
+# dbplyr >= 2.6.0 no longer routes string literals through dbQuoteString(), and
+# its default only doubles quotes; GoogleSQL also needs backslashes escaped
+#' @exportS3Method dbplyr::sql_escape_string
+sql_escape_string.RedivisConnection <- function(con, x) {
+  if (inherits(x, "SQL")) {
+    return(x)
+  }
+  DBI::dbQuoteString(con, x)
+}
 
 #' @importFrom dbplyr sql_escape_date
 #' @export

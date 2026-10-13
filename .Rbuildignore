@@ -10,3 +10,4 @@
 ^CONTRIBUTING\.md$
 (^|/)\.DS_Store$
 ^src/.*\.(o|so|dylib|dll)$
+^LICENSE\.md$

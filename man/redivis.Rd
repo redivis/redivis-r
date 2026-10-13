@@ -8,6 +8,19 @@
 An object of class \code{environment} of length 17.
 }
 \usage{
+redivis
+}
+\value{
+list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, parameter, query, table, transform, user, workflow)
+}
+\description{
+Redivis wrapper, all primary constructor accessible via redivis$<constructor>()
+
+Full documentation and examples available at: https://apidocs.redivis.com/client-libraries/redivis-r
+}
+\section{Overview}{
+
+\preformatted{
 library(redivis)
 
 # Reference various resources
@@ -73,14 +86,8 @@ table$list_variables(max_results)
 redivis$authenticate(scope=NULL, force_reauthentication=FALSE)
 redivis$make_api_request(method="GET", path, ...)
 }
-\value{
-list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, parameter, query, table, transform, user, workflow)
 }
-\description{
-Redivis wrapper, all primary constructor accessible via redivis$<constructor>()
 
-Full documentation and examples available at: https://apidocs.redivis.com/client-libraries/redivis-r
-}
 \examples{
 \dontrun{
  df <- redivis$table("demo.ghcn_daily_weather_data.stations")$to_tibble()

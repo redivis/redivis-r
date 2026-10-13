@@ -414,6 +414,7 @@ perform_parallel_download_worker <- function(
     # local state for this download
     file_con <- NULL
     content_length <- NULL
+    md5_hash <- NULL
     bytes_written <- 0
     last_progress_time <- proc.time()[["elapsed"]]
     progress_bytes_written <- 0
@@ -779,7 +780,7 @@ perform_parallel_download_worker <- function(
         idx <- e$index
         h <- handles[[idx]]
         if (!is.null(h)) {
-          try(curl::multi_remove(pool, h), silent = TRUE)
+          try(curl::multi_cancel(h), silent = TRUE)
           handles[[idx]] <<- NULL
         }
         invisible(NULL)
