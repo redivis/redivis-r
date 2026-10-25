@@ -72,6 +72,33 @@ test_that("a login saves credentials privately, creating their directory", {
   saved <- jsonlite::fromJSON(get_credentials_file())
   expect_equal(saved$refresh_token, "refresh-token")
   expect_equal(format(file.info(get_credentials_file())$mode), "600")
+  expect_equal(format(file.info(get_redivis_dir())$mode), "700")
+})
+
+test_that("the credentials directory can be overridden", {
+  local_mock_api()
+  config_dir <- file.path(withr::local_tempdir(), "config")
+  withr::local_envvar(REDIVIS_CONFIG_DIR = config_dir)
+
+  write_cached_credentials()
+
+  expect_equal(get_credentials_file(), file.path(config_dir, "r_credentials"))
+  expect_true(file.exists(file.path(config_dir, "r_credentials")))
+})
+
+test_that("a failed save raises an error, and leaves no temporary file behind", {
+  local_mock_api()
+  # A non-empty directory in the way, so the file can't be moved into place
+  dir.create(file.path(get_credentials_file(), "occupied"), recursive = TRUE)
+
+  expect_error(
+    suppressWarnings(write_cached_credentials()),
+    class = "redivis_error"
+  )
+  expect_equal(
+    list.files(get_redivis_dir(), all.files = TRUE, no.. = TRUE),
+    "r_credentials"
+  )
 })
 
 test_that("saving credentials restricts an existing file, and restores the umask", {
@@ -139,4 +166,47 @@ test_that("has_credentials() finds each source of credentials", {
   unlink(get_credentials_file())
   withr::local_envvar(REDIVIS_API_TOKEN = "token")
   expect_true(has_credentials())
+})
+
+local_token_response <- function(response, env = parent.frame()) {
+  local_mocked_bindings(
+    req_perform = function(req, ...) response,
+    .package = "httr2",
+    .env = env
+  )
+}
+
+test_that("a server error while refreshing keeps the credentials", {
+  local_mock_api()
+  write_cached_credentials()
+  local_token_response(httr2::response(
+    status_code = 502,
+    headers = list(`Content-Type` = "text/html"),
+    body = charToRaw("<html>Bad gateway</html>")
+  ))
+
+  expect_error(refresh_credentials(), class = "redivis_api_error")
+
+  expect_equal(auth_vars$cached_credentials$refresh_token, "refresh-token")
+  expect_true(file.exists(get_credentials_file()))
+})
+
+test_that("a rejected refresh token prompts a login", {
+  local_mock_api()
+  write_cached_credentials()
+  local_token_response(httr2::response(
+    status_code = 400,
+    headers = list(`Content-Type` = "application/json"),
+    body = charToRaw('{"error":"invalid_grant"}')
+  ))
+  logins <- 0
+  local_mocked_bindings(perform_oauth_login = function(...) {
+    logins <<- logins + 1
+    auth_vars$cached_credentials <- fake_credentials()
+  })
+
+  expect_equal(refresh_credentials(), fake_credentials()$access_token)
+
+  expect_equal(logins, 1)
+  expect_false(file.exists(get_credentials_file()))
 })

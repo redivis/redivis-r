@@ -10,7 +10,14 @@ auth_vars$default_scope <- list('data.edit', 'workflow.write')
 auth_vars$client_id <- 'Ah850nGnQg5mFWd25nkyk9Y3'
 
 get_redivis_dir <- function() {
-  file.path(Sys.getenv("HOME"), ".redivis")
+  # Overridable for environments where the home directory isn't writable, or is
+  # shared between users
+  config_dir <- Sys.getenv("REDIVIS_CONFIG_DIR")
+  if (config_dir != "") {
+    path.expand(config_dir)
+  } else {
+    file.path(Sys.getenv("HOME"), ".redivis")
+  }
 }
 
 get_credentials_file <- function() {
@@ -66,27 +73,32 @@ has_credentials <- function() {
 }
 
 write_cached_credentials <- function() {
-  # Not necessarily created yet: a login can be prompted by a request that was
-  # sent anonymously, rather than by get_auth_token()
-  dir.create(get_redivis_dir(), showWarnings = FALSE, recursive = TRUE)
-  # The file holds a refresh token; keep it private to this user. The umask
-  # makes a new file private from the moment it's created, and chmod covers an
-  # existing one (whose mode writing it doesn't change)
-  credentials_file <- get_credentials_file()
+  # The file holds a refresh token, so keep it private to this user
+  redivis_dir <- get_redivis_dir()
+  dir.create(redivis_dir, showWarnings = FALSE, recursive = TRUE, mode = "0700")
+  # Write a temporary file and swap it into place, so that another process
+  # (e.g. a second R session) never reads a partially written file. The umask
+  # makes it private from the moment it's created, so the token is never
+  # exposed to others, even briefly, and replacing the file also replaces the
+  # permissions of one written by an earlier version of the client.
   old_umask <- Sys.umask("077")
   on.exit(Sys.umask(old_umask), add = TRUE)
-  if (file.exists(credentials_file)) {
-    Sys.chmod(credentials_file, mode = "0600")
-  }
+  temp_file <- tempfile(".r_credentials.", tmpdir = redivis_dir)
+  # A no-op once the file has been moved into place
+  on.exit(unlink(temp_file), add = TRUE)
   write(
     jsonlite::toJSON(
       auth_vars$cached_credentials,
       pretty = TRUE,
       auto_unbox = TRUE
     ),
-    credentials_file
+    temp_file
   )
-  Sys.chmod(credentials_file, mode = "0600")
+  if (!file.rename(temp_file, get_credentials_file())) {
+    abort_redivis_error(str_interp(
+      "Failed to save credentials to ${get_credentials_file()}"
+    ))
+  }
 }
 
 get_auth_token <- function(scope = NULL) {
@@ -278,8 +290,24 @@ refresh_credentials <- function(scope = NULL, amr_values = NULL) {
 
     res <- httr2::req_perform(refresh_req)
 
-    if (httr2::resp_status(res) >= 400) {
+    status <- httr2::resp_status(res)
+    if (status %in% c(400, 401)) {
+      # The refresh token was rejected (e.g. revoked or expired), so the user
+      # needs to log in again
       clear_cached_credentials()
+    } else if (status >= 400) {
+      # Anything else (e.g. a 503 during a deploy) says nothing about the
+      # refresh token, so keep it for a later call to retry with
+      resp_body <- tryCatch(httr2::resp_body_string(res), error = function(e) "")
+      response_json <- tryCatch(
+        jsonlite::fromJSON(resp_body, simplifyVector = FALSE),
+        error = function(e) NULL
+      )
+      raise_api_error(
+        response_json = if (is.list(response_json)) response_json,
+        response_text = resp_body,
+        response = res
+      )
     } else {
       refresh_response <- httr2::resp_body_json(res)
       auth_vars$cached_credentials$access_token <- refresh_response$access_token
