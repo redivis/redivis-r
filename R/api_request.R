@@ -89,7 +89,11 @@ make_request <- function(
       if (inherits(file_val, "form_file")) {
         req <- req |>
           httr2::req_body_multipart(
-            !!nm := curl::form_file(file_val$path, type = file_val$type)
+            !!nm := curl::form_file(
+              file_val$path,
+              type = file_val$type,
+              name = file_val$name
+            )
           )
       } else {
         req <- req |> httr2::req_body_multipart(!!nm := file_val)

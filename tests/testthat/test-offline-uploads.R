@@ -124,3 +124,66 @@ test_that("remove_on_fail removes a failed upload, with or without raise_on_fail
   )
   expect_true("DELETE /tables/a.b.t/uploads/u" %in% requests$log)
 })
+
+test_that("raw content is sent as a file named after the upload", {
+  sent <- NULL
+  local_mocked_bindings(
+    make_request = function(method = "GET", path = "", files = NULL, ...) {
+      if (method == "HEAD") {
+        abort_redivis_not_found_error(description = "Not found")
+      }
+      if (!is.null(files)) {
+        # The file is removed once the upload is created
+        sent <<- list(
+          name = files$data$name,
+          content = readBin(files$data$path, "raw", file.size(files$data$path))
+        )
+      }
+      list(uri = "/tables/a.b.t/uploads/u", status = "completed")
+    },
+    poll_sleep = function(seconds) invisible(NULL)
+  )
+
+  Table$new(name = "a.b.t")$upload("data.csv")$create(
+    content = charToRaw("a,b\n1,2"),
+    progress = FALSE
+  )
+
+  expect_equal(sent, list(name = "data.csv", content = charToRaw("a,b\n1,2")))
+})
+
+test_that("an sf data frame is written as GeoParquet, in WGS84", {
+  skip_if_not_installed("sf")
+  data <- sf::st_sf(
+    id = 1:2,
+    geometry = sf::st_sfc(
+      sf::st_point(c(-122, 37)),
+      sf::st_point(c(0.5, 51.5)),
+      crs = 4326
+    )
+  )
+  read_geometries <- function(table) {
+    sf::st_as_sfc(structure(as.list(table$geometry$as_vector()), class = "WKB"))
+  }
+
+  table <- arrow::read_parquet(
+    convert_data_to_parquet(sf::st_transform(data, 3857)),
+    as_data_frame = FALSE
+  )
+
+  expect_equal(table$schema$names, c("id", "geometry"))
+  expect_equal(table$schema$geometry$type$ToString(), "binary")
+  expect_equal(
+    jsonlite::fromJSON(table$metadata$geo, simplifyVector = FALSE),
+    list(
+      version = "1.0.0",
+      primary_column = "geometry",
+      columns = list(geometry = list(encoding = "WKB", geometry_types = list()))
+    )
+  )
+  expect_equal(
+    unname(sf::st_coordinates(read_geometries(table))),
+    matrix(c(-122, 0.5, 37, 51.5), ncol = 2),
+    tolerance = 1e-6
+  )
+})

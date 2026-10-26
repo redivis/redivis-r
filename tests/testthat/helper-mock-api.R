@@ -539,9 +539,12 @@ local_mock_api <- function(authenticated = TRUE, env = parent.frame()) {
   mock_api_control("/__mock/reset", body = list())
 
   home <- withr::local_tempdir(.local_envir = env)
+  # Credentials go to the temporary home, never the live tests' (see
+  # setup-live.R)
   withr::local_envvar(
     REDIVIS_API_ENDPOINT = paste0(url, "/api/v1"),
     HOME = home,
+    REDIVIS_CONFIG_DIR = NA,
     REDIVIS_API_TOKEN = NA,
     REDIVIS_DEFAULT_NOTEBOOK = NA,
     .local_envir = env

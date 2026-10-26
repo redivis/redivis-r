@@ -101,7 +101,7 @@ Variable <- R6::R6Class(
         payload <- append(payload, list("description" = description))
       }
       if (!is.null(value_labels)) {
-        payload <- append(payload, list("value_labels" = value_labels))
+        payload <- append(payload, list("valueLabels" = value_labels))
       }
       self$properties <- make_request(
         method = "PATCH",

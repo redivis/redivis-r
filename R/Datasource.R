@@ -78,6 +78,11 @@ Datasource <- R6::R6Class(
       self
     },
 
+    delete = function() {
+      make_request(method = "DELETE", path = self$uri)
+      invisible(NULL)
+    },
+
     update = function(
       source_dataset = NULL,
       source_workflow = NULL,

@@ -75,6 +75,33 @@ Workflow <- R6::R6Class(
       self
     },
 
+    create = function(description = NULL, is_public = FALSE) {
+      rectify_ambiguous_workflow_owner(self)
+      path <- if (is.null(self$organization)) {
+        str_interp(
+          "/users/${URLencode(self$user$name, reserved = TRUE)}/workflows"
+        )
+      } else {
+        str_interp(
+          "/organizations/${URLencode(self$organization$name, reserved = TRUE)}/workflows"
+        )
+      }
+
+      payload <- list(name = self$name, isPublic = is_public)
+      if (!is.null(description)) {
+        payload$description <- description
+      }
+
+      res <- make_request(method = "POST", path = path, payload = payload)
+      update_workflow_properties(self, res)
+      self
+    },
+
+    delete = function() {
+      make_request(method = "DELETE", path = self$uri)
+      invisible(NULL)
+    },
+
     exists = function() {
       tryCatch(
         {
@@ -212,10 +239,29 @@ Workflow <- R6::R6Class(
   )
 )
 
+# A reference like "owner.workflow_name" could be owned by a user or an
+# organization
+rectify_ambiguous_workflow_owner <- function(workflow) {
+  if (!is.null(workflow$user) && !is.null(workflow$organization)) {
+    if (!is.null(workflow$properties[["owner"]])) {
+      if (workflow$properties[["owner"]][["kind"]] == "user") {
+        workflow$organization <- NULL
+      } else {
+        workflow$user <- NULL
+      }
+    } else if (workflow$organization$exists()) {
+      workflow$user <- NULL
+    } else {
+      workflow$organization <- NULL
+    }
+  }
+}
+
 update_workflow_properties <- function(instance, properties) {
   instance$properties <- properties
   instance$qualified_reference <- properties$qualifiedReference
   instance$scoped_reference <- properties$scopedReference
   instance$name <- properties$name
   instance$uri <- properties$uri
+  rectify_ambiguous_workflow_owner(instance)
 }

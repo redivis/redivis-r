@@ -280,7 +280,14 @@ Upload <- R6::R6Class(
         if (inherits(content, "connection")) {
           data <- curl::form_file(get_conn_name(content))
         } else {
-          data <- curl::form_data(content)
+          # The API only accepts data sent as a file, which needs a file name
+          data_file <- tempfile()
+          writeBin(content, data_file)
+          on.exit(unlink(data_file), add = TRUE)
+          data <- curl::form_file(
+            data_file,
+            name = if (self$name != "") self$name else "data"
+          )
         }
         metadata_file <- tempfile()
         writeLines(

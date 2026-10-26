@@ -230,10 +230,7 @@ convert_data_to_parquet <- function(data) {
   temp_file_path <- file.path(folder, uuid::UUIDgenerate())
 
   if (is(data, "sf")) {
-    sf_column_name <- attr(data, "sf_column")
-    wkt_geopoint <- sapply(sf::st_geometry(data), function(x) sf::st_as_text(x))
-    sf::st_geometry(data) <- NULL
-    data[sf_column_name] <- wkt_geopoint
+    data <- sf_to_geoparquet_table(data)
   }
 
   rows_per_group <- get_parquet_rows_per_group(data)
@@ -310,4 +307,43 @@ show_namespace_warning <- function(method) {
     globals$printed_warnings[message] <- TRUE
     warning(message, call. = FALSE)
   }
+}
+
+# An arrow table of an sf data frame, in the form of GeoParquet: its geometries
+# as WKB, described by the table's "geo" metadata, which Redivis reads as
+# geographies. Geographies are in WGS84, so other coordinates are transformed.
+sf_to_geoparquet_table <- function(data) {
+  is_geometry <- vapply(data, inherits, logical(1), "sfc")
+  geometry_names <- names(data)[is_geometry]
+  table <- arrow::as_arrow_table(as.data.frame(data)[!is_geometry])
+  table$metadata$r <- NULL # drop serialized R attributes
+
+  wgs84 <- sf::st_crs(4326)
+  for (name in geometry_names) {
+    geometry <- data[[name]]
+    if (!is.na(sf::st_crs(geometry)) && sf::st_crs(geometry) != wgs84) {
+      geometry <- sf::st_transform(geometry, wgs84)
+    }
+    table[[name]] <- arrow::Array$create(
+      unclass(sf::st_as_binary(geometry)),
+      type = arrow::binary()
+    )
+  }
+  table <- table[, names(data)]
+
+  # Without a "crs", GeoParquet coordinates are longitude/latitude in WGS84
+  table$metadata$geo <- as.character(jsonlite::toJSON(
+    list(
+      version = "1.0.0",
+      primary_column = attr(data, "sf_column"),
+      columns = stats::setNames(
+        lapply(geometry_names, function(name) {
+          list(encoding = "WKB", geometry_types = list())
+        }),
+        geometry_names
+      )
+    ),
+    auto_unbox = TRUE
+  ))
+  table
 }

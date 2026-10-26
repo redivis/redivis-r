@@ -29,6 +29,16 @@ test_that("a small table reads in a single listRows request", {
   expect_equal(as.numeric(df$id), 0:499)
 })
 
+test_that("max_results = 0 reads no rows, without requesting any", {
+  mock <- local_mock_api()
+
+  df <- mock_table()$to_tibble(max_results = 0, progress = FALSE)
+
+  expect_equal(data_paths(mock), character())
+  expect_equal(nrow(df), 0)
+  expect_equal(names(df), c("id", "name", "val"))
+})
+
 test_that("a large table reads via a read session", {
   mock <- local_mock_api()
   mock$set(num_bytes = 5e8)

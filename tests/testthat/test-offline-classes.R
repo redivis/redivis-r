@@ -61,6 +61,19 @@ test_that("tables are qualified by the default workflow or dataset", {
   expect_equal(table$uri, "/workflows/owner.wf/tables/table")
 })
 
+test_that("references without an owner are rejected", {
+  withr::local_envvar(
+    REDIVIS_DEFAULT_USER = NA,
+    REDIVIS_DEFAULT_ORGANIZATION = NA,
+    REDIVIS_DEFAULT_WORKFLOW = NA,
+    REDIVIS_DEFAULT_DATASET = NA
+  )
+  expect_error(Dataset$new("ds"), class = "redivis_value_error")
+  expect_error(Workflow$new("wf"), class = "redivis_value_error")
+  expect_error(Table$new("table"), class = "redivis_value_error")
+  expect_error(Parameter$new("param"), class = "redivis_value_error")
+})
+
 test_that("names are encoded in URIs", {
   table <- Table$new("owner.ds.table")
   expect_equal(
@@ -216,4 +229,87 @@ test_that("a datasource's sample is kept when its version changes", {
   requests <- local_sampled_datasource()
   datasource()$update(sample = FALSE)
   expect_equal(requests$payloads[[2]], list(sourceDataset = "owner.ds:v1_0"))
+})
+
+test_that("updates send their fields as the API names them", {
+  requests <- local_api(function(method, path) {
+    list(uri = "/datasets/owner.ds", qualifiedReference = "owner.ds", name = "ds")
+  })
+  dataset <- Dataset$new("owner.ds")
+  dataset$properties$owner <- list(kind = "user")
+  dataset$update(public_access_level = "overview")
+  dataset$release(release_notes = "Notes")
+  Table$new("owner.ds.t")$variable("v")$update(
+    value_labels = list(list(value = "a", label = "A"))
+  )
+
+  payload_of <- function(request) {
+    requests$payloads[[match(request, requests$log)]]
+  }
+  expect_equal(
+    payload_of("PATCH /datasets/owner.ds"),
+    list(publicAccessLevel = "overview")
+  )
+  expect_equal(
+    payload_of("POST /datasets/owner.ds/versions/next/release"),
+    list(releaseNotes = "Notes")
+  )
+  expect_equal(
+    payload_of("PATCH /tables/owner.ds.t/variables/v"),
+    list(valueLabels = list(list(value = "a", label = "A")))
+  )
+})
+
+test_that("a workflow is created by its owner", {
+  workflow_properties <- function(owner_kind) {
+    function(method, path) {
+      if (method == "HEAD") {
+        abort_redivis_not_found_error(description = "Not found")
+      }
+      list(
+        uri = "/workflows/owner.wf",
+        qualifiedReference = "owner.wf",
+        scopedReference = "wf",
+        name = "wf",
+        owner = list(kind = owner_kind, name = "owner")
+      )
+    }
+  }
+
+  requests <- local_api(workflow_properties("user"))
+  workflow <- Workflow$new("owner.wf")$create(description = "A workflow")
+  expect_equal(
+    requests$log,
+    c("HEAD /organizations/owner/datasets", "POST /users/owner/workflows")
+  )
+  expect_equal(
+    requests$payloads[[2]],
+    list(name = "wf", isPublic = FALSE, description = "A workflow")
+  )
+  expect_null(workflow$organization)
+  expect_equal(workflow$qualified_reference, "owner.wf")
+
+  requests <- local_api(workflow_properties("organization"))
+  workflow <- redivis$organization("owner")$workflow("wf")$create(is_public = TRUE)
+  expect_equal(requests$log, "POST /organizations/owner/workflows")
+  expect_equal(requests$payloads[[1]], list(name = "wf", isPublic = TRUE))
+  expect_null(workflow$user)
+})
+
+test_that("workflows, transforms, and datasources can be deleted", {
+  requests <- local_api()
+  workflow <- Workflow$new("owner.wf")
+
+  expect_null(workflow$datasource("owner.ds")$delete())
+  expect_null(Transform$new("owner.wf.t")$delete())
+  expect_null(workflow$delete())
+
+  expect_equal(
+    requests$log,
+    c(
+      "DELETE /workflows/owner.wf/dataSources/owner.ds",
+      "DELETE /transforms/owner.wf.t",
+      "DELETE /workflows/owner.wf"
+    )
+  )
 })

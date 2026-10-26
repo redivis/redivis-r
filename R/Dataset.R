@@ -261,7 +261,7 @@ Dataset <- R6::R6Class(
       version_res <- make_request(
         method = "POST",
         path = str_interp("${self$uri}/versions/next/release"),
-        payload = list(release_notes = release_notes)
+        payload = list(releaseNotes = release_notes)
       )
       self$uri <- version_res$datasetUri
       self$get()
@@ -302,7 +302,7 @@ Dataset <- R6::R6Class(
       if (!is.null(public_access_level)) {
         payload <- append(
           payload,
-          list("public_access_level" = public_access_level)
+          list("publicAccessLevel" = public_access_level)
         )
       }
       if (!is.null(description)) {

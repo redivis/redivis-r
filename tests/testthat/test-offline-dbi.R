@@ -1,3 +1,6 @@
+# The DBI connector's SQL translation, which needs no server. See
+# test-live-dbi.R for queries run against Redivis.
+
 offline_con <- function() {
   DBI::dbConnect(RedivisDBI())
 }
@@ -87,87 +90,9 @@ test_that("aggregates translate", {
   expect_translation(str_flatten(x, ","), "STRING_AGG(`x`, ',')")
 })
 
-# ---- Live ------------------------------------------------------------------
-
-# Workflow with the CMS synthetic OMOP dataset as a datasource. Override with
-# REDIVIS_TEST_OMOP_WORKFLOW when testing against another API endpoint.
-omop_source <- "cms_synthetic_patient_data_omop"
-live_omop_con <- function() {
-  workflow <- Sys.getenv("REDIVIS_TEST_OMOP_WORKFLOW", "imathews.omop_test:xf7r")
-  redivis::redivis$workflow(workflow)$connect_dbi()
-}
-omop_person <- function(con) {
-  dplyr::tbl(con, dbplyr::in_schema(omop_source, "person"))
-}
-
-test_that("workflow connections list and read datasource tables", {
-  skip_if_no_live_api()
-  con <- live_omop_con()
-
-  tables <- DBI::dbListTables(con)
-  expect_true("person" %in% tables)
-  expect_true("condition_occurrence" %in% tables)
-
-  expect_true("person_id" %in% DBI::dbListFields(con, "person"))
-  expect_true(DBI::dbExistsTable(con, "person"))
-  expect_false(DBI::dbExistsTable(con, "not_a_table"))
-
-  n_bare <- dplyr::tbl(con, "person") |> dplyr::count() |> dplyr::pull(n)
-  n_schema <- omop_person(con) |> dplyr::count() |> dplyr::pull(n)
-  expect_gt(n_bare, 0)
-  expect_equal(n_bare, n_schema)
-})
-
-test_that("translations run on Redivis", {
-  skip_if_no_live_api()
-  con <- live_omop_con()
-
-  result <- omop_person(con) |>
-    dplyr::filter(!is.na(year_of_birth), !is.na(month_of_birth)) |>
-    head(1) |>
-    dplyr::mutate(
-      birth_date = date_build(year_of_birth, month_of_birth, 1),
-      birth_datetime = as.POSIXct(birth_date),
-      birth_year = year(birth_datetime),
-      birth_wday = wday(birth_date),
-      birth_month_start = floor_date(birth_date, "month"),
-      plus_30 = add_days(birth_date, 30),
-      days_to_2020 = date_count_between(birth_date, !!as.Date("2020-01-01"), "day"),
-      built = date_build(2020, 1, 15),
-      label = paste(person_id, gender_source_value, sep = "-"),
-      padded = str_pad(as.character(month_of_birth), 2, pad = "0"),
-      has_digit = str_detect(as.character(person_id), "\\d+"),
-      replaced = str_replace("banana", "an", "X"),
-      starts = str_starts(gender_source_value, "1|2"),
-      rounded = round(year_of_birth / 7, 2),
-      substring = str_sub("abcdef", 2),
-      floor_div = -7L %/% 3L,
-      mod_neg_dividend = -7L %% 3L,
-      mod_neg_divisor = 7L %% -3L,
-      mod_double = 7.5 %% 2,
-      mod_precedence = 7L %% 3L * 2L,
-      after_2000 = birth_datetime > !!as.POSIXct("2000-01-01", tz = "UTC"),
-      today = today()
-    ) |>
-    dplyr::collect()
-
-  expect_equal(nrow(result), 1)
-  expect_equal(result$replaced, "bXana")
-  expect_equal(result$substring, "bcdef")
-  expect_equal(result$floor_div, -7L %/% 3L)
-  expect_equal(result$mod_neg_dividend, -7L %% 3L)
-  expect_equal(result$mod_neg_divisor, 7L %% -3L)
-  expect_equal(result$mod_double, 7.5 %% 2)
-  expect_equal(result$mod_precedence, 7L %% 3L * 2L)
-  expect_true(result$has_digit)
-  expect_equal(result$built, as.Date("2020-01-15"))
-  expect_equal(result$plus_30, result$birth_date + 30)
-
-  summary <- omop_person(con) |>
-    dplyr::summarise(
-      q25 = quantile(year_of_birth, 0.25),
-      genders = str_flatten(gender_source_value, ",")
-    ) |>
-    dplyr::collect()
-  expect_equal(nrow(summary), 1)
+test_that("connections are read-only", {
+  con <- offline_con()
+  expect_error(DBI::dbWriteTable(con, "t", data.frame(x = 1)), "read-only")
+  expect_error(DBI::dbRemoveTable(con, "t"), "read-only")
+  expect_error(DBI::dbCreateTable(con, "t", c(x = "INT64")), "read-only")
 })

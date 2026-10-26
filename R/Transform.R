@@ -190,6 +190,11 @@ Transform <- R6::R6Class(
       self
     },
 
+    delete = function() {
+      make_request(method = "DELETE", path = self$uri)
+      invisible(NULL)
+    },
+
     cancel = function() {
       self$properties <- make_request(
         method = "POST",
