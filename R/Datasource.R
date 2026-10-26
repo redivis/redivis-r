@@ -130,30 +130,41 @@ Datasource <- R6::R6Class(
               "Versions are not applicable to datasources that reference a workflow"
             )
           }
+        } else {
+          # Keep the existing sample setting, unless it's being changed
+          is_sample <- if (!is.null(sample)) {
+            isTRUE(sample)
+          } else {
+            grepl(":sample\\b", source_dataset)
+          }
+          source_dataset <- gsub(":sample\\b", "", source_dataset)
+
+          if (!is.null(version)) {
+            if (inherits(version, "Version")) {
+              version <- version$tag
+            }
+            source_dataset <- Dataset$new(
+              name = source_dataset,
+              version = version
+            )$qualified_reference
+          }
+
+          if (is_sample) {
+            source_dataset <- paste0(source_dataset, ":sample")
+          }
         }
       }
 
-      if (inherits(version, "Version")) {
-        version <- version$tag
-      }
-
-      ds <- Dataset$new(name = source_dataset, version = version)
-      source_dataset <- ds$qualified_reference
-
-      if (identical(sample, FALSE)) {
-        source_dataset <- sub(":sample", "", source_dataset)
-      } else if (isTRUE(sample) && !grepl(":sample", source_dataset)) {
-        source_dataset <- paste0(source_dataset, ":sample")
-      }
-
+      # Only change what was specified
+      payload <- list(
+        sourceDataset = source_dataset,
+        sourceWorkflow = source_workflow,
+        mappedTables = mapped_tables
+      )
       self$properties <- make_request(
         method = "PATCH",
         path = self$uri,
-        payload = list(
-          sourceDataset = source_dataset,
-          sourceWorkflow = source_workflow,
-          mappedTables = mapped_tables
-        )
+        payload = Filter(Negate(is.null), payload)
       )
       self$uri <- self$properties[["uri"]]
 

@@ -370,20 +370,30 @@ make_batch_conformer <- function(stream_schema, schema, coerce_schema) {
   should_reorder_fields <- FALSE
   time_variables_to_coerce <- c()
 
-  i <- 0
+  # Variable names are case-insensitive, so the stream's columns are matched to
+  # the schema's regardless of case, and renamed to match it
+  stream_names <- stream_schema$names
+  schema_indices <- match(tolower(stream_names), tolower(names(schema)))
+  conformed_names <- ifelse(
+    is.na(schema_indices),
+    stream_names,
+    names(schema)[schema_indices]
+  )
+  should_rename_fields <- !identical(conformed_names, stream_names)
+
   # Only consider the fields in the stream, since the stream may lack some
-  for (field in stream_schema$fields) {
-    i <- i + 1
-    if (coerce_schema && is(schema[[field$name]]$type, "Time64")) {
-      time_variables_to_coerce <- append(time_variables_to_coerce, field$name)
+  for (i in seq_along(conformed_names)) {
+    field_name <- conformed_names[[i]]
+    if (coerce_schema && is(schema[[field_name]]$type, "Time64")) {
+      time_variables_to_coerce <- append(time_variables_to_coerce, field_name)
     }
-    if (!should_reorder_fields && i != match(field$name, names(schema))) {
+    if (!should_reorder_fields && !identical(schema_indices[[i]], i)) {
       should_reorder_fields <- TRUE
     }
   }
 
   for (field_name in schema$names) {
-    if (is.null(stream_schema$GetFieldByName(field_name))) {
+    if (!(field_name %in% conformed_names)) {
       fields_to_add <- append(fields_to_add, schema$GetFieldByName(field_name))
     }
   }
@@ -393,6 +403,9 @@ make_batch_conformer <- function(stream_schema, schema, coerce_schema) {
   }
 
   function(batch) {
+    if (should_rename_fields) {
+      batch <- batch$RenameColumns(conformed_names)
+    }
     if (coerce_schema) {
       # Note: this approach is much more performant than using %>% mutate(across())
       # TODO: in the future, Arrow may support native conversion from time string to their type

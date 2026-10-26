@@ -28,7 +28,7 @@ Table <- R6::R6Class(
         parent_reference <- str_interp("${workflow$qualified_reference}.")
         is_workflow_table <- TRUE
       } else {
-        split <- strsplit(name, "\\.")[[1]]
+        split <- split_reference(name)
         if (length(split) == 3) {
           parsed_name <- split[[3]]
           parent_reference <- paste(split[1:2], collapse = '.')
@@ -39,10 +39,16 @@ Table <- R6::R6Class(
           parsed_workflow <- Workflow$new(
             name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
           )
+          parent_reference <- str_interp(
+            "${parsed_workflow$qualified_reference}."
+          )
           is_workflow_table <- TRUE
         } else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != "") {
           parsed_dataset <- Dataset$new(
             name = Sys.getenv("REDIVIS_DEFAULT_DATASET")
+          )
+          parent_reference <- str_interp(
+            "${parsed_dataset$qualified_reference}."
           )
         } else if (name != "") {
           abort_redivis_value_error(
@@ -399,8 +405,12 @@ perform_table_parallel_file_upload <- function(
         on_progress = if (is.null(pb_bytes)) {
           NULL
         } else {
+          # The upload reports how many bytes it has sent in total, while the
+          # progressor counts increments
+          reported_bytes <- 0
           function(bytes) {
-            pb_bytes(amount = bytes * pb_bytes_multiplier)
+            pb_bytes(amount = (bytes - reported_bytes) * pb_bytes_multiplier)
+            reported_bytes <<- bytes
           }
         },
         temp_upload_url = temp_upload[["url"]]

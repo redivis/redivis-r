@@ -150,29 +150,7 @@ Notebook <- R6::R6Class(
       self$uri <- self$properties$uri
 
       if (wait_for_finish) {
-        repeat {
-          Sys.sleep(2)
-          self$get()
-
-          current_job <- self$properties[["currentJob"]]
-          if (is.null(current_job)) {
-            current_job <- self$properties[["lastRunJob"]]
-          }
-
-          if (
-            !is.null(current_job) &&
-              current_job[["status"]] %in% c("completed", "failed", "cancelled")
-          ) {
-            if (current_job[["status"]] == "failed") {
-              abort_redivis_job_error(
-                message = current_job$errorMessage,
-                kind = current_job$kind,
-                status = current_job$status
-              )
-            }
-            break
-          }
-        }
+        wait_for_run(self, self$properties)
       }
       self
     },

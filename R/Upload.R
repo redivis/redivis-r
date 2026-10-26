@@ -64,7 +64,7 @@ Upload <- R6::R6Class(
       Variable$new(name = name, upload = self)
     },
 
-    list_variables = function(max_results) {
+    list_variables = function(max_results = NULL) {
       variables <- make_paginated_request(
         path = str_interp("${self$uri}/variables"),
         page_size = 100,
@@ -124,12 +124,45 @@ Upload <- R6::R6Class(
 
       temp_upload_id <- NULL
 
+      if (isTRUE(replace_on_conflict) && isTRUE(rename_on_conflict)) {
+        abort_redivis_value_error(
+          "Invalid parameters. replace_on_conflict and rename_on_conflict cannot both be TRUE."
+        )
+      }
+
+      if (self$name == "") {
+        if (is.character(content) && base::file.exists(content)) {
+          self$name <- basename(content)
+        } else if (inherits(content, "connection")) {
+          self$name <- basename(get_conn_name(content))
+        }
+      }
+
+      ## Check for a conflicting upload before uploading anything
+      if (self$name != "") {
+        if (is.null(self$properties$uri)) {
+          escaped_name <- gsub('\\.', '_', self$name)
+          self$uri <- str_interp(
+            "${self$table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}"
+          )
+        }
+        if (self$exists()) {
+          if (if_not_exists) {
+            return(self)
+          } else if (isTRUE(replace_on_conflict)) {
+            self$delete()
+          } else if (!isTRUE(rename_on_conflict)) {
+            abort_redivis_value_error(sprintf(
+              "An upload with the name %s already exists on this version of the table. If you want to upload this file anyway, set the parameter rename_on_conflict=TRUE or replace_on_conflict=TRUE.",
+              self$name
+            ))
+          }
+        }
+      }
+
       ## If `content` is a file path (a string) then open it as a binary connection
       if (is.character(content)) {
         if (base::file.exists(content)) {
-          if (self$name == "") {
-            self$name <- basename(content)
-          }
           f <- base::file(content, open = "rb", blocking = FALSE)
           on.exit(close(f), add = TRUE)
           content <- f
@@ -144,11 +177,11 @@ Upload <- R6::R6Class(
             )
           }
         }
-      } else if (!is.null(content) && inherits(content, "connection")) {
-        if (self$name == "") {
-          self$name <- basename(get_conn_name(content))
-        }
-      } else if (!is.null(content) && !is.raw(content)) {
+      } else if (
+        !is.null(content) &&
+          !inherits(content, "connection") &&
+          !is.raw(content)
+      ) {
         temp_file_path <- convert_data_to_parquet(content)
         f <- base::file(temp_file_path, open = "rb", blocking = FALSE)
         on.exit(close(f), add = TRUE)
@@ -224,38 +257,6 @@ Upload <- R6::R6Class(
         )
       }
 
-      exists <- FALSE
-      if (self$name != "") {
-        if (is.null(self$properties$uri)) {
-          escaped_name <- gsub('\\.', '_', self$name)
-          self$uri <- str_interp(
-            "${self$table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}"
-          )
-        }
-        exists <- self$exists()
-      }
-
-      if (if_not_exists && exists) {
-        return(self)
-      }
-
-      if (isTRUE(replace_on_conflict) && isTRUE(rename_on_conflict)) {
-        abort_redivis_value_error(
-          "Invalid parameters. replace_on_conflict and rename_on_conflict cannot both be TRUE."
-        )
-      }
-
-      if (exists) {
-        if (isTRUE(replace_on_conflict)) {
-          self$delete()
-        } else if (!isTRUE(rename_on_conflict)) {
-          abort_redivis_value_error(sprintf(
-            "An upload with the name %s already exists on this version of the table. If you want to upload this file anyway, set the parameter rename_on_conflict=TRUE or replace_on_conflict=TRUE.",
-            self$name
-          ))
-        }
-      }
-
       files <- NULL
       payload <- list(
         name = self$name,
@@ -309,38 +310,34 @@ Upload <- R6::R6Class(
       self$uri <- self$properties$uri
 
       ## Wait for the upload to finish if required
-      tryCatch(
-        {
-          if (
-            (!is.null(content) ||
-              !is.null(temp_upload_id) ||
-              !is.null(transfer_specification)) &&
-              wait_for_finish
-          ) {
-            repeat {
-              Sys.sleep(2)
-              self$get()
-              status <- self$properties$status
-              if (status == "completed" || status == "failed") {
-                if (status == "failed" && raise_on_fail) {
-                  abort_redivis_job_error(
-                    message = self$properties$errorMessage,
-                    kind = self$properties$kind,
-                    status = self$properties$status
-                  )
-                }
-                break
-              }
+      if (
+        (!is.null(content) ||
+          !is.null(temp_upload_id) ||
+          !is.null(transfer_specification)) &&
+          wait_for_finish
+      ) {
+        repeat {
+          poll_sleep(2)
+          self$get()
+          status <- self$properties$status
+          if (status == "completed") {
+            break
+          } else if (status == "failed") {
+            failed_properties <- self$properties
+            if (remove_on_fail) {
+              self$delete()
             }
+            if (raise_on_fail) {
+              abort_redivis_job_error(
+                message = failed_properties$errorMessage,
+                kind = failed_properties$kind,
+                status = failed_properties$status
+              )
+            }
+            break
           }
-        },
-        error = function(e) {
-          if (remove_on_fail && self$properties$status == "failed") {
-            self$delete()
-          }
-          stop(e)
         }
-      )
+      }
 
       return(self)
     }

@@ -9,6 +9,64 @@ retry_sleep <- function(seconds) {
   Sys.sleep(seconds)
 }
 
+# Sleep between polls of a job's status. Also separate so tests can skip it.
+poll_sleep <- function(seconds) {
+  Sys.sleep(seconds)
+}
+
+# Splits a reference like `owner.dataset:v1_0.table` into its dot-separated
+# parts. A version tag can also be written with a dot (`:v1.0`), so it's first
+# normalized to the equivalent underscore form.
+split_reference <- function(reference) {
+  normalized <- gsub(":v(\\d+)\\.(\\d+)", ":v\\1_\\2", reference)
+  strsplit(normalized, ".", fixed = TRUE)[[1]]
+}
+
+# Whether an environment variable is set to a non-empty value
+has_env <- function(name) {
+  nzchar(Sys.getenv(name))
+}
+
+# Waits for a transform or notebook run, given the response to starting it.
+# Raises a job error if the run fails or is cancelled.
+wait_for_run <- function(instance, run_properties) {
+  job_id <- run_properties[["currentJob"]][["id"]]
+  repeat {
+    poll_sleep(2)
+    instance$get()
+    jobs <- list(
+      instance$properties[["currentJob"]],
+      instance$properties[["lastRunJob"]]
+    )
+    job <- if (!is.null(job_id)) {
+      # Track the job this run started, rather than whichever is most recent
+      Find(function(j) identical(j[["id"]], job_id), jobs)
+    } else {
+      jobs[[1]] %||% jobs[[2]]
+    }
+    if (
+      !is.null(job) &&
+        job[["status"]] %in% c("completed", "failed", "cancelled")
+    ) {
+      if (job[["status"]] != "completed") {
+        abort_redivis_job_error(
+          message = job$errorMessage,
+          kind = job$kind,
+          status = job$status
+        )
+      }
+      return(invisible(NULL))
+    }
+  }
+}
+
+# Downloads are written to this file alongside the destination, which only
+# replaces the destination once complete and verified, so that a failed
+# download never leaves a partial file there
+get_partial_download_path <- function(download_path) {
+  paste0(download_path, ".redivis-partial")
+}
+
 get_arrow_schema <- function(variables) {
   schema <- purrr::map(variables, function(variable) {
     if (variable$type == 'integer') {

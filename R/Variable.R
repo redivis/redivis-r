@@ -33,7 +33,7 @@ Variable <- R6::R6Class(
       self$uri <- if (length(properties$uri)) {
         properties$uri
       } else {
-        str_interp("${parent_uri}/variables/${name}")
+        str_interp("${parent_uri}/variables/${URLencode(name, reserved = TRUE)}")
       }
     },
 
@@ -89,7 +89,9 @@ Variable <- R6::R6Class(
     update = function(label = NULL, description = NULL, value_labels = NULL) {
       if (!is.null(self$table) && is_workflow_scoped_uri(self$uri)) {
         resolve_table_for_write(self$table)
-        self$uri <- str_interp("${self$table$uri}/variables/${self$name}")
+        self$uri <- str_interp(
+          "${self$table$uri}/variables/${URLencode(self$name, reserved = TRUE)}"
+        )
       }
       payload <- list()
       if (!is.null(label)) {

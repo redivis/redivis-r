@@ -103,6 +103,22 @@ File <- R6::R6Class(
         start_byte = start_byte,
         end_byte = end_byte
       )
+      is_range <- start_byte > 0 || !is.null(end_byte)
+      if (is_range && httr2::resp_status(res) != 206) {
+        # The server ignored the range and sent the whole file
+        content <- httr2::resp_body_raw(res)
+        end <- min(
+          if (is.null(end_byte)) length(content) else end_byte + 1,
+          length(content)
+        )
+        content <- content[seq_len(max(0, end - start_byte)) + start_byte]
+        if (as_text) {
+          text <- rawToChar(content)
+          Encoding(text) <- "UTF-8"
+          return(text)
+        }
+        return(content)
+      }
       if (as_text) httr2::resp_body_string(res) else httr2::resp_body_raw(res)
     },
 

@@ -24,15 +24,15 @@ Dataset <- R6::R6Class(
       parsed_organization <- organization
 
       if (is.null(user) && is.null(organization)) {
-        split <- strsplit(name, "\\.")[[1]]
+        split <- split_reference(name)
         if (length(split) == 2) {
           parsed_name <- split[[2]]
           username <- split[[1]]
           parsed_user <- User$new(name = username)
           parsed_organization <- Organization$new(name = username)
-        } else if (Sys.getenv("REDIVIS_DEFAULT_USER", FALSE)) {
+        } else if (has_env("REDIVIS_DEFAULT_USER")) {
           parsed_user <- User$new(name = Sys.getenv("REDIVIS_DEFAULT_USER"))
-        } else if (Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION", FALSE)) {
+        } else if (has_env("REDIVIS_DEFAULT_ORGANIZATION")) {
           parsed_organization <- Organization$new(
             name = Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION")
           )
@@ -60,6 +60,11 @@ Dataset <- R6::R6Class(
           name,
           ":(v\\d+[._]\\d+|current|next)"
         )[2]
+      }
+      # In the form used in references (v1_0, rather than v1.0), since a dot
+      # would also separate the parts of a reference
+      if (!is.null(version_arg)) {
+        version_arg <- normalize_version_tag(version_arg)
       }
 
       version_string <- ""
@@ -120,9 +125,13 @@ Dataset <- R6::R6Class(
     create = function(public_access_level = "none", description = NULL) {
       rectify_ambiguous_dataset_owner(self)
       if (is.null(self$organization)) {
-        path <- str_interp("/users/${self$user$name}/datasets")
+        path <- str_interp(
+          "/users/${URLencode(self$user$name, reserved = TRUE)}/datasets"
+        )
       } else {
-        path <- str_interp("/organizations/${self$organization$name}/datasets")
+        path <- str_interp(
+          "/organizations/${URLencode(self$organization$name, reserved = TRUE)}/datasets"
+        )
       }
 
       payload <- list(name = self$name, publicAccessLevel = public_access_level)
@@ -203,11 +212,15 @@ Dataset <- R6::R6Class(
     },
 
     previous_version = function() {
-      return(self$version()$previous_version()$dataset())
+      version <- self$version()$previous_version()
+      # NULL for the first version
+      if (is.null(version)) NULL else version$dataset()
     },
 
     next_version = function() {
-      return(self$version()$next_version()$dataset())
+      version <- self$version()$next_version()
+      # NULL for the latest version
+      if (is.null(version)) NULL else version$dataset()
     },
 
     list_versions = function(max_results = NULL) {
@@ -364,6 +377,10 @@ Dataset <- R6::R6Class(
   )
 )
 
+normalize_version_tag <- function(tag) {
+  sub("^(v\\d+)\\.(\\d+)$", "\\1_\\2", tag)
+}
+
 rectify_ambiguous_dataset_owner <- function(dataset) {
   if (!is.null(dataset$user) && !is.null(dataset$organization)) {
     if (!is.null(dataset$properties[['owner']])) {
@@ -386,6 +403,8 @@ update_dataset_properties <- function(instance, properties) {
   instance$scoped_reference <- properties$scopedReference
   instance$name <- properties$name
   instance$uri <- properties$uri
-  instance$version_tag <- properties$version$tag
+  if (!is.null(properties$version$tag)) {
+    instance$version_tag <- normalize_version_tag(properties$version$tag)
+  }
   rectify_ambiguous_dataset_owner(instance)
 }

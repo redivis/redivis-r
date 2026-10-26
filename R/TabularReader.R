@@ -1,6 +1,17 @@
 # TODO: can this be some sort of weakRef, like in python?
 cached_directories <- new.env(parent = emptyenv())
 
+# A listing depends on the variables it was made with, as well as the table or
+# query
+get_directory_cache_key <- function(uri, file_id_variable, file_name_variable) {
+  paste(
+    uri,
+    file_id_variable %||% "",
+    file_name_variable %||% "",
+    sep = "\n"
+  )
+}
+
 #' @include read_rows.R Directory.R api_request.R
 TabularReader <- R6::R6Class(
   "TabularReader",
@@ -41,12 +52,20 @@ TabularReader <- R6::R6Class(
         check_is_ready(self)
       }
 
-      if (is.null(self$directory) && !is.null(cached_directories[[self$uri]])) {
-        self$directory <- cached_directories[[self$uri]]
-      }
+      private$directory_variables <- list(
+        file_id_variable = file_id_variable,
+        file_name_variable = file_name_variable
+      )
+      cache_key <- get_directory_cache_key(
+        self$uri,
+        file_id_variable,
+        file_name_variable
+      )
+      cached_directory <- cached_directories[[cache_key]]
 
       # Queries are immutable — return the cached directory if available
-      if (is_query && !is.null(self$directory)) {
+      if (is_query && !is.null(cached_directory)) {
+        self$directory <- cached_directory
         return(self$directory)
       }
 
@@ -54,10 +73,10 @@ TabularReader <- R6::R6Class(
       current_timestamp_ms <- as.numeric(Sys.time()) * 1000
 
       req_headers <- list()
-      if (!is.null(self$directory$last_cached_at)) {
+      if (!is.null(cached_directory$last_cached_at)) {
         req_headers[["If-Modified-Since"]] <- format(
           as.POSIXct(
-            self$directory$last_cached_at / 1000,
+            cached_directory$last_cached_at / 1000,
             origin = "1970-01-01",
             tz = "GMT"
           ),
@@ -91,7 +110,8 @@ TabularReader <- R6::R6Class(
 
       # 304 Not Modified — return cached directory
       if (httr2::resp_status(res) == 304L) {
-        self$directory$last_cached_at <- current_timestamp_ms
+        cached_directory$last_cached_at <- current_timestamp_ms
+        self$directory <- cached_directory
         return(self$directory)
       }
 
@@ -123,7 +143,7 @@ TabularReader <- R6::R6Class(
 
       self$directory <- dir
       self$directory$last_cached_at <- current_timestamp_ms
-      cached_directories[[self$uri]] <- dir
+      cached_directories[[cache_key]] <- dir
       dir
     },
 
@@ -423,20 +443,27 @@ TabularReader <- R6::R6Class(
     },
 
     file = function(path) {
-      if (is.null(self$directory)) {
-        self$directory <- cached_directories[[self$uri]]
-      }
-      cache_age_ms <- if (!is.null(self$directory$last_cached_at)) {
-        as.numeric(Sys.time()) * 1000 - self$directory$last_cached_at
+      # Look files up with the same variables as the last listing, if any
+      variables <- private$directory_variables
+      directory <- cached_directories[[get_directory_cache_key(
+        self$uri,
+        variables$file_id_variable,
+        variables$file_name_variable
+      )]]
+      cache_age_ms <- if (!is.null(directory$last_cached_at)) {
+        as.numeric(Sys.time()) * 1000 - directory$last_cached_at
       } else {
         Inf
       }
 
-      if (is.null(self$directory) || cache_age_ms >= 30 * 1000) {
-        self$to_directory()
+      if (is.null(directory) || cache_age_ms >= 30 * 1000) {
+        directory <- self$to_directory(
+          file_id_variable = variables$file_id_variable,
+          file_name_variable = variables$file_name_variable
+        )
       }
 
-      node <- self$directory$get(path)
+      node <- directory$get(path)
       if (inherits(node, "Directory")) {
         abort_redivis_value_error(str_interp(
           "'${path}' is a directory, not a file"
@@ -489,6 +516,10 @@ TabularReader <- R6::R6Class(
         max_parallelization = max_parallelization
       )
     }
+  ),
+  private = list(
+    # The variables of the last file listing, which file() looks files up with
+    directory_variables = list()
   )
 )
 
@@ -523,6 +554,16 @@ get_table_request_params <- function(
   include_value_labels = FALSE
 ) {
   if (inherits(instance, "ReadStream")) {
+    if (!is.null(variables)) {
+      abort_redivis_value_error(
+        "A read stream's variables are chosen when it's created; pass them to to_read_streams() instead"
+      )
+    }
+    if (!is.null(max_results)) {
+      abort_redivis_value_error(
+        "max_results isn't supported for read streams, which each read their share of the read session"
+      )
+    }
     res <- get_table_request_params(
       if (!is.null(instance$table)) {
         instance$table
@@ -531,7 +572,6 @@ get_table_request_params <- function(
       } else {
         instance$query
       },
-      max_results = max_results,
       variables = instance$selected_variable_names,
       geography_variable = geography_variable,
       # The parent was fetched when the read session was created, and
@@ -600,6 +640,16 @@ get_table_request_params <- function(
         geography_variable <- variable$name
         break
       }
+    }
+  } else if (!is.null(geography_variable)) {
+    # Variable names are case-insensitive; use the variable's own name, which
+    # is what the column is called
+    match_index <- match(
+      tolower(geography_variable),
+      tolower(vapply(variables_list, function(v) v$name, character(1)))
+    )
+    geography_variable <- if (!is.na(match_index)) {
+      variables_list[[match_index]]$name
     }
   }
 

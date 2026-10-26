@@ -38,7 +38,7 @@ Parameter <- R6::R6Class(
       uri_val <- properties$uri
       if (is.null(uri_val)) {
         uri_val <- str_interp(
-          "${parsed_workflow$uri}/parameters/${URLencode(name)}"
+          "${parsed_workflow$uri}/parameters/${URLencode(parsed_name, reserved = TRUE)}"
         )
       }
       parent_reference <- str_interp("${parsed_workflow$qualified_reference}.")

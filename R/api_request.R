@@ -38,7 +38,7 @@ make_request <- function(
     auth_failures = auth_failures
   )
 
-  if (start_byte || resumable_byte) {
+  if (start_byte || resumable_byte || !is.null(end_byte)) {
     if (!is.null(end_byte)) {
       headers$Range <- str_interp(
         "bytes=${start_byte+resumable_byte}-${end_byte}"
@@ -59,6 +59,18 @@ make_request <- function(
   authenticated <- !is.null(auth_headers$Authorization)
 
   can_retry_503 <- retry_count < 10
+
+  # Retries a request that failed to connect (or timed out), returning the
+  # retry's result. Only idempotent requests are safe to repeat, since we can't
+  # know whether the server received the original.
+  retry_failed_request <- function(failure) {
+    if (!(toupper(method) %in% c("GET", "HEAD")) || retry_count >= 10) {
+      stop(failure)
+    }
+    retry_sleep(retry_count)
+    args$retry_count <- args$retry_count + 1
+    do.call(make_request, args)
+  }
 
   req <- httr2::request(generate_api_url(path)) |>
     httr2::req_method(method) |>
@@ -97,7 +109,13 @@ make_request <- function(
 
   if (!is.null(stream_callback) || as_connection) {
     # Streaming response via connection
-    res <- httr2::req_perform_connection(req)
+    res <- tryCatch(
+      httr2::req_perform_connection(req),
+      httr2_failure = function(e) e
+    )
+    if (inherits(res, "httr2_failure")) {
+      return(retry_failed_request(res))
+    }
 
     # If we're returning the connection,
     if (!as_connection) {
@@ -155,9 +173,15 @@ make_request <- function(
         str_interp("File already exists: ${download_path}"),
       )
     }
-    res <- httr2::req_perform(req, path = download_path)
+    res <- tryCatch(
+      httr2::req_perform(req, path = download_path),
+      httr2_failure = function(e) e
+    )
   } else {
-    res <- httr2::req_perform(req)
+    res <- tryCatch(httr2::req_perform(req), httr2_failure = function(e) e)
+  }
+  if (inherits(res, "httr2_failure")) {
+    return(retry_failed_request(res))
   }
 
   status <- httr2::resp_status(res)

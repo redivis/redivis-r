@@ -26,9 +26,9 @@ Workflow <- R6::R6Class(
           username <- split[[1]]
           parsed_user <- User$new(name = username)
           parsed_organization <- Organization$new(name = username)
-        } else if (Sys.getenv("REDIVIS_DEFAULT_USER", FALSE)) {
+        } else if (has_env("REDIVIS_DEFAULT_USER")) {
           parsed_user <- User$new(name = Sys.getenv("REDIVIS_DEFAULT_USER"))
-        } else if (Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION", FALSE)) {
+        } else if (has_env("REDIVIS_DEFAULT_ORGANIZATION")) {
           parsed_organization <- Organization$new(
             name = Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION")
           )

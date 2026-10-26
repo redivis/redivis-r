@@ -43,6 +43,10 @@ mock_api_server <- function(port) {
     state$truncate_raw_file_once <- 0
     # rawFiles responses ignore the Range header, sending the whole file
     state$ignore_raw_file_range <- FALSE
+    # The resumable upload sessions started (see /storage/ below), and whether
+    # the first has expired
+    state$storage_sessions <- 0
+    state$expire_first_storage_session <- FALSE
     state$requests <- list()
     state$oauth_scopes <- list()
   }
@@ -129,7 +133,10 @@ mock_api_server <- function(port) {
       body <- body[seq_len(min(length(body), state$truncate_raw_file_once))]
       state$truncate_raw_file_once <- 0
     }
-    headers <- list("Content-Type" = "application/octet-stream")
+    headers <- list(
+      "Content-Type" = "application/octet-stream",
+      "Accept-Ranges" = "bytes"
+    )
     if (!is.null(range)) {
       headers[["Content-Range"]] <- sprintf(
         "bytes %.0f-%.0f/%d",
@@ -257,6 +264,32 @@ mock_api_server <- function(port) {
       query = query,
       authorized = authorized
     )
+
+    # A stand-in for the signed URLs that temp uploads are sent to. A resumable
+    # upload first starts a session, and is then sent to the session's URL.
+    if (startsWith(path, "/storage/")) {
+      if (method == "POST") {
+        state$storage_sessions <- state$storage_sessions + 1
+        return(list(
+          status = 201L,
+          headers = list(
+            Location = sprintf(
+              "http://%s/storage/session-%d",
+              req$HTTP_HOST,
+              state$storage_sessions
+            )
+          ),
+          body = ""
+        ))
+      }
+      if (
+        isTRUE(state$expire_first_storage_session) &&
+          path == "/storage/session-1"
+      ) {
+        return(json(list(error = "not_found"), 404))
+      }
+      return(json(list(ok = TRUE, bytes = length(body_raw))))
+    }
 
     if (state$fail_503 > 0) {
       state$fail_503 <- state$fail_503 - 1
@@ -522,6 +555,7 @@ local_mock_api <- function(authenticated = TRUE, env = parent.frame()) {
 
   testthat::local_mocked_bindings(
     retry_sleep = function(seconds) invisible(NULL),
+    poll_sleep = function(seconds) invisible(NULL),
     perform_oauth_login = function(...) {
       stop("an interactive OAuth login was triggered")
     },
