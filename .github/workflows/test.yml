@@ -1,0 +1,41 @@
+# Runs the offline tests (see CONTRIBUTING.md) on pull requests into main. The
+# live tests need a Redivis environment and credentials, so they're run by hand.
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      # Also installs the package itself, since the tests' parallel worker
+      # processes load the installed version rather than the working copy
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: local::.
+
+      - name: Run the offline tests
+        shell: Rscript {0}
+        run: testthat::test_local(filter = "offline")
