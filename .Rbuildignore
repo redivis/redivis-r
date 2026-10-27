@@ -12,3 +12,5 @@
 ^src/.*\.(o|so|dylib|dll)$
 ^LICENSE\.md$
 ^\.github$
+^AGENTS\.md$
+^CLAUDE\.md$
