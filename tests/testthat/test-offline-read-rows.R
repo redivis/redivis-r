@@ -243,6 +243,42 @@ test_that("listRows server errors aren't retried", {
   expect_length(mock$paths("/rows"), 1)
 })
 
+test_that("rows listRows can't serve are read through a read session", {
+  read_session_required <- list(
+    list(status = NULL), # table metadata
+    list(status = NULL), # variables
+    list(
+      status = 400,
+      body = list(
+        status = 400,
+        error = "read_session_required",
+        error_description = "Use a read session"
+      )
+    )
+  )
+
+  for (read in list(
+    function(table) table$to_tibble(progress = FALSE),
+    function(table) {
+      reader <- table$to_arrow_batch_reader(progress = FALSE)
+      batches <- list()
+      while (!is.null(batch <- reader$read_next_batch())) {
+        batches[[length(batches) + 1]] <- batch
+      }
+      as.data.frame(do.call(arrow::arrow_table, batches))
+    }
+  )) {
+    mock <- local_mock_api()
+    mock$set(response_script = read_session_required)
+
+    result <- read(mock_table())
+
+    expect_equal(nrow(result), 500)
+    expect_equal(sort(as.numeric(result$id)), 0:499)
+    expect_equal(data_paths(mock)[1:2], c(ROWS, READ_SESSIONS))
+  }
+})
+
 test_that("listRows API errors aren't retried", {
   mock <- local_mock_api()
   mock$set(

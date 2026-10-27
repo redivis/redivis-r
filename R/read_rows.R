@@ -526,16 +526,30 @@ make_rows_request <- function(
       should_use_list_rows(instance, max_results)
 
     if (use_list_rows) {
-      return(read_list_rows(
-        instance,
-        uri,
-        max_results = max_results,
-        selected_variable_names = selected_variable_names,
-        type = type,
-        variables = variables,
-        coerce_schema = coerce_schema,
-        batch_preprocessor = batch_preprocessor
-      ))
+      result <- tryCatch(
+        read_list_rows(
+          instance,
+          uri,
+          max_results = max_results,
+          selected_variable_names = selected_variable_names,
+          type = type,
+          variables = variables,
+          coerce_schema = coerce_schema,
+          batch_preprocessor = batch_preprocessor
+        ),
+        redivis_api_error = function(e) {
+          # listRows can't always serve the rows as a single response (e.g.,
+          # those of an unreleased version's uploads, when their schemas
+          # differ), in which case they're read through a read session below
+          if (!identical(e$code, "read_session_required")) {
+            stop(e)
+          }
+          NULL
+        }
+      )
+      if (!is.null(result)) {
+        return(result)
+      }
     }
 
     if (!use_export_api) {

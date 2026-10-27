@@ -32,6 +32,8 @@ abort_redivis_api_error <- function(
     message = display_msg,
     class = c("redivis_api_error", "redivis_error"),
     status_code = status_code,
+    # The API's error code, e.g. "read_session_required"
+    code = message,
     description = description,
     trace = rlang::trace_back(bottom = call),
     call = call

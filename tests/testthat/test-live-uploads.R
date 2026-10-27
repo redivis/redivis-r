@@ -209,6 +209,37 @@ test_that("rows can be streamed to an upload", {
   expect_error(upload$insert_rows(list(id = 4)), class = "redivis_value_error")
 })
 
+test_that("several unreleased uploads with the same schema can be read", {
+  table <- local_live_table()
+  table$upload("first.csv")$create(small_csv, progress = FALSE)
+  table$upload("second.csv")$create(
+    charToRaw("id,name,value\n9,z,9.5\n"),
+    progress = FALSE
+  )
+
+  expect_equal(sorted_by(table$to_tibble(progress = FALSE))$id, c(1, 2, 3, 9))
+})
+
+test_that("unreleased uploads with different schemas can be read", {
+  # listRows can't combine these into one response, so they're read through a
+  # read session, with each upload's rows conformed to the table's variables
+  table <- local_live_table()
+  table$upload("first.csv")$create(
+    charToRaw("id,code,extra\n1,10,x\n2,20,y\n"),
+    progress = FALSE
+  )
+  table$upload("second.csv")$create(
+    charToRaw("id,code\n3,abc\n"),
+    progress = FALSE
+  )
+
+  df <- sorted_by(table$to_tibble(progress = FALSE))
+
+  expect_equal(df$id, c(1, 2, 3))
+  expect_equal(df$code, c("10", "20", "abc"))
+  expect_equal(df$extra, c("x", "y", NA))
+})
+
 test_that("a missing file path is an error", {
   table <- local_live_table()
 
