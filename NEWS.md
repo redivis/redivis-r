@@ -49,7 +49,7 @@
 - GET requests are retried after network failures.
 - A failed request to refresh your credentials (e.g., during an outage) now
   raises an error, rather than logging you out; only a rejected refresh token
-  does. Credentials are written atomically, and are only readable by you.
+  does.
 - `REDIVIS_DEFAULT_USER` and `REDIVIS_DEFAULT_ORGANIZATION` no longer cause an
   error when set.
 - Version tags written with a dot in references (e.g.,
