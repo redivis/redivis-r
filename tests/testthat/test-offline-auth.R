@@ -72,7 +72,7 @@ test_that("a login saves credentials privately, creating their directory", {
   saved <- jsonlite::fromJSON(get_credentials_file())
   expect_equal(saved$refresh_token, "refresh-token")
   expect_equal(format(file.info(get_credentials_file())$mode), "600")
-  expect_equal(format(file.info(get_redivis_dir())$mode), "700")
+  expect_equal(format(file.info(get_credentials_dir())$mode), "700")
 })
 
 test_that("the credentials directory can be overridden", {
@@ -82,8 +82,11 @@ test_that("the credentials directory can be overridden", {
 
   write_cached_credentials()
 
-  expect_equal(get_credentials_file(), file.path(config_dir, "r_credentials"))
-  expect_true(file.exists(file.path(config_dir, "r_credentials")))
+  credentials_file <- file.path(
+    config_dir, "environments", get_environment_host(), "r_credentials"
+  )
+  expect_equal(get_credentials_file(), credentials_file)
+  expect_true(file.exists(credentials_file))
 })
 
 test_that("a failed save raises an error, and leaves no temporary file behind", {
@@ -96,14 +99,14 @@ test_that("a failed save raises an error, and leaves no temporary file behind", 
     class = "redivis_error"
   )
   expect_equal(
-    list.files(get_redivis_dir(), all.files = TRUE, no.. = TRUE),
+    list.files(get_credentials_dir(), all.files = TRUE, no.. = TRUE),
     "r_credentials"
   )
 })
 
 test_that("saving credentials restricts an existing file, and restores the umask", {
   local_mock_api()
-  dir.create(get_redivis_dir(), recursive = TRUE, showWarnings = FALSE)
+  dir.create(get_credentials_dir(), recursive = TRUE, showWarnings = FALSE)
   writeLines("{}", get_credentials_file())
   Sys.chmod(get_credentials_file(), mode = "0644")
   umask <- Sys.umask()
@@ -157,7 +160,7 @@ test_that("has_credentials() finds each source of credentials", {
   local_mock_api(authenticated = FALSE)
   expect_false(has_credentials())
 
-  dir.create(get_redivis_dir())
+  dir.create(get_credentials_dir(), recursive = TRUE)
   writeLines(jsonlite::toJSON(fake_credentials(), auto_unbox = TRUE), get_credentials_file())
   expect_true(has_credentials())
   expect_equal(auth_vars$cached_credentials$refresh_token, "refresh-token")
@@ -209,4 +212,49 @@ test_that("a rejected refresh token prompts a login", {
 
   expect_equal(logins, 1)
   expect_false(file.exists(get_credentials_file()))
+})
+
+test_that("each environment has its own credentials", {
+  local_mock_api()
+  withr::defer(redivis$config(api_endpoint = NULL))
+  hosts <- c(
+    "https://redivis.com/api/v1" = "redivis.com",
+    "https://REDIVIS.com:443/api/v1" = "redivis.com",
+    "http://localhost:8080/api/v1" = "localhost_8080",
+    "https://local.host:8443/api/v1" = "local.host_8443"
+  )
+  for (api_endpoint in names(hosts)) {
+    redivis$config(api_endpoint = api_endpoint)
+    expect_equal(
+      get_credentials_file(),
+      file.path(get_redivis_dir(), "environments", hosts[[api_endpoint]], "r_credentials")
+    )
+  }
+})
+
+test_that("legacy credentials are moved to redivis.com, and deleted on logout", {
+  local_mock_api(authenticated = FALSE)
+  withr::defer(redivis$config(api_endpoint = NULL))
+  legacy_credentials_file <- file.path(get_redivis_dir(), "r_credentials")
+  write_legacy_credentials <- function() {
+    dir.create(get_redivis_dir(), showWarnings = FALSE)
+    writeLines(jsonlite::toJSON(fake_credentials(), auto_unbox = TRUE), legacy_credentials_file)
+  }
+
+  # Only for redivis.com, since they were almost always for it
+  write_legacy_credentials()
+  expect_false(has_credentials())
+  expect_true(file.exists(legacy_credentials_file))
+
+  redivis$config(api_endpoint = "https://redivis.com/api/v1")
+  expect_true(has_credentials())
+  expect_false(file.exists(legacy_credentials_file))
+  expect_equal(jsonlite::fromJSON(get_credentials_file())$refresh_token, "refresh-token")
+
+  # Deleted on logout, even if they haven't been moved yet
+  clear_cached_credentials()
+  write_legacy_credentials()
+  clear_cached_credentials()
+  expect_false(file.exists(legacy_credentials_file))
+  expect_false(has_credentials())
 })

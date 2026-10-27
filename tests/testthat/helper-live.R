@@ -68,7 +68,7 @@ live_config <- function() {
 
   list(
     api_endpoint = settings$api_endpoint,
-    config_dir = live_config_dir(settings$api_endpoint),
+    config_dir = live_config_dir(),
     owner = env_or_null("REDIVIS_TEST_OWNER") %||% settings$owner,
     organization = env_or_null("REDIVIS_TEST_ORGANIZATION") %||%
       settings$organization,
@@ -77,24 +77,12 @@ live_config <- function() {
   )
 }
 
-# Where the tests keep credentials for an environment.
-#
-# The client keeps a single set of credentials, whichever environment they're
-# for. Pointing it at another environment means its refresh token gets rejected
-# there, at which point the client deletes the credentials. So each
-# environment's are kept apart, and never touch the developer's own.
-live_config_dir <- function(api_endpoint) {
+# The config directory for the live tests, or NA for the default. The client
+# keeps each environment's credentials apart, in
+# ~/.redivis/environments/<host>/, so they're only moved elsewhere when asked to.
+live_config_dir <- function() {
   config_dir <- Sys.getenv("REDIVIS_TEST_CONFIG_DIR")
-  if (nzchar(config_dir)) {
-    return(path.expand(config_dir))
-  }
-  host <- sub("^https?://([^/]+).*$", "\\1", api_endpoint)
-  file.path(
-    path.expand("~"),
-    ".redivis",
-    "environments",
-    gsub("[^A-Za-z0-9_.-]", "_", host)
-  )
+  if (nzchar(config_dir)) path.expand(config_dir) else NA_character_
 }
 
 # State shared by every test in the run (helper files are sourced once, into an
@@ -208,7 +196,7 @@ start_live_run <- function() {
   # setup-live.R points the client at the environment under test
   stopifnot(
     identical(Sys.getenv("REDIVIS_API_ENDPOINT"), config$api_endpoint),
-    identical(get_redivis_dir(), config$config_dir)
+    is.na(config$config_dir) || identical(get_redivis_dir(), config$config_dir)
   )
 
   reachable <- tryCatch(

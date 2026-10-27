@@ -23,8 +23,41 @@ get_redivis_dir <- function() {
   }
 }
 
+# Credentials are only valid for the environment that issued them, so each API
+# endpoint's host (e.g. "redivis.com", or "localhost_8080") has its own. The JS
+# and Python clients name these directories the same way.
+get_environment_host <- function() {
+  url <- httr2::url_parse(get_config("api_endpoint"))
+  host <- tolower(url$hostname)
+  default_port <- c(http = "80", https = "443")[[url$scheme]]
+  if (!is.null(url$port) && !identical(as.character(url$port), default_port)) {
+    host <- paste0(host, ":", url$port)
+  }
+  gsub("[^A-Za-z0-9_.-]", "_", host)
+}
+
+get_credentials_dir <- function() {
+  file.path(get_redivis_dir(), "environments", get_environment_host())
+}
+
 get_credentials_file <- function() {
-  file.path(get_redivis_dir(), "r_credentials")
+  file.path(get_credentials_dir(), "r_credentials")
+}
+
+# Credentials used to be stored directly in the config directory. They were
+# almost always for redivis.com, so they're moved there.
+get_legacy_credentials_file <- function() {
+  if (get_environment_host() == "redivis.com") {
+    file.path(get_redivis_dir(), "r_credentials")
+  }
+}
+
+migrate_legacy_credentials <- function() {
+  legacy_credentials_file <- get_legacy_credentials_file()
+  if (!is.null(legacy_credentials_file) && file.exists(legacy_credentials_file)) {
+    dir.create(get_credentials_dir(), showWarnings = FALSE, recursive = TRUE, mode = "0700")
+    file.rename(legacy_credentials_file, get_credentials_file())
+  }
 }
 
 get_base_url <- function() {
@@ -51,6 +84,9 @@ load_cached_credentials <- function() {
       auth_vars$cached_credentials_file != credentials_file
   ) {
     auth_vars$cached_credentials <- NULL
+  }
+  if (is.null(auth_vars$cached_credentials) && !file.exists(credentials_file)) {
+    migrate_legacy_credentials()
   }
   if (
     is.null(auth_vars$cached_credentials) &&
@@ -87,8 +123,8 @@ has_credentials <- function() {
 write_cached_credentials <- function() {
   auth_vars$cached_credentials_file <- get_credentials_file()
   # The file holds a refresh token, so keep it private to this user
-  redivis_dir <- get_redivis_dir()
-  dir.create(redivis_dir, showWarnings = FALSE, recursive = TRUE, mode = "0700")
+  credentials_dir <- get_credentials_dir()
+  dir.create(credentials_dir, showWarnings = FALSE, recursive = TRUE, mode = "0700")
   # Write a temporary file and swap it into place, so that another process
   # (e.g. a second R session) never reads a partially written file. The umask
   # makes it private from the moment it's created, so the token is never
@@ -96,7 +132,7 @@ write_cached_credentials <- function() {
   # permissions of one written by an earlier version of the client.
   old_umask <- Sys.umask("077")
   on.exit(Sys.umask(old_umask), add = TRUE)
-  temp_file <- tempfile(".r_credentials.", tmpdir = redivis_dir)
+  temp_file <- tempfile(".r_credentials.", tmpdir = credentials_dir)
   # A no-op once the file has been moved into place
   on.exit(unlink(temp_file), add = TRUE)
   write(
@@ -163,6 +199,11 @@ clear_cached_credentials <- function() {
   auth_vars$cached_credentials <- NULL
   if (file.exists(get_credentials_file())) {
     file.remove(get_credentials_file())
+  }
+  # Otherwise they'd be moved into place the next time credentials are loaded
+  legacy_credentials_file <- get_legacy_credentials_file()
+  if (!is.null(legacy_credentials_file) && file.exists(legacy_credentials_file)) {
+    file.remove(legacy_credentials_file)
   }
 }
 

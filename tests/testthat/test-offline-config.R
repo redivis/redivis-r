@@ -115,12 +115,13 @@ test_that("credentials are reloaded when config_dir changes", {
   local_clean_config()
   dir <- withr::local_tempdir()
   for (name in c("a", "b")) {
-    dir.create(file.path(dir, name))
+    credentials_dir <- file.path(dir, name, "environments", get_environment_host())
+    dir.create(credentials_dir, recursive = TRUE)
     credentials <- fake_credentials()
     credentials$access_token <- paste0("token_", name)
     writeLines(
       jsonlite::toJSON(credentials, auto_unbox = TRUE),
-      file.path(dir, name, "r_credentials")
+      file.path(credentials_dir, "r_credentials")
     )
   }
 

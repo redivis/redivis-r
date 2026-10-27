@@ -20,10 +20,9 @@ Sys.setenv(REDIVIS_API_ENDPOINT = "https://local.host:8443/api/v1")
 devtools::load_all()
 ```
 
-Note that the client keeps one set of credentials, in `~/.redivis`, whichever
-environment they're for. Logging in to another environment replaces them; set
-`REDIVIS_CONFIG_DIR` to keep that environment's elsewhere. (The tests do this
-for you; see below.)
+Note that the client keeps each environment's credentials apart, in
+`~/.redivis/environments/<host>/`, so logging in to another environment never
+replaces your credentials for redivis.com.
 
 ### Running the tests
 
@@ -100,11 +99,10 @@ would test whatever version you last installed.
 #### Authenticating
 
 The first time you run the live tests against an environment, the client opens
-a browser to log in to it, as it would for any user. Those credentials are kept
-apart from your own, in `~/.redivis/environments/<host>/`, so that running the
-tests never touches the credentials in `~/.redivis` (which the client would
-otherwise delete when the test environment rejected them). Set
-`REDIVIS_TEST_CONFIG_DIR` to keep them somewhere else.
+a browser to log in to it, as it would for any user. The client keeps each
+environment's credentials apart, in `~/.redivis/environments/<host>/`, so the
+test environment's never touch your credentials for redivis.com. Set
+`REDIVIS_TEST_CONFIG_DIR` to use another config directory.
 
 For a non-interactive run (e.g., in CI, where `CI` is set and the tests fail
 rather than wait for a login), provide an API token for the environment
@@ -162,7 +160,7 @@ All of the options are environment variables:
 | `REDIVIS_TEST_ORGANIZATION`    | An organization the test user belongs to, for the organization tests. Defaults to the environment's default (`demo` for dev); the tests are skipped without one. |
 | `REDIVIS_TEST_KEEP_RESOURCES`  | `true` to keep the datasets the tests create.                                                                                                                   |
 | `REDIVIS_TEST_SLOW`            | `true` to also run slow tests, such as a resumable upload of over 32MB.                                                                                          |
-| `REDIVIS_TEST_CONFIG_DIR`      | Where to keep the credentials for the environment under test. Defaults to `~/.redivis/environments/<host>/`.                                                      |
+| `REDIVIS_TEST_CONFIG_DIR`      | The config directory to use, which holds the credentials for the environment under test. Defaults to `~/.redivis`.                                               |
 
 The tests also unset any `REDIVIS_DEFAULT_*` variables in your environment, so
 that they run the same everywhere.
