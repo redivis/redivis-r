@@ -105,6 +105,8 @@ test_that("a failed save raises an error, and leaves no temporary file behind", 
 })
 
 test_that("saving credentials restricts an existing file, and restores the umask", {
+  # Windows files don't have Unix permissions
+  skip_on_os("windows")
   local_mock_api()
   dir.create(get_credentials_dir(), recursive = TRUE, showWarnings = FALSE)
   writeLines("{}", get_credentials_file())

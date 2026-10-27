@@ -1,0 +1,44 @@
+# Runs R CMD check, including the tests, on pull requests into main. The live
+# tests skip themselves, since the environment they default to (a local dev
+# server) isn't running here; run them yourself (see CONTRIBUTING.md).
+name: R-CMD-check
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+    steps:
+      - uses: actions/checkout@v5
+
+      # Sets NOT_CRAN=true, which the tests against the mock API need
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::rcmdcheck
+          needs: check
+
+      # Fails on any warning or error; notes are only reported
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          upload-snapshots: true

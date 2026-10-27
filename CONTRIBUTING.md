@@ -52,9 +52,10 @@ The live tests are skipped on CRAN, and whenever the environment they run
 against can't be reached (and listed as such in the summary). `R CMD check`
 skips them too, unless `NOT_CRAN=true` is set.
 
-Pull requests into `main` run the offline tests on Linux and macOS (see the
-[test workflow](.github/workflows/test.yml)), so run the live tests yourself
-before merging changes they cover.
+Pull requests into `main` run `R CMD check`, including the offline tests, on
+Linux, macOS, and Windows (see the [check workflow](.github/workflows/check.yml)).
+The live tests are skipped there, so run them yourself before merging changes
+they cover.
 
 The live tests spend most of their time waiting for uploads to be processed,
 so they take a while one at a time. To run test files in parallel, in separate
