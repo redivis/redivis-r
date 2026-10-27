@@ -29,12 +29,13 @@ test_that("a small table reads in a single listRows request", {
   expect_equal(as.numeric(df$id), 0:499)
 })
 
-test_that("max_results = 0 reads no rows, without requesting any", {
+test_that("max_results = 0 reads no rows", {
   mock <- local_mock_api()
 
   df <- mock_table()$to_tibble(max_results = 0, progress = FALSE)
 
-  expect_equal(data_paths(mock), character())
+  expect_equal(data_paths(mock), ROWS)
+  expect_equal(list_rows_queries(mock), list(list(format = "arrow", maxResults = "0")))
   expect_equal(nrow(df), 0)
   expect_equal(names(df), c("id", "name", "val"))
 })

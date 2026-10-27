@@ -260,6 +260,48 @@ test_that("updates send their fields as the API names them", {
   )
 })
 
+test_that("releases, unreleases, and deletions wait for finalization when asked", {
+  polls <- 0
+  requests <- local_api(function(method, path) {
+    if (grepl("/versions/", path)) {
+      # The version is still finalizing in the response to the request, and the
+      # first poll after it
+      finalizing <- method != "GET" || polls < 1
+      if (method == "GET") polls <<- polls + 1
+      return(list(
+        tag = "v1.0",
+        uri = "/datasets/owner.ds/versions/v1_0",
+        datasetUri = "/datasets/owner.ds:v1_0",
+        isFinalizing = finalizing
+      ))
+    }
+    list(uri = path, qualifiedReference = "owner.ds:v1_0", name = "ds")
+  })
+  version_polls <- function() {
+    sum(requests$log == "GET /datasets/owner.ds/versions/v1_0")
+  }
+
+  Dataset$new("owner.ds")$release(wait_for_finalization = TRUE)
+  expect_equal(version_polls(), 2)
+
+  polls <- 0
+  Dataset$new("owner.ds:v1_0")$unrelease(wait_for_finalization = TRUE)
+  expect_equal(version_polls(), 4)
+  expect_true(
+    "POST /datasets/owner.ds:v1_0/versions/current/unrelease" %in% requests$log
+  )
+
+  polls <- 0
+  version <- Dataset$new("owner.ds")$version("v1_0")
+  version$delete(wait_for_finalization = TRUE)
+  expect_false(version$properties$isFinalizing)
+  expect_equal(version_polls(), 6)
+
+  # By default, they return as soon as the request has been made
+  Dataset$new("owner.ds")$release()
+  expect_equal(version_polls(), 6)
+})
+
 test_that("a workflow is created by its owner", {
   workflow_properties <- function(owner_kind) {
     function(method, path) {

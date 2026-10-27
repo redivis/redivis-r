@@ -57,7 +57,7 @@ so they take a while one at a time. To run test files in parallel, in separate
 R processes:
 
 ```r
-Sys.setenv(TESTTHAT_PARALLEL = "true", TESTTHAT_CPUS = 8)
+Sys.setenv(TESTTHAT_PARALLEL = "true", TESTTHAT_CPUS = 16)
 devtools::test(filter = "live")
 ```
 

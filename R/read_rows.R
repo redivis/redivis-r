@@ -279,17 +279,12 @@ read_list_rows <- function(
   batch_preprocessor
 ) {
   schema <- get_arrow_schema(variables)
-  # listRows doesn't respond with an arrow stream when no rows are requested
-  result <- if (identical(as.numeric(max_results), 0)) {
-    list(schema = schema, batches = list())
-  } else {
-    fetch_list_rows(
-      uri,
-      selected_variable_names = selected_variable_names,
-      max_results = max_results,
-      expected_rows = get_expected_list_rows(instance, max_results)
-    )
-  }
+  result <- fetch_list_rows(
+    uri,
+    selected_variable_names = selected_variable_names,
+    max_results = max_results,
+    expected_rows = get_expected_list_rows(instance, max_results)
+  )
   if (type == 'arrow_stream') {
     # Like RedivisBatchReader, only convert batches whose types need it
     batches <- if (coerce_schema) {

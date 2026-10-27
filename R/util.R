@@ -14,6 +14,17 @@ poll_sleep <- function(seconds) {
   Sys.sleep(seconds)
 }
 
+# Waits for a version's release, unrelease, or deletion to be finalized, given
+# the version as returned by that request. These take effect immediately, but
+# the version's data is moved in the background, and the dataset can't be
+# released, unreleased, or deleted again until that finishes.
+wait_for_version_finalization <- function(version) {
+  while (isTRUE(version$properties[["isFinalizing"]])) {
+    poll_sleep(2)
+    version$get()
+  }
+}
+
 # Splits a reference like `owner.dataset:v1_0.table` into its dot-separated
 # parts. A version tag can also be written with a dot (`:v1.0`), so it's first
 # normalized to the equivalent underscore form.

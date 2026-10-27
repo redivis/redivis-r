@@ -94,20 +94,22 @@ test_that("a dataset can be released, and its versions listed", {
   dataset <- local_live_dataset()
   add_small_table(dataset)
 
-  dataset$release(release_notes = "First release")
+  # The next version can't be released until this one has finished being released
+  dataset$release(release_notes = "First release", wait_for_finalization = TRUE)
 
   expect_equal(dataset$version_tag, "v1_0")
   expect_true(dataset$properties$version$isReleased)
   version <- dataset$version()$get()
   expect_equal(version$properties$tag, "v1.0")
   expect_equal(version$properties$releaseNotes, "First release")
+  expect_false(version$properties$isFinalizing)
   expect_null(dataset$previous_version())
 
   next_version <- dataset$create_next_version()
   expect_equal(next_version$version_tag, "next")
   # A version needs changes to be released. Adding rows is a minor change.
   next_version$table("t")$upload("more.csv")$create(small_csv, progress = FALSE)
-  next_version$release()
+  next_version$release(wait_for_finalization = TRUE)
   expect_equal(next_version$version_tag, "v1_1")
 
   tags <- vapply(next_version$list_versions(), function(v) v$properties$tag, character(1))
@@ -119,6 +121,27 @@ test_that("a dataset can be released, and its versions listed", {
   reference <- sub(":[^:]*$", "", dataset$qualified_reference)
   expect_true(redivis$dataset(paste0(reference, ":v1.0"))$exists())
   expect_true(redivis$dataset(reference, version = "1.0")$exists())
+
+  # A historic version's data is removed in the background
+  first_version <- Find(
+    function(v) identical(v$properties$tag, "v1.0"),
+    next_version$list_versions()
+  )
+  first_version$delete(wait_for_finalization = TRUE)
+  expect_true(first_version$properties$isDeleted)
+  expect_false(first_version$properties$isFinalizing)
+})
+
+test_that("a dataset can be unreleased", {
+  dataset <- local_live_dataset()
+  add_small_table(dataset)
+  dataset$release(wait_for_finalization = TRUE)
+
+  dataset$unrelease(wait_for_finalization = TRUE)
+  expect_equal(dataset$version_tag, "next")
+  version <- dataset$version()$get()
+  expect_false(version$properties$isReleased)
+  expect_false(version$properties$isFinalizing)
 })
 
 test_that("a version can be updated", {

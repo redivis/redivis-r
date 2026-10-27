@@ -257,22 +257,32 @@ Dataset <- R6::R6Class(
       redivis$query(query, default_dataset = self$qualified_reference)
     },
 
-    release = function(release_notes = NULL) {
+    release = function(release_notes = NULL, wait_for_finalization = FALSE) {
       version_res <- make_request(
         method = "POST",
         path = str_interp("${self$uri}/versions/next/release"),
         payload = list(releaseNotes = release_notes)
       )
+      if (wait_for_finalization) {
+        wait_for_version_finalization(
+          Version$new(tag = version_res$tag, dataset = self, properties = version_res)
+        )
+      }
       self$uri <- version_res$datasetUri
       self$get()
       self
     },
 
-    unrelease = function() {
+    unrelease = function(wait_for_finalization = FALSE) {
       version_res <- make_request(
         method = "POST",
-        path = str_interp("${self$uri}/versions/current/release")
+        path = str_interp("${self$uri}/versions/current/unrelease")
       )
+      if (wait_for_finalization) {
+        wait_for_version_finalization(
+          Version$new(tag = version_res$tag, dataset = self, properties = version_res)
+        )
+      }
       self$uri <- version_res$datasetUri
       self$get()
       self
