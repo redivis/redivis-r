@@ -71,6 +71,9 @@ test_that("a login saves credentials privately, creating their directory", {
 
   saved <- jsonlite::fromJSON(get_credentials_file())
   expect_equal(saved$refresh_token, "refresh-token")
+
+  # Windows files don't have Unix permissions
+  skip_on_os("windows")
   expect_equal(format(file.info(get_credentials_file())$mode), "600")
   expect_equal(format(file.info(get_credentials_dir())$mode), "700")
 })
