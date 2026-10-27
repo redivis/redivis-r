@@ -198,3 +198,24 @@ that they run the same everywhere.
 - Run `devtools::check()` before a release.
 
 See also https://r-pkgs.org/testing-basics.html.
+
+### Releasing
+
+Releases are made by the [release workflow](.github/workflows/release.yml):
+whenever the `Version` in `DESCRIPTION` changes on `main`, it tags that commit
+with the version and creates a GitHub release for it, which
+[R-universe](https://redivis.r-universe.dev) then builds. So don't create tags
+or releases by hand. To make a release:
+
+1. Bump the version, in the pull request with the changes or in one of its own,
+   with `usethis::use_version()` (e.g., `usethis::use_version("minor")` for new
+   features, or `"patch"` for fixes).
+2. Optionally, describe the release in `NEWS.md`, under a `# redivis <version>`
+   heading (e.g., `# redivis 0.13.2`). The workflow uses that section as the
+   release's notes, followed by GitHub's generated list of changes; without
+   one, the notes are just that list. You can also edit a release's notes on
+   GitHub once it's made.
+3. Run `devtools::check()`, then merge.
+
+The workflow skips versions that are already tagged, so if a run fails, re-run
+it from the repository's Actions tab once the problem is fixed.

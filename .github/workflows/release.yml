@@ -1,0 +1,58 @@
+# Releases the version in DESCRIPTION whenever it changes on main: tags the
+# commit with the version, and creates a GitHub release for it, which
+# R-universe then builds. Versions that are already tagged are skipped, so this
+# can safely be re-run (e.g. from the Actions tab, if a run failed).
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [DESCRIPTION]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Create a release for a new version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^Version:[[:space:]]*//p' DESCRIPTION)
+          if [ -z "$version" ]; then
+            echo "::error::No Version found in DESCRIPTION"
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$version" > /dev/null; then
+            echo "$version is already released"
+            exit 0
+          fi
+
+          # Release notes are this version's section of NEWS.md, if it has
+          # one, followed by GitHub's generated list of changes
+          notes_args=()
+          if [ -f NEWS.md ]; then
+            awk -v heading="# redivis $version" '
+              $0 == heading { found = 1; next }
+              found && /^# / { exit }
+              found { print }
+            ' NEWS.md > "$RUNNER_TEMP/notes.md"
+            if grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+              notes_args=(--notes-file "$RUNNER_TEMP/notes.md")
+            fi
+          fi
+
+          gh release create "$version" \
+            --target "$GITHUB_SHA" \
+            --title "$version" \
+            --generate-notes \
+            "${notes_args[@]}"
