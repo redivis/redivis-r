@@ -1,6 +1,6 @@
 Package: redivis
 Title: Interface to the 'Redivis' API
-Version: 0.13.1
+Version: 0.14.0
 Authors@R:
     person("Redivis Inc.", email = "support@redivis.com", role = c("aut", "cre", "cph"))
 Description: Work with data on 'Redivis' <https://redivis.com> from R.
