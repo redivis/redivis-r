@@ -265,12 +265,13 @@ convert_data_to_parquet <- function(data) {
 }
 
 get_temp_dir <- function() {
-  if (Sys.getenv("REDIVIS_TMPDIR") == "") {
+  tmp_dir <- get_config("tmp_dir")
+  if (is.null(tmp_dir)) {
     return(tempdir())
   } else {
     user_suffix <- Sys.info()[["user"]]
     return(file.path(
-      Sys.getenv("REDIVIS_TMPDIR"),
+      path.expand(tmp_dir),
       str_interp("redivis_${user_suffix}")
     ))
   }

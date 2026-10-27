@@ -411,7 +411,7 @@ make_paginated_request <- function(
 
 generate_api_url <- function(path) {
   str_interp(
-    '${if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")}${utils::URLencode(path)}'
+    '${get_config("api_endpoint")}${utils::URLencode(path)}'
   )
 }
 

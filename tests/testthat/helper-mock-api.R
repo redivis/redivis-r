@@ -553,8 +553,16 @@ local_mock_api <- function(authenticated = TRUE, env = parent.frame()) {
   withr::local_options(browser = function(...) invisible(NULL), .local_envir = env)
 
   previous_credentials <- auth_vars$cached_credentials
+  previous_credentials_file <- auth_vars$cached_credentials_file
   auth_vars$cached_credentials <- if (authenticated) fake_credentials()
-  withr::defer(auth_vars$cached_credentials <- previous_credentials, envir = env)
+  auth_vars$cached_credentials_file <- NULL
+  withr::defer(
+    {
+      auth_vars$cached_credentials <- previous_credentials
+      auth_vars$cached_credentials_file <- previous_credentials_file
+    },
+    envir = env
+  )
 
   testthat::local_mocked_bindings(
     retry_sleep = function(seconds) invisible(NULL),

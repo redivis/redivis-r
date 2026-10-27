@@ -35,17 +35,17 @@ Table <- R6::R6Class(
           parsed_dataset <- Dataset$new(name = parent_reference)
           parsed_workflow <- Workflow$new(name = parent_reference)
           parent_reference <- str_interp("${parent_reference}.")
-        } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
+        } else if (!is.null(get_config("default_workflow"))) {
           parsed_workflow <- Workflow$new(
-            name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
+            name = get_config("default_workflow")
           )
           parent_reference <- str_interp(
             "${parsed_workflow$qualified_reference}."
           )
           is_workflow_table <- TRUE
-        } else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != "") {
+        } else if (!is.null(get_config("default_dataset"))) {
           parsed_dataset <- Dataset$new(
-            name = Sys.getenv("REDIVIS_DEFAULT_DATASET")
+            name = get_config("default_dataset")
           )
           parent_reference <- str_interp(
             "${parsed_dataset$qualified_reference}."
@@ -171,11 +171,19 @@ Table <- R6::R6Class(
     add_files = function(
       files = NULL,
       directory = NULL,
-      progress = TRUE,
-      max_parallelization = parallelly::availableCores()
+      progress = NULL,
+      max_parallelization = NULL
     ) {
       dir <- directory # Rename to avoid confusion with self$directory field
-      max_parallelization <- min(20, max_parallelization)
+      progress <- resolve_config("progress", progress)
+      max_parallelization <- min(
+        20,
+        resolve_config(
+          "max_parallelization",
+          max_parallelization,
+          parallelly::availableCores()
+        )
+      )
       add_table_files <- function() {
         # Ensure exactly one of files or directory is provided
         if (

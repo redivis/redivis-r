@@ -11,12 +11,12 @@ Datasource <- R6::R6Class(
       parsed_workflow <- workflow
 
       if (is.null(parsed_workflow)) {
-        default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
-        if (default_workflow != "") {
+        default_workflow <- get_config("default_workflow")
+        if (!is.null(default_workflow)) {
           parsed_workflow <- Workflow$new(name = default_workflow)
         } else {
           abort_redivis_value_error(
-            "REDIVIS_DEFAULT_WORKFLOW must be set if no workflow is specified in the Datasource constructor"
+            "A workflow must be specified in the Datasource constructor, or set as the default via redivis$config(default_workflow = ...) or the REDIVIS_DEFAULT_WORKFLOW environment variable"
           )
         }
       }

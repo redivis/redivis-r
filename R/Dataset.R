@@ -30,11 +30,11 @@ Dataset <- R6::R6Class(
           username <- split[[1]]
           parsed_user <- User$new(name = username)
           parsed_organization <- Organization$new(name = username)
-        } else if (has_env("REDIVIS_DEFAULT_USER")) {
-          parsed_user <- User$new(name = Sys.getenv("REDIVIS_DEFAULT_USER"))
-        } else if (has_env("REDIVIS_DEFAULT_ORGANIZATION")) {
+        } else if (!is.null(get_config("default_user"))) {
+          parsed_user <- User$new(name = get_config("default_user"))
+        } else if (!is.null(get_config("default_organization"))) {
           parsed_organization <- Organization$new(
-            name = Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION")
+            name = get_config("default_organization")
           )
         } else {
           abort_redivis_value_error(

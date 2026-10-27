@@ -151,7 +151,7 @@ TabularReader <- R6::R6Class(
       path = NULL,
       format = 'csv',
       overwrite = FALSE,
-      progress = TRUE,
+      progress = NULL,
       max_parallelization = NULL,
       max_concurrency = NULL
     ) {
@@ -183,9 +183,9 @@ TabularReader <- R6::R6Class(
     to_arrow_dataset = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
+      max_parallelization = NULL
     ) {
       params <- get_table_request_params(self, max_results, variables)
 
@@ -207,9 +207,9 @@ TabularReader <- R6::R6Class(
     to_arrow_table = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
+      max_parallelization = NULL
     ) {
       params <- get_table_request_params(self, max_results, variables)
 
@@ -231,7 +231,7 @@ TabularReader <- R6::R6Class(
     to_arrow_batch_reader = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE
+      progress = NULL
     ) {
       params <- get_table_request_params(self, max_results, variables)
 
@@ -251,9 +251,9 @@ TabularReader <- R6::R6Class(
     to_tibble = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores(),
+      max_parallelization = NULL,
       labelled = FALSE
     ) {
       params <- get_table_request_params(
@@ -287,9 +287,9 @@ TabularReader <- R6::R6Class(
       max_results = NULL,
       variables = NULL,
       geography_variable = '',
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores(),
+      max_parallelization = NULL,
       labelled = FALSE
     ) {
       if (!requireNamespace("sf", quietly = TRUE)) {
@@ -334,9 +334,9 @@ TabularReader <- R6::R6Class(
     to_data_frame = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores(),
+      max_parallelization = NULL,
       labelled = FALSE
     ) {
       params <- get_table_request_params(
@@ -369,9 +369,9 @@ TabularReader <- R6::R6Class(
     to_data_table = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores(),
+      max_parallelization = NULL,
       labelled = FALSE
     ) {
       params <- get_table_request_params(
@@ -500,7 +500,7 @@ TabularReader <- R6::R6Class(
       overwrite = FALSE,
       max_results = NULL,
       file_id_variable = NULL,
-      progress = TRUE,
+      progress = NULL,
       max_parallelization = NULL
     ) {
       self$to_directory(file_id_variable = file_id_variable)

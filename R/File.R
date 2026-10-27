@@ -56,8 +56,9 @@ File <- R6::R6Class(
     download = function(
       path = NULL,
       overwrite = FALSE,
-      progress = TRUE
+      progress = NULL
     ) {
+      progress <- resolve_config("progress", progress)
       download_path <- path
       is_dir <- FALSE
 

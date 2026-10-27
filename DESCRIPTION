@@ -75,6 +75,7 @@ Collate:
     'DBI.R'
     'ReadStream.R'
     'Upload.R'
+    'config.R'
     'exceptions.R'
     'index.R'
     'retryable_upload.R'

@@ -485,13 +485,19 @@ make_rows_request <- function(
   selected_variable_names = NULL,
   type = 'tibble',
   variables = NULL,
-  progress = TRUE,
+  progress = NULL,
   coerce_schema = FALSE,
   batch_preprocessor = NULL,
   instance = NULL,
   use_export_api = FALSE,
-  max_parallelization = parallelly::availableCores()
+  max_parallelization = NULL
 ) {
+  progress <- resolve_config("progress", progress)
+  max_parallelization <- resolve_config(
+    "max_parallelization",
+    max_parallelization,
+    parallelly::availableCores()
+  )
   if (inherits(instance, "ReadStream")) {
     read_session <- list(
       streams = list(instance),

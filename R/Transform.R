@@ -24,9 +24,9 @@ Transform <- R6::R6Class(
           parsed_workflow <- Workflow$new(
             name = paste(split[1:2], collapse = '.')
           )
-        } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
+        } else if (!is.null(get_config("default_workflow"))) {
           parsed_workflow <- Workflow$new(
-            name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
+            name = get_config("default_workflow")
           )
         } else if (!is.null(name) && name != "") {
           abort_redivis_value_error(

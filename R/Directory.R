@@ -282,10 +282,11 @@ Directory <- R6::R6Class(
       path = getwd(),
       overwrite = FALSE,
       max_results = NULL,
-      progress = TRUE,
+      progress = NULL,
       max_parallelization = NULL,
       max_concurrency = NULL
     ) {
+      progress <- resolve_config("progress", progress)
       files <- self$list(
         mode = "files",
         recursive = TRUE,

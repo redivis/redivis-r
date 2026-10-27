@@ -9,9 +9,9 @@ query(query = "", default_workflow = NULL, default_dataset = NULL)
 \arguments{
 \item{query}{The query string to execute}
 
-\item{default_workflow}{Optional workflow reference used to resolve unqualified table references. Defaults to the REDIVIS_DEFAULT_WORKFLOW environment variable.}
+\item{default_workflow}{Optional workflow reference used to resolve unqualified table references. Defaults to the configured default workflow (see redivis$config()).}
 
-\item{default_dataset}{Optional dataset reference used to resolve unqualified table references. Defaults to the REDIVIS_DEFAULT_DATASET environment variable.}
+\item{default_dataset}{Optional dataset reference used to resolve unqualified table references. Defaults to the configured default dataset (see redivis$config()).}
 }
 \value{
 class<Query>

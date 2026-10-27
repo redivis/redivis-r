@@ -117,8 +117,9 @@ Upload <- R6::R6Class(
       remove_on_fail = FALSE,
       wait_for_finish = TRUE,
       raise_on_fail = TRUE,
-      progress = TRUE
+      progress = NULL
     ) {
+      progress <- resolve_config("progress", progress)
       MAX_SIMPLE_UPLOAD_SIZE = 2**20 # 1MB
       MIN_RESUMABLE_UPLOAD_SIZE = 2**25 # 32MB
 

@@ -290,6 +290,11 @@ perform_parallel_download <- function(
   total_bytes = NULL,
   max_concurrency = NULL
 ) {
+  max_parallelization <- resolve_config(
+    "max_parallelization",
+    max_parallelization,
+    parallelly::availableCores()
+  )
   avg_file_size <- if (!is.null(total_bytes) && length(uris) > 0) {
     total_bytes / length(uris)
   } else {

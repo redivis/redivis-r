@@ -66,8 +66,9 @@ Export <- R6::R6Class(
       overwrite = FALSE,
       max_parallelization = NULL,
       max_concurrency = NULL,
-      progress = TRUE
+      progress = NULL
     ) {
+      progress <- resolve_config("progress", progress)
       if (progress) {
         progressr::with_progress(self$wait_for_finish())
       } else {

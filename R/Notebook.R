@@ -24,9 +24,9 @@ Notebook <- R6::R6Class(
           parsed_workflow <- Workflow$new(
             name = paste(split[1:2], collapse = '.')
           )
-        } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
+        } else if (!is.null(get_config("default_workflow"))) {
           parsed_workflow <- Workflow$new(
-            name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
+            name = get_config("default_workflow")
           )
         } else if (name != "") {
           abort_redivis_value_error(
@@ -268,11 +268,11 @@ Notebook <- R6::R6Class(
       }
 
       user_name <- unlist(strsplit(
-        Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"),
+        get_config("default_workflow"),
         "[.]"
       ))[1]
       workflow_name <- unlist(strsplit(
-        Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"),
+        get_config("default_workflow"),
         "[.]"
       ))[2]
       table <- User$new(name = user_name)$workflow(name = workflow_name)$table(

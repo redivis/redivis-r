@@ -6,14 +6,17 @@
 auth_vars <- new.env(parent = emptyenv())
 
 auth_vars$cached_credentials <- NULL
+# The file that cached_credentials were loaded from, which changes when
+# config_dir does
+auth_vars$cached_credentials_file <- NULL
 auth_vars$default_scope <- list('data.edit', 'workflow.write')
 auth_vars$client_id <- 'Ah850nGnQg5mFWd25nkyk9Y3'
 
 get_redivis_dir <- function() {
   # Overridable for environments where the home directory isn't writable, or is
   # shared between users
-  config_dir <- Sys.getenv("REDIVIS_CONFIG_DIR")
-  if (config_dir != "") {
+  config_dir <- get_config("config_dir")
+  if (!is.null(config_dir)) {
     path.expand(config_dir)
   } else {
     file.path(Sys.getenv("HOME"), ".redivis")
@@ -28,31 +31,40 @@ get_base_url <- function() {
   sub(
     "(https?://.*?)(/|$).*",
     "\\1",
-    Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com')
+    get_config("api_endpoint")
   )
 }
 
 get_verify_ssl <- function() {
   !grepl(
     "https://localhost",
-    Sys.getenv("REDIVIS_API_ENDPOINT", "https://redivis.com"),
+    get_config("api_endpoint"),
     fixed = TRUE
   )
 }
 
 load_cached_credentials <- function() {
+  credentials_file <- get_credentials_file()
+  if (
+    !is.null(auth_vars$cached_credentials) &&
+      !is.null(auth_vars$cached_credentials_file) &&
+      auth_vars$cached_credentials_file != credentials_file
+  ) {
+    auth_vars$cached_credentials <- NULL
+  }
   if (
     is.null(auth_vars$cached_credentials) &&
-      file.exists(get_credentials_file())
+      file.exists(credentials_file)
   ) {
     tryCatch(
       {
         auth_vars$cached_credentials <- jsonlite::fromJSON(
           readLines(
-            get_credentials_file(),
+            credentials_file,
             warn = FALSE # Otherwise will print a warning since there's not a line break at the end
           )
         )
+        auth_vars$cached_credentials_file <- credentials_file
       },
       error = function(e) {
         # ignore
@@ -73,6 +85,7 @@ has_credentials <- function() {
 }
 
 write_cached_credentials <- function() {
+  auth_vars$cached_credentials_file <- get_credentials_file()
   # The file holds a refresh token, so keep it private to this user
   redivis_dir <- get_redivis_dir()
   dir.create(redivis_dir, showWarnings = FALSE, recursive = TRUE, mode = "0700")
