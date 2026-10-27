@@ -158,7 +158,7 @@ All of the options are environment variables:
 | Variable                       | Purpose                                                                                                                                                         |
 |--------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `REDIVIS_TEST_ENV`             | The environment to test: a name from `live_environments`, or an API URL. Defaults to `dev`.                                                                       |
-| `REDIVIS_TEST_OWNER`           | The user or organization that owns the datasets and workflows the tests create. Defaults to the environment's default (`demo` for dev, whose user accounts are limited to 50 datasets), then the authenticated user. |
+| `REDIVIS_TEST_OWNER`           | The user or organization that owns the datasets and workflows the tests create. Defaults to the environment's default (`demo` for dev), then the authenticated user. |
 | `REDIVIS_TEST_ORGANIZATION`    | An organization the test user belongs to, for the organization tests. Defaults to the environment's default (`demo` for dev); the tests are skipped without one. |
 | `REDIVIS_TEST_KEEP_RESOURCES`  | `true` to keep the datasets the tests create.                                                                                                                   |
 | `REDIVIS_TEST_SLOW`            | `true` to also run slow tests, such as a resumable upload of over 32MB.                                                                                          |
