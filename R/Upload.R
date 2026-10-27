@@ -70,7 +70,7 @@ Upload <- R6::R6Class(
         page_size = 100,
         max_results = max_results
       )
-      purrr::map(variables, function(variable_properties) {
+      lapply(variables, function(variable_properties) {
         Variable$new(
           name = variable_properties$name,
           upload = self,

@@ -52,6 +52,7 @@ test_that("a global connection resolves qualified references", {
 
 test_that("dplyr verbs are run on Redivis", {
   skip_if_not_installed("dplyr")
+  skip_if_not_installed("dbplyr")
   con <- local_sample_con()
   tiny <- dplyr::tbl(con, "tiny")
 
@@ -77,6 +78,7 @@ test_that("dplyr verbs are run on Redivis", {
 
 test_that("translated functions run on Redivis", {
   skip_if_not_installed("dplyr")
+  skip_if_not_installed("dbplyr")
   con <- local_sample_con()
 
   result <- dplyr::tbl(con, "typed") |>
@@ -126,6 +128,7 @@ test_that("translated functions run on Redivis", {
 
 test_that("translated aggregates run on Redivis", {
   skip_if_not_installed("dplyr")
+  skip_if_not_installed("dbplyr")
   con <- local_sample_con()
 
   summary <- dplyr::tbl(con, "tiny") |>

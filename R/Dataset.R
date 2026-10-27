@@ -54,12 +54,12 @@ Dataset <- R6::R6Class(
         version_arg <- str_interp("v${version}")
       } else if (
         is.null(version) &&
-          !is.na(stringr::str_match(name, ":(v\\d+[._]\\d+|current|next)")[2])
+          !is.na(str_match_group(name, ":(v\\d+[._]\\d+|current|next)"))
       ) {
-        version_arg <- stringr::str_match(
+        version_arg <- str_match_group(
           name,
           ":(v\\d+[._]\\d+|current|next)"
-        )[2]
+        )
       }
       # In the form used in references (v1_0, rather than v1.0), since a dot
       # would also separate the parts of a reference
@@ -73,15 +73,11 @@ Dataset <- R6::R6Class(
       }
 
       reference_id <- ""
-      reference_id_split <- stringr::str_split_fixed(
-        stringr::str_replace_all(
-          name,
-          ":(v\\d+[._]\\d+|current|next|sample)",
-          ""
-        ),
+      reference_id_split <- strsplit(
+        gsub(":(v\\d+[._]\\d+|current|next|sample)", "", name),
         ":",
-        Inf
-      )
+        fixed = TRUE
+      )[[1]]
 
       if (length(reference_id_split) > 1) {
         reference_id <- reference_id_split[2]
@@ -229,7 +225,7 @@ Dataset <- R6::R6Class(
         page_size = 100,
         max_results = max_results
       )
-      purrr::map(versions, function(properties) {
+      lapply(versions, function(properties) {
         Version$new(
           tag = properties$tag,
           dataset = self,
@@ -244,7 +240,7 @@ Dataset <- R6::R6Class(
         page_size = 100,
         max_results = max_results
       )
-      purrr::map(tables, function(table_properties) {
+      lapply(tables, function(table_properties) {
         Table$new(
           name = table_properties$name,
           dataset = self,

@@ -208,7 +208,7 @@ test_that("a truncated listRows response on disk leaves no duplicates", {
 
   ds <- mock_table()$to_arrow_dataset(progress = FALSE)
 
-  expect_equal(sort(as.numeric(dplyr::collect(ds)$id)), 0:499)
+  expect_equal(sort(as.numeric(as.data.frame(ds)$id)), 0:499)
 })
 
 test_that("a listRows request made after a truncation retries its own 503s", {

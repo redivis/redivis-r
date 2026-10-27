@@ -16,6 +16,7 @@ test_that("to_data_frame() reads a plain data frame", {
 })
 
 test_that("to_data_table() reads a data.table", {
+  skip_if_not_installed("data.table")
   df <- live_tiny_table()$to_data_table(progress = FALSE)
 
   expect_s3_class(df, "data.table")

@@ -18,7 +18,7 @@ file_bytes <- function(content, size = SIZE) {
 }
 
 cache_key <- function(content, size = SIZE) {
-  digest::digest(file_bytes(content, size), algo = "md5", serialize = FALSE)
+  as.character(openssl::md5(file_bytes(content, size)))
 }
 
 # The cache of a directory of files, given as list(name = list(content, size)),
@@ -39,12 +39,7 @@ local_mount_cache <- function(
     size <- files[[name]]$size %||% SIZE
     id <- paste0("id-", name)
     raw_files[[id]] <- list(content = files[[name]]$content, size = size)
-    md5 <- digest::digest(
-      file_bytes(files[[name]]$content, size),
-      algo = "md5",
-      serialize = FALSE,
-      raw = TRUE
-    )
+    md5 <- as.vector(openssl::md5(file_bytes(files[[name]]$content, size)))
     file <- File$new(
       id = id,
       name = name,

@@ -67,11 +67,7 @@ File <- R6::R6Class(
         is_dir <- TRUE
       } else if (endsWith(download_path, '/')) {
         is_dir <- TRUE
-        download_path <- stringr::str_sub(
-          download_path,
-          1,
-          nchar(download_path) - 1
-        )
+        download_path <- substr(download_path, 1, nchar(download_path) - 1)
       } else if (dir.exists(download_path)) {
         is_dir <- TRUE
       }

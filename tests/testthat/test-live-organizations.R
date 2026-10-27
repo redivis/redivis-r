@@ -27,7 +27,7 @@ test_that("an organization's datasets can be created and found by label", {
     skip("needs the test datasets to be owned by the organization")
   }
   # Labels are limited to 32 characters
-  label <- paste0("rtest_", substr(gsub("-", "", uuid::UUIDgenerate()), 1, 12))
+  label <- paste0("rtest_", substr(random_id(), 1, 12))
   # Only released datasets are listed
   dataset <- local_live_dataset()
   dataset$update(labels = list(label))

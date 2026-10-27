@@ -309,7 +309,7 @@ read_list_rows <- function(
   }
 
   if (type == 'arrow_dataset') {
-    folder <- file.path(get_temp_dir(), "tables", uuid::UUIDgenerate())
+    folder <- file.path(get_temp_dir(), "tables", random_id())
     dir.create(folder, recursive = TRUE)
     arrow::write_feather(tbl, file.path(folder, "rows.feather"))
     return(arrow::open_dataset(folder, format = "feather"))
@@ -412,10 +412,12 @@ make_batch_conformer <- function(stream_schema, schema, coerce_schema) {
       # To test if supported: arrow::arrow_array(rep('10:30:04.123', 2))$cast(arrow::time64(unit="us"))
       for (time_variable in time_variables_to_coerce) {
         if (!is(batch[[time_variable]]$type, 'Time64')) {
-          batch[[time_variable]] <- arrow::arrow_array(stringr::str_c(
-            '2000-01-01T',
-            batch[[time_variable]]$as_vector()
-          ))$cast(arrow::timestamp(unit = 'us'))
+          times <- batch[[time_variable]]$as_vector()
+          timestamps <- paste0('2000-01-01T', times)
+          timestamps[is.na(times)] <- NA
+          batch[[time_variable]] <- arrow::arrow_array(timestamps)$cast(
+            arrow::timestamp(unit = 'us')
+          )
         }
       }
 
@@ -584,7 +586,7 @@ make_rows_request <- function(
       (length(read_session$streams) > 1 &&
         max_parallelization > 1)
   ) {
-    folder <- file.path(get_temp_dir(), "tables", uuid::UUIDgenerate())
+    folder <- file.path(get_temp_dir(), "tables", random_id())
     dir.create(folder, recursive = TRUE)
 
     if (type != 'arrow_dataset') {
@@ -729,7 +731,7 @@ parallel_stream_arrow <- function(
 
   # Need a local variable for parallelization to work
   .process_arrow_stream <- process_arrow_stream
-  results <- furrr::future_map(streams, function(stream) {
+  results <- future_map_chunked(streams, function(stream) {
     .process_arrow_stream(
       stream,
       folder,

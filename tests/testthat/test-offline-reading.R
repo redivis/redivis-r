@@ -64,7 +64,7 @@ test_that("file listings are cached by the variables they were made with", {
     }
   )
   # A table no other test lists, since listings are cached globally
-  reference <- paste0("owner.ds.", uuid::UUIDgenerate())
+  reference <- paste0("owner.ds.", random_id())
   file_names <- function(files) vapply(files, function(f) f$name, character(1))
 
   table <- Table$new(reference)

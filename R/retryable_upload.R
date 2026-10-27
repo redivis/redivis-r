@@ -227,7 +227,7 @@ get_committed_bytes <- function(range_header) {
   if (is.null(range_header)) {
     return(0)
   }
-  last_byte <- stringr::str_match(range_header, "bytes=0-(\\d+)")[, 2]
+  last_byte <- str_match_group(range_header, "bytes=0-(\\d+)")
   if (is.na(last_byte)) {
     abort_redivis_error("An unknown error occurred. Please try again.")
   }

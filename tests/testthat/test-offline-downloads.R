@@ -13,12 +13,7 @@ raw_file_bytes <- function(content, size = FILE_SIZE) {
 }
 
 md5_base64 <- function(bytes) {
-  jsonlite::base64_enc(digest::digest(
-    bytes,
-    algo = "md5",
-    serialize = FALSE,
-    raw = TRUE
-  ))
+  jsonlite::base64_enc(as.vector(openssl::md5(bytes)))
 }
 
 local_raw_file <- function(mock, content = "contents", size = FILE_SIZE) {

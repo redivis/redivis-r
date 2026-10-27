@@ -290,7 +290,7 @@ live_unique_name <- function(label = "") {
     live$run_id,
     "_",
     if (nzchar(label)) paste0(label, "_"),
-    substr(gsub("-", "", uuid::UUIDgenerate()), 1, 6)
+    substr(random_id(), 1, 6)
   )
 }
 

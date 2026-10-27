@@ -153,7 +153,7 @@ Workflow <- R6::R6Class(
         page_size = 100,
         max_results = max_results
       )
-      purrr::map(tables, function(table_properties) {
+      lapply(tables, function(table_properties) {
         Table$new(
           name = table_properties$name,
           workflow = self,
@@ -168,7 +168,7 @@ Workflow <- R6::R6Class(
         page_size = 100,
         max_results = max_results,
       )
-      purrr::map(transforms, function(transform_properties) {
+      lapply(transforms, function(transform_properties) {
         Transform$new(
           name = transform_properties$name,
           workflow = self,
@@ -183,7 +183,7 @@ Workflow <- R6::R6Class(
         page_size = 100,
         max_results = max_results,
       )
-      purrr::map(notebooks, function(notebook_properties) {
+      lapply(notebooks, function(notebook_properties) {
         Notebook$new(
           name = notebook_properties$name,
           workflow = self,
@@ -198,7 +198,7 @@ Workflow <- R6::R6Class(
         page_size = 100,
         max_results = max_results,
       )
-      purrr::map(parameters, function(parameter_properties) {
+      lapply(parameters, function(parameter_properties) {
         Parameter$new(
           name = parameter_properties$name,
           workflow = self,
@@ -213,7 +213,7 @@ Workflow <- R6::R6Class(
         page_size = 100,
         max_results = max_results,
       )
-      purrr::map(datasources, function(datasource_properties) {
+      lapply(datasources, function(datasource_properties) {
         Datasource$new(
           source = datasource_properties$id,
           workflow = self,

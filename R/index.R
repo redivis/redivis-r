@@ -1,5 +1,4 @@
 #' @include config.R
-#' @importFrom stringr str_interp
 #' @importFrom later later
 #' @importFrom rlang :=
 #' @importFrom stats setNames

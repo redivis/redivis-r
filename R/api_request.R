@@ -222,7 +222,7 @@ make_request <- function(
   content_type <- resp_headers[["content-type"]]
   if (
     !is.null(content_type) &&
-      stringr::str_starts(content_type, 'application/json')
+      startsWith(content_type, 'application/json')
   ) {
     response_content <- jsonlite::fromJSON(
       response_content,
@@ -292,7 +292,7 @@ handle_error_response <- function(
     content_type <- resp_headers[["content-type"]]
     if (
       !is.null(content_type) &&
-        stringr::str_starts(content_type, 'application/json')
+        startsWith(content_type, 'application/json')
     ) {
       is_json <- TRUE
       response_content <- jsonlite::fromJSON(
@@ -353,14 +353,17 @@ handle_error_response <- function(
 parse_curl_headers <- function(res_data) {
   vec <- curl::parse_headers(res_data$headers)
 
-  header_names <- purrr::map(vec, function(header) {
-    tolower(strsplit(header, ':')[[1]][[1]])
-  })
-  header_contents <- purrr::map(vec, function(header) {
+  header_names <- vapply(
+    vec,
+    function(header) tolower(strsplit(header, ':')[[1]][[1]]),
+    character(1),
+    USE.NAMES = FALSE
+  )
+  header_contents <- lapply(vec, function(header) {
     split <- strsplit(header, ':\\s+')[[1]]
     paste0(tail(split, -1), collapse = ':')
   })
-  headers <- purrr::set_names(header_contents, header_names)
+  headers <- setNames(header_contents, header_names)
 }
 
 make_paginated_request <- function(

@@ -159,7 +159,7 @@ Table <- R6::R6Class(
         page_size = 100,
         max_results = max_results
       )
-      purrr::map(variables, function(variable_properties) {
+      lapply(variables, function(variable_properties) {
         Variable$new(
           name = variable_properties$name,
           table = self,
@@ -320,7 +320,7 @@ Table <- R6::R6Class(
         page_size = 100,
         max_results = max_results
       )
-      purrr::map(uploads, function(upload_properties) {
+      lapply(uploads, function(upload_properties) {
         Upload$new(
           name = upload_properties$name,
           table = self,
@@ -395,8 +395,7 @@ perform_table_parallel_file_upload <- function(
   local_perform_resumable_upload <- perform_resumable_upload
   local_perform_standard_upload <- perform_standard_upload
 
-  # TODO: remove dependency on furrr
-  results <- furrr::future_map(batch_files, function(batch_file) {
+  results <- future_map_chunked(batch_files, function(batch_file) {
     file_obj <- batch_file[["file"]]
     temp_upload <- batch_file[["temp_upload"]]
 

@@ -123,12 +123,15 @@ TabularReader <- R6::R6Class(
 
       raw_bytes <- httr2::resp_body_raw(res)
       file_specs <- arrow::read_ipc_stream(raw_bytes, as_data_frame = TRUE)
-      # IMPORTANT: need to explicitly set int64 as numeric to avoid purrr::transpose casting to an int32, which causes overflow issues when > 2^31-1
+      # IMPORTANT: need to explicitly set int64 as numeric, so that values > 2^31-1
+      # (e.g. file sizes) are extracted as plain numbers below
       int64_cols <- vapply(file_specs, inherits, logical(1), "integer64")
       file_specs[int64_cols] <- lapply(file_specs[int64_cols], as.numeric)
 
       # Convert to a list of rows upfront; each element is a named list of scalars
-      row_list <- purrr::transpose(as.list(file_specs))
+      row_list <- lapply(seq_len(nrow(file_specs)), function(i) {
+        lapply(file_specs, function(column) column[[i]])
+      })
 
       for (file_spec in row_list) {
         f <- File$new(
@@ -374,6 +377,11 @@ TabularReader <- R6::R6Class(
       max_parallelization = NULL,
       labelled = FALSE
     ) {
+      if (!requireNamespace("data.table", quietly = TRUE)) {
+        abort_redivis_error(
+          "The data.table package must be installed to use to_data_table()."
+        )
+      }
       params <- get_table_request_params(
         self,
         max_results,

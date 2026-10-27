@@ -1,6 +1,8 @@
 # The DBI connector's SQL translation, which needs no server. See
 # test-live-dbi.R for queries run against Redivis.
 
+skip_if_not_installed("dbplyr")
+
 offline_con <- function() {
   DBI::dbConnect(RedivisDBI())
 }

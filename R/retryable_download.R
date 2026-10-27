@@ -242,7 +242,7 @@ perform_retryable_download <- function(
 # The first byte of a ranged response, from its Content-Range header, or 0 if
 # the response isn't ranged
 get_content_range_start <- function(content_range) {
-  start <- stringr::str_match(content_range %||% "", "^bytes\\s+(\\d+)-")[, 2]
+  start <- str_match_group(content_range %||% "", "^bytes\\s+(\\d+)-")
   if (is.na(start)) 0 else as.numeric(start)
 }
 
@@ -277,7 +277,7 @@ decode_md5 <- function(md5_hash) {
 }
 
 get_file_md5 <- function(path) {
-  digest::digest(path, algo = "md5", file = TRUE, raw = TRUE)
+  as.vector(openssl::md5(file(path)))
 }
 
 perform_parallel_download <- function(
@@ -371,7 +371,7 @@ perform_parallel_download <- function(
   # Need a local variable for parallelization to work
   .perform_parallel_download_worker <- perform_parallel_download_worker
 
-  furrr::future_map(tasks, function(task) {
+  future_map_chunked(tasks, function(task) {
     .perform_parallel_download_worker(
       uris = task$uris,
       download_paths = task$download_paths,
@@ -1040,12 +1040,7 @@ check_download_filename <- function(
         md5_hash <- jsonlite::base64_dec(md5_hash)
       }
 
-      file_hash <- digest::digest(
-        filename,
-        algo = "md5",
-        file = TRUE,
-        raw = TRUE
-      )
+      file_hash <- get_file_md5(filename)
 
       if (identical(file_hash, md5_hash)) {
         return(TRUE)

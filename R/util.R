@@ -4,6 +4,52 @@ globals$printed_warnings <- list()
 # Base R only has this since 4.4
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+# A random hex string, e.g. for naming temp files. Doesn't use (or advance) R's
+# random number generator.
+random_id <- function() {
+  paste(as.character(openssl::rand_bytes(16)), collapse = "")
+}
+
+# Interpolates each ${expr} in string with the value of expr, evaluated in env
+str_interp <- function(string, env = parent.frame()) {
+  string <- paste0(string, collapse = "")
+  placeholders <- gregexpr("\\$\\{[^{}]+\\}", string)
+  regmatches(string, placeholders) <- list(vapply(
+    regmatches(string, placeholders)[[1]],
+    function(placeholder) {
+      expr <- substr(placeholder, 3L, nchar(placeholder) - 1L)
+      paste(eval(parse(text = expr), env), collapse = ", ")
+    },
+    character(1)
+  ))
+  string
+}
+
+# The first capture group of pattern in each element of string, or NA where it
+# doesn't match
+str_match_group <- function(string, pattern) {
+  matches <- regmatches(string, regexec(pattern, string, perl = TRUE))
+  vapply(
+    matches,
+    function(match) if (length(match) > 1) match[[2]] else NA_character_,
+    character(1)
+  )
+}
+
+# Like lapply, but runs fn under the current future plan, with x split into one
+# chunk per worker so each future processes many elements
+future_map_chunked <- function(x, fn) {
+  if (!length(x)) {
+    return(list())
+  }
+  chunk_count <- min(length(x), future::nbrOfWorkers())
+  chunks <- split(x, cut(seq_along(x), breaks = chunk_count, labels = FALSE))
+  futures <- lapply(chunks, function(chunk) {
+    future::future(lapply(chunk, fn))
+  })
+  do.call(c, unname(future::value(futures)))
+}
+
 # Sleep before a retry. A separate function so tests can skip the waits.
 retry_sleep <- function(seconds) {
   Sys.sleep(seconds)
@@ -79,7 +125,7 @@ get_partial_download_path <- function(download_path) {
 }
 
 get_arrow_schema <- function(variables) {
-  schema <- purrr::map(variables, function(variable) {
+  schema <- lapply(variables, function(variable) {
     if (variable$type == 'integer') {
       arrow::int64()
     } else if (variable$type == 'float') {
@@ -97,9 +143,9 @@ get_arrow_schema <- function(variables) {
     }
   })
 
-  names <- purrr::map(variables, function(variable) variable$name)
+  names <- vapply(variables, function(variable) variable$name, character(1))
 
-  arrow::schema(purrr::set_names(schema, names))
+  arrow::schema(setNames(schema, names))
 }
 
 # Attaches each variable's label and value labels to its column, following
@@ -111,7 +157,7 @@ apply_variable_labels <- function(df, variables) {
       "The haven package must be installed to read data with labelled = TRUE."
     )
   }
-  is_data_table <- data.table::is.data.table(df)
+  is_data_table <- inherits(df, "data.table")
   lower_names <- tolower(names(df))
   for (variable in variables) {
     index <- match(tolower(variable$name), lower_names)
@@ -150,8 +196,16 @@ apply_variable_labels <- function(df, variables) {
 # Returns the attributes to set on x, and x itself, which is widened to a
 # double when an integer column has non-integral value labels
 get_label_attributes <- function(x, label, value_labels) {
-  label_names <- purrr::map_chr(value_labels, "label")
-  label_values <- purrr::map_chr(value_labels, "value")
+  label_names <- vapply(
+    value_labels,
+    function(value_label) as.character(value_label[["label"]]),
+    character(1)
+  )
+  label_values <- vapply(
+    value_labels,
+    function(value_label) as.character(value_label[["value"]]),
+    character(1)
+  )
   widened <- FALSE
 
   can_have_value_labels <- is.character(x) ||
@@ -176,7 +230,7 @@ get_label_attributes <- function(x, label, value_labels) {
     }
     # The same attributes haven::labelled() sets
     attributes <- list(
-      labels = purrr::set_names(label_values, label_names),
+      labels = setNames(label_values, label_names),
       label = label,
       class = c("haven_labelled", "vctrs_vctr", typeof(x))
     )
@@ -238,7 +292,7 @@ convert_data_to_parquet <- function(data) {
     dir.create(folder, recursive = TRUE)
   }
 
-  temp_file_path <- file.path(folder, uuid::UUIDgenerate())
+  temp_file_path <- file.path(folder, random_id())
 
   if (is(data, "sf")) {
     data <- sf_to_geoparquet_table(data)
@@ -289,15 +343,15 @@ get_temp_dir <- function() {
 }
 
 get_filename_from_content_disposition <- function(s) {
-  fname <- stringr::str_match(s, "filename\\*=([^;]+)")[, 2]
+  fname <- str_match_group(s, "filename\\*=([^;]+)")
   if (is.na(fname) || length(fname) == 0) {
-    fname <- stringr::str_match(s, "filename=([^;]+)")[, 2]
+    fname <- str_match_group(s, "filename=([^;]+)")
   }
   if (grepl("utf-8''", fname, ignore.case = TRUE)) {
     fname <- URLdecode(sub("utf-8''", '', fname, ignore.case = TRUE))
   }
-  fname <- stringr::str_trim(fname)
-  fname <- stringr::str_replace_all(fname, '"', '')
+  fname <- trimws(fname)
+  fname <- gsub('"', '', fname, fixed = TRUE)
   return(fname)
 }
 
