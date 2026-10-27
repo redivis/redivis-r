@@ -77,12 +77,13 @@ live_config <- function() {
   )
 }
 
-# The config directory for the live tests, or NA for the default. The client
-# keeps each environment's credentials apart, in
-# ~/.redivis/environments/<host>/, so they're only moved elsewhere when asked to.
+# The config directory for the live tests. Their credentials are kept apart
+# from the developer's own, even for redivis.com. Within it, the client keeps
+# each environment's apart (e.g., the dev environment's in
+# ~/.redivis/test/environments/local.host_8443/).
 live_config_dir <- function() {
   config_dir <- Sys.getenv("REDIVIS_TEST_CONFIG_DIR")
-  if (nzchar(config_dir)) path.expand(config_dir) else NA_character_
+  path.expand(if (nzchar(config_dir)) config_dir else "~/.redivis/test")
 }
 
 # State shared by every test in the run (helper files are sourced once, into an
@@ -196,7 +197,7 @@ start_live_run <- function() {
   # setup-live.R points the client at the environment under test
   stopifnot(
     identical(Sys.getenv("REDIVIS_API_ENDPOINT"), config$api_endpoint),
-    is.na(config$config_dir) || identical(get_redivis_dir(), config$config_dir)
+    identical(get_redivis_dir(), config$config_dir)
   )
 
   reachable <- tryCatch(

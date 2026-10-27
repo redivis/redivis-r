@@ -23,9 +23,10 @@ get_redivis_dir <- function() {
   }
 }
 
-# Credentials are only valid for the environment that issued them, so each API
-# endpoint's host (e.g. "redivis.com", or "localhost_8080") has its own. The JS
-# and Python clients name these directories the same way.
+# Credentials are only valid for the environment that issued them. Those for
+# redivis.com are kept directly in the config directory, and any other API
+# endpoint's host (e.g. "localhost_8080") has its own subdirectory. The JS and
+# Python clients name these directories the same way.
 get_environment_host <- function() {
   url <- httr2::url_parse(get_config("api_endpoint"))
   host <- tolower(url$hostname)
@@ -37,27 +38,16 @@ get_environment_host <- function() {
 }
 
 get_credentials_dir <- function() {
-  file.path(get_redivis_dir(), "environments", get_environment_host())
+  host <- get_environment_host()
+  if (host == "redivis.com") {
+    get_redivis_dir()
+  } else {
+    file.path(get_redivis_dir(), "environments", host)
+  }
 }
 
 get_credentials_file <- function() {
   file.path(get_credentials_dir(), "r_credentials")
-}
-
-# Credentials used to be stored directly in the config directory. They were
-# almost always for redivis.com, so they're moved there.
-get_legacy_credentials_file <- function() {
-  if (get_environment_host() == "redivis.com") {
-    file.path(get_redivis_dir(), "r_credentials")
-  }
-}
-
-migrate_legacy_credentials <- function() {
-  legacy_credentials_file <- get_legacy_credentials_file()
-  if (!is.null(legacy_credentials_file) && file.exists(legacy_credentials_file)) {
-    dir.create(get_credentials_dir(), showWarnings = FALSE, recursive = TRUE, mode = "0700")
-    file.rename(legacy_credentials_file, get_credentials_file())
-  }
 }
 
 get_base_url <- function() {
@@ -84,9 +74,6 @@ load_cached_credentials <- function() {
       auth_vars$cached_credentials_file != credentials_file
   ) {
     auth_vars$cached_credentials <- NULL
-  }
-  if (is.null(auth_vars$cached_credentials) && !file.exists(credentials_file)) {
-    migrate_legacy_credentials()
   }
   if (
     is.null(auth_vars$cached_credentials) &&
@@ -199,11 +186,6 @@ clear_cached_credentials <- function() {
   auth_vars$cached_credentials <- NULL
   if (file.exists(get_credentials_file())) {
     file.remove(get_credentials_file())
-  }
-  # Otherwise they'd be moved into place the next time credentials are loaded
-  legacy_credentials_file <- get_legacy_credentials_file()
-  if (!is.null(legacy_credentials_file) && file.exists(legacy_credentials_file)) {
-    file.remove(legacy_credentials_file)
   }
 }
 

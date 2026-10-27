@@ -17,9 +17,7 @@ local({
   )
 
   # The tests must never touch the developer's own credentials
-  own_credentials <- file.path(
-    path.expand("~"), ".redivis", "environments", "redivis.com", "r_credentials"
-  )
+  own_credentials <- file.path(path.expand("~"), ".redivis", "r_credentials")
   own_credentials_modified <- file.mtime(own_credentials)
   test_credentials <- get_credentials_file()
   if (

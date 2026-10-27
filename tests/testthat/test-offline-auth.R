@@ -217,44 +217,23 @@ test_that("a rejected refresh token prompts a login", {
 test_that("each environment has its own credentials", {
   local_mock_api()
   withr::defer(redivis$config(api_endpoint = NULL))
-  hosts <- c(
-    "https://redivis.com/api/v1" = "redivis.com",
-    "https://REDIVIS.com:443/api/v1" = "redivis.com",
-    "http://localhost:8080/api/v1" = "localhost_8080",
-    "https://local.host:8443/api/v1" = "local.host_8443"
+  # Those for redivis.com are kept directly in the config directory
+  environment_dirs <- c(
+    "https://redivis.com/api/v1" = "",
+    "https://REDIVIS.com:443/api/v1" = "",
+    "http://localhost:8080/api/v1" = "environments/localhost_8080",
+    "https://local.host:8443/api/v1" = "environments/local.host_8443"
   )
-  for (api_endpoint in names(hosts)) {
+  for (api_endpoint in names(environment_dirs)) {
     redivis$config(api_endpoint = api_endpoint)
+    environment_dir <- environment_dirs[[api_endpoint]]
     expect_equal(
       get_credentials_file(),
-      file.path(get_redivis_dir(), "environments", hosts[[api_endpoint]], "r_credentials")
+      if (nzchar(environment_dir)) {
+        file.path(get_redivis_dir(), environment_dir, "r_credentials")
+      } else {
+        file.path(get_redivis_dir(), "r_credentials")
+      }
     )
   }
-})
-
-test_that("legacy credentials are moved to redivis.com, and deleted on logout", {
-  local_mock_api(authenticated = FALSE)
-  withr::defer(redivis$config(api_endpoint = NULL))
-  legacy_credentials_file <- file.path(get_redivis_dir(), "r_credentials")
-  write_legacy_credentials <- function() {
-    dir.create(get_redivis_dir(), showWarnings = FALSE)
-    writeLines(jsonlite::toJSON(fake_credentials(), auto_unbox = TRUE), legacy_credentials_file)
-  }
-
-  # Only for redivis.com, since they were almost always for it
-  write_legacy_credentials()
-  expect_false(has_credentials())
-  expect_true(file.exists(legacy_credentials_file))
-
-  redivis$config(api_endpoint = "https://redivis.com/api/v1")
-  expect_true(has_credentials())
-  expect_false(file.exists(legacy_credentials_file))
-  expect_equal(jsonlite::fromJSON(get_credentials_file())$refresh_token, "refresh-token")
-
-  # Deleted on logout, even if they haven't been moved yet
-  clear_cached_credentials()
-  write_legacy_credentials()
-  clear_cached_credentials()
-  expect_false(file.exists(legacy_credentials_file))
-  expect_false(has_credentials())
 })
