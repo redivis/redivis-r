@@ -68,8 +68,16 @@ Query <- R6::R6Class(
   )
 )
 
-initiate_query <- function(query) {
-  if (!query$did_initiate) {
+# Creates the query, once. With `list_rows` (the API's listRows options), the
+# API responds with the query's rows rather than the query itself if it
+# finishes quickly enough, in which case this returns that response, streaming,
+# for the caller to read. Content-Location (the URI of the rows) is what tells
+# the two apart: a JSONL body's content type starts with application/json.
+initiate_query <- function(query, list_rows = NULL) {
+  if (query$did_initiate) {
+    return(invisible(NULL))
+  }
+  if (is.null(list_rows)) {
     query$properties <- make_request(
       method = 'POST',
       path = "/queries",
@@ -77,7 +85,62 @@ initiate_query <- function(query) {
     )
     query$did_initiate <- TRUE
     query$uri <- query$properties$uri
+    return(invisible(NULL))
   }
+
+  res <- make_request(
+    method = 'POST',
+    path = "/queries",
+    payload = c(query$payload, list(listRows = list_rows)),
+    as_connection = TRUE
+  )
+  rows_response <- NULL
+  if (is.null(httr2::resp_header(res, "content-location"))) {
+    query$properties <- jsonlite::fromJSON(
+      httr2::resp_body_string(res),
+      simplifyVector = FALSE
+    )
+  } else {
+    # Location is the URI of the query
+    id <- basename(httr2::resp_header(res, "location"))
+    query$properties <- list(
+      kind = 'query',
+      id = id,
+      uri = str_interp("/queries/${id}"),
+      status = 'completed'
+    )
+    rows_response <- res
+  }
+  query$did_initiate <- TRUE
+  query$uri <- query$properties$uri
+  rows_response
+}
+
+# Waits for a query to be readable, for a read of its rows. A read that runs
+# the query asks for the rows along with it, and returns the response
+# containing them if the API sent them; it's verified by its end-of-stream
+# sentinel, since it doesn't say how many rows to expect.
+query_prepare_read <- function(query, max_results = NULL, variables = NULL) {
+  list_rows <- list(format = 'arrow', eosSentinel = TRUE)
+  if (!is.null(max_results)) {
+    list_rows$maxResults <- max_results
+  }
+  # Variables are validated once the query has run, so only names are sent,
+  # leaving anything else for that to report. I() keeps a single name an array.
+  if (is.character(variables) && length(variables) > 0) {
+    list_rows$selectedVariables <- I(variables)
+  }
+  rows_response <- initiate_query(query, list_rows = list_rows)
+  if (!is.null(rows_response)) {
+    return(rows_response)
+  }
+  query_wait_for_finish(query)
+  # A query that responded with its rows didn't tell us its size, which a later
+  # read needs in order to choose how to read them
+  if (!("outputNumBytes" %in% names(query$properties))) {
+    query$get()
+  }
+  NULL
 }
 
 query_wait_for_finish <- function(query) {

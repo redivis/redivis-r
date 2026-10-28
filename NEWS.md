@@ -44,6 +44,10 @@
 - Reading rows that can't be returned in a single response (e.g., those of an
   unreleased version whose uploads have different schemas) now reads them
   through a read session, rather than raising an error.
+- Reading the rows of a query that hasn't run yet (e.g.,
+  `redivis$query("...")$to_tibble()`) now gets small results back in the same
+  request that runs the query, when it finishes quickly, rather than through a
+  read session.
 - Columns returned with different capitalization are matched to the table's
   variables.
 - GET requests are retried after network failures.

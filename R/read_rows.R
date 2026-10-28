@@ -199,16 +199,24 @@ is_retryable_error <- function(e) {
 
 # Fetches rows via table.listRows, returning list(schema, batches).
 #
-# listRows can't be resumed and has no end-of-stream sentinel, so rather than
-# streaming it, the whole response is fetched and its row count checked before
-# any of it is used: an interrupted or truncated response is simply requested
-# again, and no rows are ever handed to the caller twice. Reads are bounded by
+# listRows can't be resumed, so rather than streaming it, the whole response is
+# fetched and checked for completeness before any of it is used: an
+# interrupted or truncated response is simply requested again, and no rows are
+# ever handed to the caller twice. Completeness is verified by the
+# end-of-stream sentinel if requested (`eos_sentinel`, which only queries
+# support), and otherwise by the row count. Reads are bounded by
 # LIST_ROWS_MAX_BYTES, so holding the response in memory is fine.
+#
+# `response` is an already-received response to read first, e.g. the rows that
+# POST /queries returned. It can only be read once, so should that read fail,
+# the rows are requested again.
 fetch_list_rows <- function(
   uri,
   selected_variable_names = NULL,
   max_results = NULL,
-  expected_rows = NULL
+  expected_rows = NULL,
+  eos_sentinel = FALSE,
+  response = NULL
 ) {
   query <- list(format = "arrow")
   if (!is.null(selected_variable_names)) {
@@ -220,25 +228,44 @@ fetch_list_rows <- function(
   if (!is.null(max_results)) {
     query$maxResults <- max_results
   }
+  if (eos_sentinel) {
+    query$eosSentinel <- "true"
+  }
 
   retry_count <- 0
   repeat {
+    res <- response
+    response <- NULL
     result <- tryCatch(
       {
-        res <- make_request(
-          method = "GET",
-          path = str_interp("${uri}/rows"),
-          query = query,
-          parse_response = FALSE
-        )
+        if (is.null(res)) {
+          res <- make_request(
+            method = "GET",
+            path = str_interp("${uri}/rows"),
+            query = query,
+            parse_response = FALSE
+          )
+        }
         reader <- arrow::RecordBatchStreamReader$create(
           arrow::buffer(httr2::resp_body_raw(res))
         )
         batches <- list()
         rows_read <- 0
+        saw_eos_sentinel <- FALSE
         while (!is.null(batch <- reader$read_next_batch())) {
+          if (eos_sentinel && batch$num_rows == 0) {
+            # A zero-row batch is the end-of-stream sentinel; it carries no
+            # data
+            saw_eos_sentinel <- TRUE
+            next
+          }
           batches[[length(batches) + 1]] <- batch
           rows_read <- rows_read + batch$num_rows
+        }
+        if (eos_sentinel && !saw_eos_sentinel) {
+          stop(
+            "Response ended before the end-of-stream sentinel was received (truncated download)"
+          )
         }
         if (!is.null(expected_rows) && rows_read < expected_rows) {
           stop(str_interp(
@@ -247,7 +274,13 @@ fetch_list_rows <- function(
         }
         list(schema = reader$schema, batches = batches)
       },
-      error = function(e) e
+      error = function(e) {
+        # A streamed response that failed partway is still open
+        if (inherits(res, "httr2_response")) {
+          close(res)
+        }
+        e
+      }
     )
 
     if (!inherits(result, "error")) {
@@ -276,19 +309,29 @@ read_list_rows <- function(
   type,
   variables,
   coerce_schema,
-  batch_preprocessor
+  batch_preprocessor,
+  rows_response = NULL
 ) {
   schema <- get_arrow_schema(variables)
   result <- fetch_list_rows(
     uri,
     selected_variable_names = selected_variable_names,
     max_results = max_results,
-    expected_rows = get_expected_list_rows(instance, max_results)
+    expected_rows = get_expected_list_rows(instance, max_results),
+    # The rows a query responded with don't come with a row count
+    eos_sentinel = !is.null(rows_response),
+    response = rows_response
   )
   if (type == 'arrow_stream') {
-    # Like RedivisBatchReader, only convert batches whose types need it
-    batches <- if (coerce_schema) {
-      conform_batch <- make_batch_conformer(result$schema, schema, TRUE)
+    # Like RedivisBatchReader, only convert batches whose types need it, or
+    # whose columns weren't selected by the API (the rows a query responded
+    # with include all of its columns)
+    batches <- if (coerce_schema || !is.null(selected_variable_names)) {
+      conform_batch <- make_batch_conformer(
+        result$schema,
+        schema,
+        coerce_schema
+      )
       lapply(result$batches, conform_batch)
     } else {
       result$batches
@@ -487,7 +530,8 @@ make_rows_request <- function(
   batch_preprocessor = NULL,
   instance = NULL,
   use_export_api = FALSE,
-  max_parallelization = NULL
+  max_parallelization = NULL,
+  rows_response = NULL
 ) {
   progress <- resolve_config("progress", progress)
   max_parallelization <- resolve_config(
@@ -525,8 +569,10 @@ make_rows_request <- function(
       is.null(selected_variable_names) &&
       is.null(batch_preprocessor) &&
       is.null(max_results)
-    use_list_rows <- !use_export_api &&
-      should_use_list_rows(instance, max_results)
+    # The rows a query responded with when it was run are read regardless of
+    # their size, which the API has already checked
+    use_list_rows <- !is.null(rows_response) ||
+      (!use_export_api && should_use_list_rows(instance, max_results))
 
     if (use_list_rows) {
       result <- tryCatch(
@@ -538,7 +584,8 @@ make_rows_request <- function(
           type = type,
           variables = variables,
           coerce_schema = coerce_schema,
-          batch_preprocessor = batch_preprocessor
+          batch_preprocessor = batch_preprocessor,
+          rows_response = rows_response
         ),
         redivis_api_error = function(e) {
           # listRows can't always serve the rows as a single response (e.g.,

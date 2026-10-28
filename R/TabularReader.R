@@ -190,7 +190,12 @@ TabularReader <- R6::R6Class(
       batch_preprocessor = NULL,
       max_parallelization = NULL
     ) {
-      params <- get_table_request_params(self, max_results, variables)
+      params <- get_table_request_params(
+        self,
+        max_results,
+        variables,
+        for_read = TRUE
+      )
 
       make_rows_request(
         uri = params$uri,
@@ -203,6 +208,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
     },
@@ -214,7 +220,12 @@ TabularReader <- R6::R6Class(
       batch_preprocessor = NULL,
       max_parallelization = NULL
     ) {
-      params <- get_table_request_params(self, max_results, variables)
+      params <- get_table_request_params(
+        self,
+        max_results,
+        variables,
+        for_read = TRUE
+      )
 
       make_rows_request(
         uri = params$uri,
@@ -227,6 +238,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
     },
@@ -236,7 +248,12 @@ TabularReader <- R6::R6Class(
       variables = NULL,
       progress = NULL
     ) {
-      params <- get_table_request_params(self, max_results, variables)
+      params <- get_table_request_params(
+        self,
+        max_results,
+        variables,
+        for_read = TRUE
+      )
 
       make_rows_request(
         uri = params$uri,
@@ -247,7 +264,8 @@ TabularReader <- R6::R6Class(
         variables = params$variables,
         progress = progress,
         coerce_schema = params$coerce_schema,
-        use_export_api = params$use_export_api
+        use_export_api = params$use_export_api,
+        rows_response = params$rows_response
       )
     },
 
@@ -263,7 +281,8 @@ TabularReader <- R6::R6Class(
         self,
         max_results,
         variables,
-        include_value_labels = labelled
+        include_value_labels = labelled,
+        for_read = TRUE
       )
 
       df <- make_rows_request(
@@ -277,6 +296,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
 
@@ -305,7 +325,8 @@ TabularReader <- R6::R6Class(
         max_results,
         variables,
         geography_variable,
-        include_value_labels = labelled
+        include_value_labels = labelled,
+        for_read = TRUE
       )
 
       if (is.null(params$geography_variable)) {
@@ -325,6 +346,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
 
@@ -346,7 +368,8 @@ TabularReader <- R6::R6Class(
         self,
         max_results,
         variables,
-        include_value_labels = labelled
+        include_value_labels = labelled,
+        for_read = TRUE
       )
 
       df <- make_rows_request(
@@ -360,6 +383,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
 
@@ -386,7 +410,8 @@ TabularReader <- R6::R6Class(
         self,
         max_results,
         variables,
-        include_value_labels = labelled
+        include_value_labels = labelled,
+        for_read = TRUE
       )
 
       df <- make_rows_request(
@@ -400,6 +425,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
 
@@ -559,7 +585,8 @@ get_table_request_params <- function(
   variables = NULL,
   geography_variable = NULL,
   refresh = TRUE,
-  include_value_labels = FALSE
+  include_value_labels = FALSE,
+  for_read = FALSE
 ) {
   if (inherits(instance, "ReadStream")) {
     if (!is.null(variables)) {
@@ -592,7 +619,13 @@ get_table_request_params <- function(
     return(res)
   }
 
-  if (inherits(instance, "Table") && refresh) {
+  # The response containing the rows, when a read runs a query that returns
+  # them along with it. Only a read asks for them, so nothing else downloads
+  # rows it doesn't need.
+  rows_response <- NULL
+  if (inherits(instance, "Query") && for_read) {
+    rows_response <- query_prepare_read(instance, max_results, variables)
+  } else if (inherits(instance, "Table") && refresh) {
     # Refetch rather than trusting properties cached on this object by an
     # earlier call, since the read depends on them being current: e.g. a
     # listRows read verifies completion against numRows, which changes when the
@@ -604,14 +637,23 @@ get_table_request_params <- function(
   }
 
   # TODO: do we need all this variable fetching complexity still? Can we just handle everything on the BE?
-  all_variables <- make_paginated_request(
-    path = str_interp("${instance$uri}/variables"),
-    query = if (include_value_labels) {
-      list(includeValueLabels = "true")
-    } else {
-      list()
-    },
-    page_size = 1000
+  all_variables <- tryCatch(
+    make_paginated_request(
+      path = str_interp("${instance$uri}/variables"),
+      query = if (include_value_labels) {
+        list(includeValueLabels = "true")
+      } else {
+        list()
+      },
+      page_size = 1000
+    ),
+    error = function(e) {
+      # The rows won't be read, so don't leave their connection open
+      if (!is.null(rows_response)) {
+        close(rows_response)
+      }
+      stop(e)
+    }
   )
 
   if (is.null(variables)) {
@@ -683,6 +725,7 @@ get_table_request_params <- function(
     "geography_variable" = geography_variable,
     "coerce_schema" = inherits(instance, "Table") &&
       instance$properties$container$kind == 'dataset',
-    "use_export_api" = should_use_export_api
+    "use_export_api" = should_use_export_api,
+    "rows_response" = rows_response
   )
 }

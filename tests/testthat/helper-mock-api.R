@@ -21,6 +21,12 @@ mock_api_server <- function(port) {
     state$upload_status <- "completed"
     state$query_bytes <- 1000
     state$query_status <- "completed"
+    # Whether POST /queries honors listRows, responding with the rows of a
+    # small, completed query (as a newer API does)
+    state$query_inline_rows <- TRUE
+    # The next rows POST /queries responds with stop after this many rows, and
+    # without the end-of-stream sentinel
+    state$truncate_inline_rows_once <- 0
     state$export_file_count <- 1
     # Reject unauthenticated requests, other than listRows, which (like the
     # real API) can be read anonymously
@@ -262,7 +268,11 @@ mock_api_server <- function(port) {
       method = method,
       path = path,
       query = query,
-      authorized = authorized
+      authorized = authorized,
+      # The payloads of the queries created
+      payload = if (method == "POST" && path == "/api/v1/queries") {
+        jsonlite::fromJSON(body, simplifyVector = FALSE)
+      }
     )
 
     # A stand-in for the signed URLs that temp uploads are sent to. A resumable
@@ -333,7 +343,39 @@ mock_api_server <- function(port) {
 
     if (method == "POST") {
       if (path == "/api/v1/queries") {
-        return(json(query_properties()))
+        list_rows <- jsonlite::fromJSON(body, simplifyVector = FALSE)$listRows
+        count <- min(list_rows$maxResults %||% num_rows, num_rows)
+        # Like the API, only small results are returned in place of the query,
+        # sized by the fraction of rows requested
+        is_small <- num_rows == 0 || state$query_bytes * count / num_rows <= 1e8
+        if (
+          is.null(list_rows) ||
+            !isTRUE(state$query_inline_rows) ||
+            state$query_status != "completed" ||
+            !is_small
+        ) {
+          res <- json(query_properties())
+          res$headers$Location <- "/api/v1/queries/q1"
+          return(res)
+        }
+        sentinel <- isTRUE(list_rows$eosSentinel)
+        if (state$truncate_inline_rows_once > 0) {
+          count <- min(count, state$truncate_inline_rows_once)
+          sentinel <- FALSE
+          state$truncate_inline_rows_once <- 0
+        }
+        # Like BigQuery, selected columns are matched case-insensitively, and
+        # come in the table's order
+        names <- if (!is.null(list_rows$selectedVariables)) {
+          selected <- tolower(unlist(list_rows$selectedVariables))
+          all_names[tolower(all_names) %in% selected]
+        } else {
+          all_names
+        }
+        res <- binary(arrow_stream(names, 0, count, sentinel = sentinel))
+        res$headers$Location <- "/api/v1/queries/q1"
+        res$headers[["Content-Location"]] <- "/api/v1/queries/q1/rows"
+        return(res)
       }
       if (endsWith(path, "/readSessions")) {
         request <- jsonlite::fromJSON(body, simplifyVector = FALSE)
@@ -383,11 +425,15 @@ mock_api_server <- function(port) {
       }
       names <- setdiff(names, unlist(state$omit_column))
       count <- min(as.numeric(query$maxResults %||% num_rows), num_rows)
+      # Only queries' rows support eosSentinel, which a truncated response
+      # lacks
+      sentinel <- identical(query$eosSentinel, "true")
       if (state$truncate_rows_once > 0) {
         count <- min(count, state$truncate_rows_once)
+        sentinel <- FALSE
         state$truncate_rows_once <- 0
       }
-      return(binary(arrow_stream(names, 0, count, sentinel = FALSE)))
+      return(binary(arrow_stream(names, 0, count, sentinel = sentinel)))
     }
 
     if (startsWith(path, "/api/v1/readStreams/")) {
