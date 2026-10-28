@@ -5,13 +5,13 @@
 \alias{redivis}
 \title{redivis}
 \format{
-An object of class \code{environment} of length 17.
+An object of class \code{environment} of length 18.
 }
 \usage{
 redivis
 }
 \value{
-list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, parameter, query, table, transform, user, workflow)
+list(authenticate, config, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, parameter, query, table, transform, user, workflow)
 }
 \description{
 Redivis wrapper, all primary constructor accessible via redivis$<constructor>()
@@ -81,6 +81,23 @@ workflow$list_tables(max_results, include_datasources=FALSE)
 workflow$list_transforms(max_results)
 table$list_variables(max_results)
 #...etc, see documentation
+
+# Configure library-wide defaults. Unset values fall back to their
+# environment variables (REDIVIS_DEFAULT_WORKFLOW, REDIVIS_API_ENDPOINT, etc.),
+# and NULL clears a value. Returns the current configuration.
+redivis$config(
+  default_workflow,     # Workflow that unqualified table, query, parameter,
+                        #   transform, and notebook references resolve within
+  default_dataset,      # Dataset that unqualified table and query references
+                        #   resolve within, when there's no default workflow
+  default_user,         # Owner of unqualified dataset and workflow references
+  default_organization, # ...when there's no default user
+  api_endpoint,         # Defaults to "https://redivis.com/api/v1"
+  config_dir,           # Where credentials are cached. Defaults to "~/.redivis"
+  tmp_dir,              # For temporary files. Defaults to tempdir()
+  max_parallelization,  # Default for methods' max_parallelization argument
+  progress              # Default for methods' progress argument (TRUE)
+)
 
 # Miscellaneous methods, for advanced use cases
 redivis$authenticate(scope=NULL, force_reauthentication=FALSE)

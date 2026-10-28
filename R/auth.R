@@ -6,51 +6,97 @@
 auth_vars <- new.env(parent = emptyenv())
 
 auth_vars$cached_credentials <- NULL
+# The file that cached_credentials were loaded from, which changes when
+# config_dir does
+auth_vars$cached_credentials_file <- NULL
 auth_vars$default_scope <- list('data.edit', 'workflow.write')
 auth_vars$client_id <- 'Ah850nGnQg5mFWd25nkyk9Y3'
 
 get_redivis_dir <- function() {
-  file.path(Sys.getenv("HOME"), ".redivis")
+  # Overridable for environments where the home directory isn't writable, or is
+  # shared between users
+  config_dir <- get_config("config_dir")
+  if (!is.null(config_dir)) {
+    path.expand(config_dir)
+  } else {
+    file.path(Sys.getenv("HOME"), ".redivis")
+  }
+}
+
+# Credentials are only valid for the environment that issued them. Those for
+# redivis.com are kept directly in the config directory, and any other API
+# endpoint's host (e.g. "localhost_8080") has its own subdirectory. The JS and
+# Python clients name these directories the same way.
+get_environment_host <- function() {
+  url <- httr2::url_parse(get_config("api_endpoint"))
+  host <- tolower(url$hostname)
+  default_port <- c(http = "80", https = "443")[[url$scheme]]
+  if (!is.null(url$port) && !identical(as.character(url$port), default_port)) {
+    host <- paste0(host, ":", url$port)
+  }
+  gsub("[^A-Za-z0-9_.-]", "_", host)
+}
+
+get_credentials_dir <- function() {
+  host <- get_environment_host()
+  if (host == "redivis.com") {
+    get_redivis_dir()
+  } else {
+    file.path(get_redivis_dir(), "environments", host)
+  }
 }
 
 get_credentials_file <- function() {
-  file.path(get_redivis_dir(), "r_credentials")
+  file.path(get_credentials_dir(), "r_credentials")
 }
 
 get_base_url <- function() {
   sub(
     "(https?://.*?)(/|$).*",
     "\\1",
-    Sys.getenv('REDIVIS_API_ENDPOINT', 'https://redivis.com')
+    get_config("api_endpoint")
   )
 }
 
 get_verify_ssl <- function() {
   !grepl(
     "https://localhost",
-    Sys.getenv("REDIVIS_API_ENDPOINT", "https://redivis.com"),
+    get_config("api_endpoint"),
     fixed = TRUE
   )
 }
 
+# The credentials saved in a file, or NULL if there are none
+read_credentials_file <- function(credentials_file) {
+  if (!file.exists(credentials_file)) {
+    return(NULL)
+  }
+  tryCatch(
+    jsonlite::fromJSON(
+      readLines(
+        credentials_file,
+        warn = FALSE # Otherwise will print a warning since there's not a line break at the end
+      )
+    ),
+    error = function(e) NULL
+  )
+}
+
 load_cached_credentials <- function() {
+  credentials_file <- get_credentials_file()
   if (
-    is.null(auth_vars$cached_credentials) &&
-      file.exists(get_credentials_file())
+    !is.null(auth_vars$cached_credentials) &&
+      !is.null(auth_vars$cached_credentials_file) &&
+      auth_vars$cached_credentials_file != credentials_file
   ) {
-    tryCatch(
-      {
-        auth_vars$cached_credentials <- jsonlite::fromJSON(
-          readLines(
-            get_credentials_file(),
-            warn = FALSE # Otherwise will print a warning since there's not a line break at the end
-          )
-        )
-      },
-      error = function(e) {
-        # ignore
-      }
-    )
+    auth_vars$cached_credentials <- NULL
+  }
+  if (is.null(auth_vars$cached_credentials)) {
+    credentials <- read_credentials_file(credentials_file)
+    if (!is.null(credentials)) {
+      auth_vars$cached_credentials <- credentials
+      auth_vars$cached_credentials_file <- credentials_file
+    }
   }
 }
 
@@ -66,27 +112,33 @@ has_credentials <- function() {
 }
 
 write_cached_credentials <- function() {
-  # Not necessarily created yet: a login can be prompted by a request that was
-  # sent anonymously, rather than by get_auth_token()
-  dir.create(get_redivis_dir(), showWarnings = FALSE, recursive = TRUE)
-  # The file holds a refresh token; keep it private to this user. The umask
-  # makes a new file private from the moment it's created, and chmod covers an
-  # existing one (whose mode writing it doesn't change)
-  credentials_file <- get_credentials_file()
+  auth_vars$cached_credentials_file <- get_credentials_file()
+  # The file holds a refresh token, so keep it private to this user
+  credentials_dir <- get_credentials_dir()
+  dir.create(credentials_dir, showWarnings = FALSE, recursive = TRUE, mode = "0700")
+  # Write a temporary file and swap it into place, so that another process
+  # (e.g. a second R session) never reads a partially written file. The umask
+  # makes it private from the moment it's created, so the token is never
+  # exposed to others, even briefly, and replacing the file also replaces the
+  # permissions of one written by an earlier version of the client.
   old_umask <- Sys.umask("077")
   on.exit(Sys.umask(old_umask), add = TRUE)
-  if (file.exists(credentials_file)) {
-    Sys.chmod(credentials_file, mode = "0600")
-  }
+  temp_file <- tempfile(".r_credentials.", tmpdir = credentials_dir)
+  # A no-op once the file has been moved into place
+  on.exit(unlink(temp_file), add = TRUE)
   write(
     jsonlite::toJSON(
       auth_vars$cached_credentials,
       pretty = TRUE,
       auto_unbox = TRUE
     ),
-    credentials_file
+    temp_file
   )
-  Sys.chmod(credentials_file, mode = "0600")
+  if (!file.rename(temp_file, get_credentials_file())) {
+    abort_redivis_error(str_interp(
+      "Failed to save credentials to ${get_credentials_file()}"
+    ))
+  }
 }
 
 get_auth_token <- function(scope = NULL) {
@@ -263,6 +315,25 @@ refresh_credentials <- function(scope = NULL, amr_values = NULL) {
       upgrade_credentials = TRUE
     )
   } else if (!is.null(auth_vars$cached_credentials$refresh_token)) {
+    # Each refresh replaces the refresh token, and the server revokes the login if
+    # a replaced one is used again. So if another process sharing these
+    # credentials (e.g. a second R session) has refreshed them since they were
+    # read, use what it saved instead.
+    saved_credentials <- read_credentials_file(get_credentials_file())
+    if (
+      is.list(saved_credentials) &&
+        !is.null(saved_credentials$refresh_token) &&
+        !identical(saved_credentials$refresh_token, auth_vars$cached_credentials$refresh_token)
+    ) {
+      auth_vars$cached_credentials <- saved_credentials
+      if (
+        !is.null(saved_credentials$expires_at) &&
+          saved_credentials$expires_at > as.numeric(Sys.time()) + 5 * 60
+      ) {
+        return(get_auth_token())
+      }
+    }
+
     refresh_req <- httr2::request(paste0(get_base_url(), "/oauth/token")) |>
       httr2::req_method("POST") |>
       httr2::req_body_form(
@@ -278,13 +349,34 @@ refresh_credentials <- function(scope = NULL, amr_values = NULL) {
 
     res <- httr2::req_perform(refresh_req)
 
-    if (httr2::resp_status(res) >= 400) {
+    status <- httr2::resp_status(res)
+    if (status %in% c(400, 401)) {
+      # The refresh token was rejected (e.g. revoked or expired), so the user
+      # needs to log in again
       clear_cached_credentials()
+    } else if (status >= 400) {
+      # Anything else (e.g. a 503 during a deploy) says nothing about the
+      # refresh token, so keep it for a later call to retry with
+      resp_body <- tryCatch(httr2::resp_body_string(res), error = function(e) "")
+      response_json <- tryCatch(
+        jsonlite::fromJSON(resp_body, simplifyVector = FALSE),
+        error = function(e) NULL
+      )
+      raise_api_error(
+        response_json = if (is.list(response_json)) response_json,
+        response_text = resp_body,
+        response = res
+      )
     } else {
       refresh_response <- httr2::resp_body_json(res)
       auth_vars$cached_credentials$access_token <- refresh_response$access_token
       auth_vars$cached_credentials$expires_at <- refresh_response$expires_at
       auth_vars$cached_credentials$expires_in <- refresh_response$expires_in
+      # The server rotates refresh tokens, returning a new one to replace the one
+      # that was just used
+      if (!is.null(refresh_response$refresh_token)) {
+        auth_vars$cached_credentials$refresh_token <- refresh_response$refresh_token
+      }
       write_cached_credentials()
     }
   } else {

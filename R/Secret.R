@@ -19,13 +19,17 @@ Secret <- R6::R6Class(
 
     get_value = function() {
       base_path <- if (!is.null(self$user)) {
-        str_interp("/users/${self$user$name}")
+        str_interp("/users/${URLencode(self$user$name, reserved = TRUE)}")
       } else {
-        str_interp("/organizations/${self$organization$name}")
+        str_interp(
+          "/organizations/${URLencode(self$organization$name, reserved = TRUE)}"
+        )
       }
 
       secret <- make_request(
-        path = str_interp("${base_path}/secrets/${self$name}")
+        path = str_interp(
+          "${base_path}/secrets/${URLencode(self$name, reserved = TRUE)}"
+        )
       )
       secret$value
     }

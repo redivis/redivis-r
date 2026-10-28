@@ -76,9 +76,12 @@ test_that("reads without labelled don't request or attach labels", {
 # Value labels as the API returns them: a list of {value, label}
 value_labels <- function(...) {
   labels <- list(...)
-  purrr::imap(unname(labels), function(label, i) {
-    list(value = names(labels)[[i]], label = label)
-  })
+  Map(
+    function(value, label) list(value = value, label = label),
+    names(labels),
+    unname(labels),
+    USE.NAMES = FALSE
+  )
 }
 
 # Labels a single column x, as apply_variable_labels would for a data frame
@@ -89,6 +92,7 @@ label_column <- function(x, label, value_labels, as = tibble::tibble) {
 
 test_that("labelled columns match haven::labelled for every output type", {
   skip_if_not_installed("haven")
+  skip_if_not_installed("data.table")
 
   for (as in list(tibble::tibble, data.frame, data.table::data.table)) {
     expect_identical(
@@ -108,6 +112,7 @@ test_that("labelled columns match haven::labelled for every output type", {
 
 test_that("labelling a data.table doesn't modify other copies of a column", {
   skip_if_not_installed("haven")
+  skip_if_not_installed("data.table")
   x <- c(1, 2)
   dt <- data.table::data.table(x = x)
 
@@ -119,6 +124,7 @@ test_that("labelling a data.table doesn't modify other copies of a column", {
 
 test_that("labels are converted to the column's type", {
   skip_if_not_installed("haven")
+  skip_if_not_installed("data.table")
 
   # Non-integral labels on an integer column widen it to double
   for (as in list(tibble::tibble, data.table::data.table)) {

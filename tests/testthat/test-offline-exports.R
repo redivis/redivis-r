@@ -69,7 +69,7 @@ test_that("a multi-part table download writes each part to a directory", {
 
   expect_equal(basename(path), "mock")
   expect_equal(sort(list.files(path)), sprintf("%06d.parquet", 0:2))
-  expect_equal(nrow(dplyr::collect(arrow::open_dataset(path))), 500)
+  expect_equal(nrow(arrow::open_dataset(path)), 500)
 })
 
 test_that("a multi-part table download raises if a part fails", {

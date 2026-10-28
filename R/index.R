@@ -1,4 +1,4 @@
-#' @importFrom stringr str_interp
+#' @include config.R
 #' @importFrom later later
 #' @importFrom rlang :=
 #' @importFrom stats setNames
@@ -10,8 +10,8 @@ NULL
 #' @description DEPRECATED: please use redivis$query
 #'
 #' @param query The query string to execute
-#' @param default_workflow Optional workflow reference used to resolve unqualified table references. Defaults to the REDIVIS_DEFAULT_WORKFLOW environment variable.
-#' @param default_dataset Optional dataset reference used to resolve unqualified table references. Defaults to the REDIVIS_DEFAULT_DATASET environment variable.
+#' @param default_workflow Optional workflow reference used to resolve unqualified table references. Defaults to the configured default workflow (see redivis$config()).
+#' @param default_dataset Optional dataset reference used to resolve unqualified table references. Defaults to the configured default dataset (see redivis$config()).
 #'
 #' @return class<Query>
 #' @examples
@@ -22,8 +22,8 @@ NULL
 query <- function(query = "", default_workflow = NULL, default_dataset = NULL) {
   show_namespace_warning("query")
   if (is.null(default_workflow) && is.null(default_dataset)) {
-    default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
-    default_dataset <- Sys.getenv("REDIVIS_DEFAULT_DATASET")
+    default_workflow <- get_config("default_workflow")
+    default_dataset <- get_config("default_dataset")
   }
   Query$new(
     query = query,
@@ -166,12 +166,29 @@ current_notebook <- function() {
 #' table$list_variables(max_results)
 #' #...etc, see documentation
 #'
+#' # Configure library-wide defaults. Unset values fall back to their
+#' # environment variables (REDIVIS_DEFAULT_WORKFLOW, REDIVIS_API_ENDPOINT, etc.),
+#' # and NULL clears a value. Returns the current configuration.
+#' redivis$config(
+#'   default_workflow,     # Workflow that unqualified table, query, parameter,
+#'                         #   transform, and notebook references resolve within
+#'   default_dataset,      # Dataset that unqualified table and query references
+#'                         #   resolve within, when there's no default workflow
+#'   default_user,         # Owner of unqualified dataset and workflow references
+#'   default_organization, # ...when there's no default user
+#'   api_endpoint,         # Defaults to "https://redivis.com/api/v1"
+#'   config_dir,           # Where credentials are cached. Defaults to "~/.redivis"
+#'   tmp_dir,              # For temporary files. Defaults to tempdir()
+#'   max_parallelization,  # Default for methods' max_parallelization argument
+#'   progress              # Default for methods' progress argument (TRUE)
+#' )
+#'
 #' # Miscellaneous methods, for advanced use cases
 #' redivis$authenticate(scope=NULL, force_reauthentication=FALSE)
 #' redivis$make_api_request(method="GET", path, ...)
 #' }
 #'
-#' @return list(authenticate, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, parameter, query, table, transform, user, workflow)
+#' @return list(authenticate, config, current_notebook, current_user, current_workflow, dataset, datasource, file, make_api_request, notebook, organization, parameter, query, table, transform, user, workflow)
 #' @examples
 #' \dontrun{
 #'  df <- redivis$table("demo.ghcn_daily_weather_data.stations")$to_tibble()
@@ -200,6 +217,8 @@ redivis <- local({
     invisible(NULL)
   }
 
+  e$config <- set_config
+
   e$current_notebook <- function() {
     if (Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK") != "") {
       Notebook$new(name = Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK"))
@@ -214,8 +233,8 @@ redivis <- local({
   }
 
   e$current_workflow <- function() {
-    if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
-      Workflow$new(name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW"))
+    if (!is.null(get_config("default_workflow"))) {
+      Workflow$new(name = get_config("default_workflow"))
     } else {
       NULL
     }
@@ -273,8 +292,8 @@ redivis <- local({
     default_dataset = NULL
   ) {
     if (is.null(default_workflow) && is.null(default_dataset)) {
-      default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
-      default_dataset <- Sys.getenv("REDIVIS_DEFAULT_DATASET")
+      default_workflow <- get_config("default_workflow")
+      default_dataset <- get_config("default_dataset")
     }
     Query$new(
       query = query,

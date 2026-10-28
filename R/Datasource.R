@@ -11,12 +11,12 @@ Datasource <- R6::R6Class(
       parsed_workflow <- workflow
 
       if (is.null(parsed_workflow)) {
-        default_workflow <- Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
-        if (default_workflow != "") {
+        default_workflow <- get_config("default_workflow")
+        if (!is.null(default_workflow)) {
           parsed_workflow <- Workflow$new(name = default_workflow)
         } else {
           abort_redivis_value_error(
-            "REDIVIS_DEFAULT_WORKFLOW must be set if no workflow is specified in the Datasource constructor"
+            "A workflow must be specified in the Datasource constructor, or set as the default via redivis$config(default_workflow = ...) or the REDIVIS_DEFAULT_WORKFLOW environment variable"
           )
         }
       }
@@ -78,6 +78,11 @@ Datasource <- R6::R6Class(
       self
     },
 
+    delete = function() {
+      make_request(method = "DELETE", path = self$uri)
+      invisible(NULL)
+    },
+
     update = function(
       source_dataset = NULL,
       source_workflow = NULL,
@@ -130,30 +135,41 @@ Datasource <- R6::R6Class(
               "Versions are not applicable to datasources that reference a workflow"
             )
           }
+        } else {
+          # Keep the existing sample setting, unless it's being changed
+          is_sample <- if (!is.null(sample)) {
+            isTRUE(sample)
+          } else {
+            grepl(":sample\\b", source_dataset)
+          }
+          source_dataset <- gsub(":sample\\b", "", source_dataset)
+
+          if (!is.null(version)) {
+            if (inherits(version, "Version")) {
+              version <- version$tag
+            }
+            source_dataset <- Dataset$new(
+              name = source_dataset,
+              version = version
+            )$qualified_reference
+          }
+
+          if (is_sample) {
+            source_dataset <- paste0(source_dataset, ":sample")
+          }
         }
       }
 
-      if (inherits(version, "Version")) {
-        version <- version$tag
-      }
-
-      ds <- Dataset$new(name = source_dataset, version = version)
-      source_dataset <- ds$qualified_reference
-
-      if (identical(sample, FALSE)) {
-        source_dataset <- sub(":sample", "", source_dataset)
-      } else if (isTRUE(sample) && !grepl(":sample", source_dataset)) {
-        source_dataset <- paste0(source_dataset, ":sample")
-      }
-
+      # Only change what was specified
+      payload <- list(
+        sourceDataset = source_dataset,
+        sourceWorkflow = source_workflow,
+        mappedTables = mapped_tables
+      )
       self$properties <- make_request(
         method = "PATCH",
         path = self$uri,
-        payload = list(
-          sourceDataset = source_dataset,
-          sourceWorkflow = source_workflow,
-          mappedTables = mapped_tables
-        )
+        payload = Filter(Negate(is.null), payload)
       )
       self$uri <- self$properties[["uri"]]
 

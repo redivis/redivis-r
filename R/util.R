@@ -4,13 +4,128 @@ globals$printed_warnings <- list()
 # Base R only has this since 4.4
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+# A random hex string, e.g. for naming temp files. Doesn't use (or advance) R's
+# random number generator.
+random_id <- function() {
+  paste(as.character(openssl::rand_bytes(16)), collapse = "")
+}
+
+# Interpolates each ${expr} in string with the value of expr, evaluated in env
+str_interp <- function(string, env = parent.frame()) {
+  string <- paste0(string, collapse = "")
+  placeholders <- gregexpr("\\$\\{[^{}]+\\}", string)
+  regmatches(string, placeholders) <- list(vapply(
+    regmatches(string, placeholders)[[1]],
+    function(placeholder) {
+      expr <- substr(placeholder, 3L, nchar(placeholder) - 1L)
+      paste(eval(parse(text = expr), env), collapse = ", ")
+    },
+    character(1)
+  ))
+  string
+}
+
+# The first capture group of pattern in each element of string, or NA where it
+# doesn't match
+str_match_group <- function(string, pattern) {
+  matches <- regmatches(string, regexec(pattern, string, perl = TRUE))
+  vapply(
+    matches,
+    function(match) if (length(match) > 1) match[[2]] else NA_character_,
+    character(1)
+  )
+}
+
+# Like lapply, but runs fn under the current future plan, with x split into one
+# chunk per worker so each future processes many elements
+future_map_chunked <- function(x, fn) {
+  if (!length(x)) {
+    return(list())
+  }
+  chunk_count <- min(length(x), future::nbrOfWorkers())
+  chunks <- split(x, cut(seq_along(x), breaks = chunk_count, labels = FALSE))
+  futures <- lapply(chunks, function(chunk) {
+    future::future(lapply(chunk, fn))
+  })
+  do.call(c, unname(future::value(futures)))
+}
+
 # Sleep before a retry. A separate function so tests can skip the waits.
 retry_sleep <- function(seconds) {
   Sys.sleep(seconds)
 }
 
+# Sleep between polls of a job's status. Also separate so tests can skip it.
+poll_sleep <- function(seconds) {
+  Sys.sleep(seconds)
+}
+
+# Waits for a version's release, unrelease, or deletion to be finalized, given
+# the version as returned by that request. These take effect immediately, but
+# the version's data is moved in the background, and the dataset can't be
+# released, unreleased, or deleted again until that finishes.
+wait_for_version_finalization <- function(version) {
+  while (isTRUE(version$properties[["isFinalizing"]])) {
+    poll_sleep(2)
+    version$get()
+  }
+}
+
+# Splits a reference like `owner.dataset:v1_0.table` into its dot-separated
+# parts. A version tag can also be written with a dot (`:v1.0`), so it's first
+# normalized to the equivalent underscore form.
+split_reference <- function(reference) {
+  normalized <- gsub(":v(\\d+)\\.(\\d+)", ":v\\1_\\2", reference)
+  strsplit(normalized, ".", fixed = TRUE)[[1]]
+}
+
+# Whether an environment variable is set to a non-empty value
+has_env <- function(name) {
+  nzchar(Sys.getenv(name))
+}
+
+# Waits for a transform or notebook run, given the response to starting it.
+# Raises a job error if the run fails or is cancelled.
+wait_for_run <- function(instance, run_properties) {
+  job_id <- run_properties[["currentJob"]][["id"]]
+  repeat {
+    poll_sleep(2)
+    instance$get()
+    jobs <- list(
+      instance$properties[["currentJob"]],
+      instance$properties[["lastRunJob"]]
+    )
+    job <- if (!is.null(job_id)) {
+      # Track the job this run started, rather than whichever is most recent
+      Find(function(j) identical(j[["id"]], job_id), jobs)
+    } else {
+      jobs[[1]] %||% jobs[[2]]
+    }
+    if (
+      !is.null(job) &&
+        job[["status"]] %in% c("completed", "failed", "cancelled")
+    ) {
+      if (job[["status"]] != "completed") {
+        abort_redivis_job_error(
+          message = job$errorMessage,
+          kind = job$kind,
+          status = job$status
+        )
+      }
+      return(invisible(NULL))
+    }
+  }
+}
+
+# Downloads are written to this file alongside the destination, which only
+# replaces the destination once complete and verified, so that a failed
+# download never leaves a partial file there
+get_partial_download_path <- function(download_path) {
+  paste0(download_path, ".redivis-partial")
+}
+
 get_arrow_schema <- function(variables) {
-  schema <- purrr::map(variables, function(variable) {
+  schema <- lapply(variables, function(variable) {
     if (variable$type == 'integer') {
       arrow::int64()
     } else if (variable$type == 'float') {
@@ -28,9 +143,9 @@ get_arrow_schema <- function(variables) {
     }
   })
 
-  names <- purrr::map(variables, function(variable) variable$name)
+  names <- vapply(variables, function(variable) variable$name, character(1))
 
-  arrow::schema(purrr::set_names(schema, names))
+  arrow::schema(setNames(schema, names))
 }
 
 # Attaches each variable's label and value labels to its column, following
@@ -42,7 +157,7 @@ apply_variable_labels <- function(df, variables) {
       "The haven package must be installed to read data with labelled = TRUE."
     )
   }
-  is_data_table <- data.table::is.data.table(df)
+  is_data_table <- inherits(df, "data.table")
   lower_names <- tolower(names(df))
   for (variable in variables) {
     index <- match(tolower(variable$name), lower_names)
@@ -81,8 +196,16 @@ apply_variable_labels <- function(df, variables) {
 # Returns the attributes to set on x, and x itself, which is widened to a
 # double when an integer column has non-integral value labels
 get_label_attributes <- function(x, label, value_labels) {
-  label_names <- purrr::map_chr(value_labels, "label")
-  label_values <- purrr::map_chr(value_labels, "value")
+  label_names <- vapply(
+    value_labels,
+    function(value_label) as.character(value_label[["label"]]),
+    character(1)
+  )
+  label_values <- vapply(
+    value_labels,
+    function(value_label) as.character(value_label[["value"]]),
+    character(1)
+  )
   widened <- FALSE
 
   can_have_value_labels <- is.character(x) ||
@@ -107,7 +230,7 @@ get_label_attributes <- function(x, label, value_labels) {
     }
     # The same attributes haven::labelled() sets
     attributes <- list(
-      labels = purrr::set_names(label_values, label_names),
+      labels = setNames(label_values, label_names),
       label = label,
       class = c("haven_labelled", "vctrs_vctr", typeof(x))
     )
@@ -169,13 +292,10 @@ convert_data_to_parquet <- function(data) {
     dir.create(folder, recursive = TRUE)
   }
 
-  temp_file_path <- file.path(folder, uuid::UUIDgenerate())
+  temp_file_path <- file.path(folder, random_id())
 
   if (is(data, "sf")) {
-    sf_column_name <- attr(data, "sf_column")
-    wkt_geopoint <- sapply(sf::st_geometry(data), function(x) sf::st_as_text(x))
-    sf::st_geometry(data) <- NULL
-    data[sf_column_name] <- wkt_geopoint
+    data <- sf_to_geoparquet_table(data)
   }
 
   rows_per_group <- get_parquet_rows_per_group(data)
@@ -210,27 +330,28 @@ convert_data_to_parquet <- function(data) {
 }
 
 get_temp_dir <- function() {
-  if (Sys.getenv("REDIVIS_TMPDIR") == "") {
+  tmp_dir <- get_config("tmp_dir")
+  if (is.null(tmp_dir)) {
     return(tempdir())
   } else {
     user_suffix <- Sys.info()[["user"]]
     return(file.path(
-      Sys.getenv("REDIVIS_TMPDIR"),
+      path.expand(tmp_dir),
       str_interp("redivis_${user_suffix}")
     ))
   }
 }
 
 get_filename_from_content_disposition <- function(s) {
-  fname <- stringr::str_match(s, "filename\\*=([^;]+)")[, 2]
+  fname <- str_match_group(s, "filename\\*=([^;]+)")
   if (is.na(fname) || length(fname) == 0) {
-    fname <- stringr::str_match(s, "filename=([^;]+)")[, 2]
+    fname <- str_match_group(s, "filename=([^;]+)")
   }
   if (grepl("utf-8''", fname, ignore.case = TRUE)) {
     fname <- URLdecode(sub("utf-8''", '', fname, ignore.case = TRUE))
   }
-  fname <- stringr::str_trim(fname)
-  fname <- stringr::str_replace_all(fname, '"', '')
+  fname <- trimws(fname)
+  fname <- gsub('"', '', fname, fixed = TRUE)
   return(fname)
 }
 
@@ -252,4 +373,43 @@ show_namespace_warning <- function(method) {
     globals$printed_warnings[message] <- TRUE
     warning(message, call. = FALSE)
   }
+}
+
+# An arrow table of an sf data frame, in the form of GeoParquet: its geometries
+# as WKB, described by the table's "geo" metadata, which Redivis reads as
+# geographies. Geographies are in WGS84, so other coordinates are transformed.
+sf_to_geoparquet_table <- function(data) {
+  is_geometry <- vapply(data, inherits, logical(1), "sfc")
+  geometry_names <- names(data)[is_geometry]
+  table <- arrow::as_arrow_table(as.data.frame(data)[!is_geometry])
+  table$metadata$r <- NULL # drop serialized R attributes
+
+  wgs84 <- sf::st_crs(4326)
+  for (name in geometry_names) {
+    geometry <- data[[name]]
+    if (!is.na(sf::st_crs(geometry)) && sf::st_crs(geometry) != wgs84) {
+      geometry <- sf::st_transform(geometry, wgs84)
+    }
+    table[[name]] <- arrow::Array$create(
+      unclass(sf::st_as_binary(geometry)),
+      type = arrow::binary()
+    )
+  }
+  table <- table[, names(data)]
+
+  # Without a "crs", GeoParquet coordinates are longitude/latitude in WGS84
+  table$metadata$geo <- as.character(jsonlite::toJSON(
+    list(
+      version = "1.0.0",
+      primary_column = attr(data, "sf_column"),
+      columns = stats::setNames(
+        lapply(geometry_names, function(name) {
+          list(encoding = "WKB", geometry_types = list())
+        }),
+        geometry_names
+      )
+    ),
+    auto_unbox = TRUE
+  ))
+  table
 }

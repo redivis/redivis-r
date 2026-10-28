@@ -45,7 +45,7 @@ Organization <- R6::R6Class(
         page_size = 100,
         max_results = max_results
       )
-      purrr::map(datasets, function(dataset) {
+      lapply(datasets, function(dataset) {
         Dataset$new(
           name = dataset$name,
           properties = dataset,
@@ -60,7 +60,7 @@ Organization <- R6::R6Class(
         page_size = 100,
         max_results = max_results
       )
-      purrr::map(workflows, function(workflow) {
+      lapply(workflows, function(workflow) {
         Workflow$new(
           name = workflow$name,
           properties = workflow,

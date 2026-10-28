@@ -18,17 +18,17 @@ Transform <- R6::R6Class(
       parsed_name <- name
       parsed_workflow <- workflow
       if (is.null(parsed_workflow)) {
-        split <- strsplit(name, "\\.")[[1]]
+        split <- if (is.null(name)) character() else split_reference(name)
         if (length(split) == 3) {
           parsed_name <- split[[3]]
           parsed_workflow <- Workflow$new(
             name = paste(split[1:2], collapse = '.')
           )
-        } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
+        } else if (!is.null(get_config("default_workflow"))) {
           parsed_workflow <- Workflow$new(
-            name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
+            name = get_config("default_workflow")
           )
-        } else if (name != "") {
+        } else if (!is.null(name) && name != "") {
           abort_redivis_value_error(
             "Invalid transform specifier, must be the fully qualified reference if no dataset or workflow is specified"
           )
@@ -40,18 +40,21 @@ Transform <- R6::R6Class(
       } else {
         parsed_name
       }
+      # A transform without a name (yet) is named by the API when it's created
       qualified_reference_val <- if (length(properties$qualifiedReference)) {
         properties$qualifiedReference
-      } else {
+      } else if (!is.null(parsed_name)) {
         str_interp("${parent_reference}${parsed_name}")
       }
       self$name <- parsed_name
       self$workflow <- parsed_workflow
       self$qualified_reference <- qualified_reference_val
       self$scoped_reference <- scoped_reference_val
-      self$uri <- str_interp(
-        "/transforms/${URLencode(qualified_reference_val)}"
-      )
+      self$uri <- if (length(properties$uri)) {
+        properties$uri
+      } else if (!is.null(qualified_reference_val)) {
+        str_interp("/transforms/${URLencode(qualified_reference_val)}")
+      }
       self$properties <- properties
     },
 
@@ -82,7 +85,10 @@ Transform <- R6::R6Class(
     },
 
     create = function(source_table, query = NULL) {
-      payload <- list(name = self$name)
+      payload <- list()
+      if (!is.null(self$name)) {
+        payload$name <- self$name
+      }
 
       if (!is.null(query)) {
         payload$query <- query
@@ -179,31 +185,14 @@ Transform <- R6::R6Class(
       self$uri <- self$properties$uri
 
       if (wait_for_finish) {
-        repeat {
-          Sys.sleep(2)
-          self$get()
-
-          current_job <- self$properties[["currentJob"]]
-          if (is.null(current_job)) {
-            current_job <- self$properties[["lastRunJob"]]
-          }
-
-          if (
-            !is.null(current_job) &&
-              current_job[["status"]] %in% c("completed", "failed", "cancelled")
-          ) {
-            if (current_job[["status"]] != "completed") {
-              abort_redivis_job_error(
-                message = current_job$errorMessage,
-                kind = current_job$kind,
-                status = current_job$status
-              )
-            }
-            break
-          }
-        }
+        wait_for_run(self, self$properties)
       }
       self
+    },
+
+    delete = function() {
+      make_request(method = "DELETE", path = self$uri)
+      invisible(NULL)
     },
 
     cancel = function() {

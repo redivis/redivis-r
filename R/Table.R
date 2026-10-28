@@ -28,21 +28,27 @@ Table <- R6::R6Class(
         parent_reference <- str_interp("${workflow$qualified_reference}.")
         is_workflow_table <- TRUE
       } else {
-        split <- strsplit(name, "\\.")[[1]]
+        split <- split_reference(name)
         if (length(split) == 3) {
           parsed_name <- split[[3]]
           parent_reference <- paste(split[1:2], collapse = '.')
           parsed_dataset <- Dataset$new(name = parent_reference)
           parsed_workflow <- Workflow$new(name = parent_reference)
           parent_reference <- str_interp("${parent_reference}.")
-        } else if (Sys.getenv("REDIVIS_DEFAULT_WORKFLOW") != "") {
+        } else if (!is.null(get_config("default_workflow"))) {
           parsed_workflow <- Workflow$new(
-            name = Sys.getenv("REDIVIS_DEFAULT_WORKFLOW")
+            name = get_config("default_workflow")
+          )
+          parent_reference <- str_interp(
+            "${parsed_workflow$qualified_reference}."
           )
           is_workflow_table <- TRUE
-        } else if (Sys.getenv("REDIVIS_DEFAULT_DATASET") != "") {
+        } else if (!is.null(get_config("default_dataset"))) {
           parsed_dataset <- Dataset$new(
-            name = Sys.getenv("REDIVIS_DEFAULT_DATASET")
+            name = get_config("default_dataset")
+          )
+          parent_reference <- str_interp(
+            "${parsed_dataset$qualified_reference}."
           )
         } else if (name != "") {
           abort_redivis_value_error(
@@ -153,7 +159,7 @@ Table <- R6::R6Class(
         page_size = 100,
         max_results = max_results
       )
-      purrr::map(variables, function(variable_properties) {
+      lapply(variables, function(variable_properties) {
         Variable$new(
           name = variable_properties$name,
           table = self,
@@ -165,11 +171,19 @@ Table <- R6::R6Class(
     add_files = function(
       files = NULL,
       directory = NULL,
-      progress = TRUE,
-      max_parallelization = parallelly::availableCores()
+      progress = NULL,
+      max_parallelization = NULL
     ) {
       dir <- directory # Rename to avoid confusion with self$directory field
-      max_parallelization <- min(20, max_parallelization)
+      progress <- resolve_config("progress", progress)
+      max_parallelization <- min(
+        20,
+        resolve_config(
+          "max_parallelization",
+          max_parallelization,
+          parallelly::availableCores()
+        )
+      )
       add_table_files <- function() {
         # Ensure exactly one of files or directory is provided
         if (
@@ -306,7 +320,7 @@ Table <- R6::R6Class(
         page_size = 100,
         max_results = max_results
       )
-      purrr::map(uploads, function(upload_properties) {
+      lapply(uploads, function(upload_properties) {
         Upload$new(
           name = upload_properties$name,
           table = self,
@@ -381,8 +395,7 @@ perform_table_parallel_file_upload <- function(
   local_perform_resumable_upload <- perform_resumable_upload
   local_perform_standard_upload <- perform_standard_upload
 
-  # TODO: remove dependency on furrr
-  results <- furrr::future_map(batch_files, function(batch_file) {
+  results <- future_map_chunked(batch_files, function(batch_file) {
     file_obj <- batch_file[["file"]]
     temp_upload <- batch_file[["temp_upload"]]
 
@@ -399,8 +412,12 @@ perform_table_parallel_file_upload <- function(
         on_progress = if (is.null(pb_bytes)) {
           NULL
         } else {
+          # The upload reports how many bytes it has sent in total, while the
+          # progressor counts increments
+          reported_bytes <- 0
           function(bytes) {
-            pb_bytes(amount = bytes * pb_bytes_multiplier)
+            pb_bytes(amount = (bytes - reported_bytes) * pb_bytes_multiplier)
+            reported_bytes <<- bytes
           }
         },
         temp_upload_url = temp_upload[["url"]]

@@ -21,6 +21,12 @@ mock_api_server <- function(port) {
     state$upload_status <- "completed"
     state$query_bytes <- 1000
     state$query_status <- "completed"
+    # Whether POST /queries honors listRows, responding with the rows of a
+    # small, completed query (as a newer API does)
+    state$query_inline_rows <- TRUE
+    # The next rows POST /queries responds with stop after this many rows, and
+    # without the end-of-stream sentinel
+    state$truncate_inline_rows_once <- 0
     state$export_file_count <- 1
     # Reject unauthenticated requests, other than listRows, which (like the
     # real API) can be read anonymously
@@ -43,6 +49,10 @@ mock_api_server <- function(port) {
     state$truncate_raw_file_once <- 0
     # rawFiles responses ignore the Range header, sending the whole file
     state$ignore_raw_file_range <- FALSE
+    # The resumable upload sessions started (see /storage/ below), and whether
+    # the first has expired
+    state$storage_sessions <- 0
+    state$expire_first_storage_session <- FALSE
     state$requests <- list()
     state$oauth_scopes <- list()
   }
@@ -129,7 +139,10 @@ mock_api_server <- function(port) {
       body <- body[seq_len(min(length(body), state$truncate_raw_file_once))]
       state$truncate_raw_file_once <- 0
     }
-    headers <- list("Content-Type" = "application/octet-stream")
+    headers <- list(
+      "Content-Type" = "application/octet-stream",
+      "Accept-Ranges" = "bytes"
+    )
     if (!is.null(range)) {
       headers[["Content-Range"]] <- sprintf(
         "bytes %.0f-%.0f/%d",
@@ -255,8 +268,38 @@ mock_api_server <- function(port) {
       method = method,
       path = path,
       query = query,
-      authorized = authorized
+      authorized = authorized,
+      # The payloads of the queries created
+      payload = if (method == "POST" && path == "/api/v1/queries") {
+        jsonlite::fromJSON(body, simplifyVector = FALSE)
+      }
     )
+
+    # A stand-in for the signed URLs that temp uploads are sent to. A resumable
+    # upload first starts a session, and is then sent to the session's URL.
+    if (startsWith(path, "/storage/")) {
+      if (method == "POST") {
+        state$storage_sessions <- state$storage_sessions + 1
+        return(list(
+          status = 201L,
+          headers = list(
+            Location = sprintf(
+              "http://%s/storage/session-%d",
+              req$HTTP_HOST,
+              state$storage_sessions
+            )
+          ),
+          body = ""
+        ))
+      }
+      if (
+        isTRUE(state$expire_first_storage_session) &&
+          path == "/storage/session-1"
+      ) {
+        return(json(list(error = "not_found"), 404))
+      }
+      return(json(list(ok = TRUE, bytes = length(body_raw))))
+    }
 
     if (state$fail_503 > 0) {
       state$fail_503 <- state$fail_503 - 1
@@ -300,7 +343,39 @@ mock_api_server <- function(port) {
 
     if (method == "POST") {
       if (path == "/api/v1/queries") {
-        return(json(query_properties()))
+        list_rows <- jsonlite::fromJSON(body, simplifyVector = FALSE)$listRows
+        count <- min(list_rows$maxResults %||% num_rows, num_rows)
+        # Like the API, only small results are returned in place of the query,
+        # sized by the fraction of rows requested
+        is_small <- num_rows == 0 || state$query_bytes * count / num_rows <= 1e8
+        if (
+          is.null(list_rows) ||
+            !isTRUE(state$query_inline_rows) ||
+            state$query_status != "completed" ||
+            !is_small
+        ) {
+          res <- json(query_properties())
+          res$headers$Location <- "/api/v1/queries/q1"
+          return(res)
+        }
+        sentinel <- isTRUE(list_rows$eosSentinel)
+        if (state$truncate_inline_rows_once > 0) {
+          count <- min(count, state$truncate_inline_rows_once)
+          sentinel <- FALSE
+          state$truncate_inline_rows_once <- 0
+        }
+        # Like BigQuery, selected columns are matched case-insensitively, and
+        # come in the table's order
+        names <- if (!is.null(list_rows$selectedVariables)) {
+          selected <- tolower(unlist(list_rows$selectedVariables))
+          all_names[tolower(all_names) %in% selected]
+        } else {
+          all_names
+        }
+        res <- binary(arrow_stream(names, 0, count, sentinel = sentinel))
+        res$headers$Location <- "/api/v1/queries/q1"
+        res$headers[["Content-Location"]] <- "/api/v1/queries/q1/rows"
+        return(res)
       }
       if (endsWith(path, "/readSessions")) {
         request <- jsonlite::fromJSON(body, simplifyVector = FALSE)
@@ -350,11 +425,15 @@ mock_api_server <- function(port) {
       }
       names <- setdiff(names, unlist(state$omit_column))
       count <- min(as.numeric(query$maxResults %||% num_rows), num_rows)
+      # Only queries' rows support eosSentinel, which a truncated response
+      # lacks
+      sentinel <- identical(query$eosSentinel, "true")
       if (state$truncate_rows_once > 0) {
         count <- min(count, state$truncate_rows_once)
+        sentinel <- FALSE
         state$truncate_rows_once <- 0
       }
-      return(binary(arrow_stream(names, 0, count, sentinel = FALSE)))
+      return(binary(arrow_stream(names, 0, count, sentinel = sentinel)))
     }
 
     if (startsWith(path, "/api/v1/readStreams/")) {
@@ -506,9 +585,12 @@ local_mock_api <- function(authenticated = TRUE, env = parent.frame()) {
   mock_api_control("/__mock/reset", body = list())
 
   home <- withr::local_tempdir(.local_envir = env)
+  # Credentials go to the temporary home, never the live tests' (see
+  # setup-live.R)
   withr::local_envvar(
     REDIVIS_API_ENDPOINT = paste0(url, "/api/v1"),
     HOME = home,
+    REDIVIS_CONFIG_DIR = NA,
     REDIVIS_API_TOKEN = NA,
     REDIVIS_DEFAULT_NOTEBOOK = NA,
     .local_envir = env
@@ -517,11 +599,20 @@ local_mock_api <- function(authenticated = TRUE, env = parent.frame()) {
   withr::local_options(browser = function(...) invisible(NULL), .local_envir = env)
 
   previous_credentials <- auth_vars$cached_credentials
+  previous_credentials_file <- auth_vars$cached_credentials_file
   auth_vars$cached_credentials <- if (authenticated) fake_credentials()
-  withr::defer(auth_vars$cached_credentials <- previous_credentials, envir = env)
+  auth_vars$cached_credentials_file <- NULL
+  withr::defer(
+    {
+      auth_vars$cached_credentials <- previous_credentials
+      auth_vars$cached_credentials_file <- previous_credentials_file
+    },
+    envir = env
+  )
 
   testthat::local_mocked_bindings(
     retry_sleep = function(seconds) invisible(NULL),
+    poll_sleep = function(seconds) invisible(NULL),
     perform_oauth_login = function(...) {
       stop("an interactive OAuth login was triggered")
     },

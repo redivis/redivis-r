@@ -6,7 +6,8 @@ perform_retryable_download <- function(
   size = NULL,
   md5_hash = NULL,
   start_byte = 0,
-  retry_count = 0
+  retry_count = 0,
+  did_restart_for_hash = FALSE
 ) {
   args <- list(
     uri = uri,
@@ -16,7 +17,8 @@ perform_retryable_download <- function(
     size = size,
     md5_hash = md5_hash,
     start_byte = start_byte,
-    retry_count = retry_count
+    retry_count = retry_count,
+    did_restart_for_hash = did_restart_for_hash
   )
 
   if (!is.null(size) && !is.null(md5_hash)) {
@@ -32,6 +34,21 @@ perform_retryable_download <- function(
     }
   }
 
+  partial_path <- get_partial_download_path(download_path)
+  con <- NULL
+  # Once the download succeeds, the partial file has been moved to
+  # download_path, so this only removes one left by a failure. A retry runs
+  # (and resumes from the partial file) before this call exits.
+  on.exit(
+    {
+      if (!is.null(con)) {
+        try(close(con), silent = TRUE)
+      }
+      unlink(partial_path)
+    },
+    add = TRUE
+  )
+
   tryCatch(
     {
       exact_file_exists <- FALSE
@@ -40,6 +57,10 @@ perform_retryable_download <- function(
       last_progress_time <- proc.time()[["elapsed"]]
       progress_bytes_written <- 0
       supports_range_requests <- FALSE
+      # A response that's decompressed in transit can't be checked against the
+      # stored file's size and hash
+      is_encoded <- FALSE
+      bytes_written <- 0
 
       headers_callback <- function(response_headers) {
         should_check_filename <- is.null(size) || is.null(md5_hash)
@@ -48,34 +69,27 @@ perform_retryable_download <- function(
           supports_range_requests <<- TRUE
         }
         content_range <- response_headers[["content-range"]]
-        content_length <- response_headers[["content-length"]]
-        if (!is.null(content_range)) {
-          size <<- as.numeric(sub(".*/", "", content_range))
-        } else if (!is.null(content_length)) {
-          size <<- as.numeric(content_length)
-        } else {
-          # Unknown, e.g. for a compressed response sent in chunks
-          size <<- NULL
+        # A response that doesn't resume where we left off starts the download
+        # over
+        if (
+          start_byte > 0 &&
+            get_content_range_start(content_range) != start_byte
+        ) {
+          start_byte <<- 0
         }
-        # Prefer content-digest (values wrapped in colons, e.g. "md5=:uE0r1xmbDXTJAGiWL6xlHw==:")
-        # over x-goog-hash (no colons, e.g. "md5=uE0r1xmbDXTJAGiWL6xlHw==")
-        hash_header <- response_headers[["content-digest"]]
-        if (!is.null(hash_header)) {
-          md5_hash <<- trimws(gsub(
-            ":",
-            "",
-            regmatches(
-              hash_header,
-              regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
-            )
-          ))
-        } else {
-          hash_header <- response_headers[["x-goog-hash"]]
-          md5_hash <<- trimws(regmatches(
-            hash_header,
-            regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
-          ))
+        total_size <- get_total_size(
+          content_range,
+          response_headers[["content-length"]]
+        )
+        if (!is.null(total_size)) {
+          size <<- total_size
         }
+        # Prefer the hash the server reports, but keep the one we were given if
+        # it doesn't report one
+        md5_hash <<- get_md5_header(response_headers) %||% md5_hash
+        content_encoding <- response_headers[["content-encoding"]]
+        is_encoded <<- !is.null(content_encoding) &&
+          tolower(content_encoding) != "identity"
         if (should_check_filename) {
           exact_file_exists <<- check_download_filename(
             download_path,
@@ -97,17 +111,17 @@ perform_retryable_download <- function(
         }
       }
 
-      con <- NULL
       stream_callback = function(chunk) {
         if (exact_file_exists) {
           return(FALSE) # Stop download
         } else if (is.null(con)) {
           con <<- with_local_file_errors(download_path, base::file(
-            base::file.path(download_path),
+            partial_path,
             if (start_byte == 0) "wb" else "ab"
           ))
         }
 
+        bytes_written <<- bytes_written + length(chunk)
         progress_bytes_written <<- progress_bytes_written + length(chunk)
         if (proc.time()[["elapsed"]] - last_progress_time > 0.2) {
           pb(amount = progress_bytes_written * pb_multiplier)
@@ -117,11 +131,17 @@ perform_retryable_download <- function(
         with_local_file_errors(download_path, writeBin(chunk, con))
         return(NULL)
       }
-      on.exit(if (!is.null(con)) close(con), add = TRUE)
 
-      headers <- list()
+      # Request the file as stored, rather than compressed in transit: only
+      # then can it be checked against its size and hash, or resumed, since a
+      # range is a range of the bytes sent
+      headers <- list(`Accept-Encoding` = "identity")
       if (start_byte > 0) {
-        headers[["Range"]] <- paste0("bytes=", start_byte, "-")
+        headers[["Range"]] <- paste0(
+          "bytes=",
+          format(start_byte, scientific = FALSE),
+          "-"
+        )
       }
 
       make_request(
@@ -134,6 +154,53 @@ perform_retryable_download <- function(
         download_overwrite = isTRUE(overwrite) || retry_count > 0,
         headers_callback = headers_callback
       )
+
+      if (exact_file_exists) {
+        return(download_path)
+      }
+
+      if (is.null(con)) {
+        # An empty response never opened the file
+        con <- with_local_file_errors(download_path, base::file(
+          partial_path,
+          if (start_byte == 0) "wb" else "ab"
+        ))
+      }
+      close(con)
+      con <- NULL
+
+      downloaded_size <- start_byte + bytes_written
+      if (!is_encoded && !is.null(size) && downloaded_size != size) {
+        # The connection ended early; resume from what we have
+        stop(sprintf(
+          "The download ended after %s of %s bytes",
+          format(downloaded_size, scientific = FALSE),
+          format(size, scientific = FALSE)
+        ))
+      }
+
+      if (
+        !is_encoded &&
+          !is.null(md5_hash) &&
+          !identical(get_file_md5(partial_path), decode_md5(md5_hash))
+      ) {
+        if (did_restart_for_hash) {
+          abort_redivis_error(paste0(
+            "The downloaded file's MD5 hash doesn't match the expected hash: ",
+            download_path
+          ))
+        }
+        # Try once more from scratch, in case the data was corrupted in transit
+        unlink(partial_path)
+        args$start_byte <- 0
+        args$did_restart_for_hash <- TRUE
+        return(do.call(perform_retryable_download, args))
+      }
+
+      with_local_file_errors(
+        download_path,
+        file.rename(partial_path, download_path)
+      )
     },
     error = function(e) {
       # e.g. no access to the file, or a file already at download_path: fail
@@ -142,19 +209,17 @@ perform_retryable_download <- function(
         stop(e)
       }
       if (retry_count < 10) {
+        if (!is.null(con)) {
+          try(close(con), silent = TRUE)
+          con <<- NULL
+        }
         retry_sleep(retry_count)
         args$retry_count <- retry_count + 1
-        if (supports_range_requests) {
-          args$start_byte <- if (file.exists(download_path)) {
-            file.size(download_path)
-          } else {
-            0
-          }
+        if (supports_range_requests && file.exists(partial_path)) {
+          args$start_byte <- file.size(partial_path)
         } else {
           # Server doesn't support range requests; delete partial file and restart
-          if (file.exists(download_path)) {
-            unlink(download_path)
-          }
+          unlink(partial_path)
           args$start_byte <- 0
         }
         return(do.call(perform_retryable_download, args))
@@ -174,6 +239,47 @@ perform_retryable_download <- function(
   download_path
 }
 
+# The first byte of a ranged response, from its Content-Range header, or 0 if
+# the response isn't ranged
+get_content_range_start <- function(content_range) {
+  start <- str_match_group(content_range %||% "", "^bytes\\s+(\\d+)-")
+  if (is.na(start)) 0 else as.numeric(start)
+}
+
+# The size of the whole file, from the Content-Range header (or Content-Length,
+# for a complete response)
+get_total_size <- function(content_range, content_length) {
+  total <- if (!is.null(content_range)) {
+    sub(".*/", "", content_range)
+  } else {
+    content_length
+  }
+  if (!is.null(total) && grepl("^\\d+$", total)) as.numeric(total) else NULL
+}
+
+# The file's base64 MD5 hash, from its Content-Digest or x-goog-hash header
+get_md5_header <- function(headers) {
+  # Prefer content-digest (values wrapped in colons, e.g. "md5=:uE0r1xmbDXTJAGiWL6xlHw==:")
+  # over x-goog-hash (no colons, e.g. "md5=uE0r1xmbDXTJAGiWL6xlHw==")
+  hash_header <- headers[["content-digest"]] %||% headers[["x-goog-hash"]]
+  if (is.null(hash_header)) {
+    return(NULL)
+  }
+  md5 <- regmatches(
+    hash_header,
+    regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
+  )
+  if (length(md5) == 0) NULL else trimws(gsub(":", "", md5))
+}
+
+decode_md5 <- function(md5_hash) {
+  if (is.character(md5_hash)) jsonlite::base64_dec(md5_hash) else md5_hash
+}
+
+get_file_md5 <- function(path) {
+  as.vector(openssl::md5(file(path)))
+}
+
 perform_parallel_download <- function(
   uris,
   download_paths,
@@ -184,6 +290,11 @@ perform_parallel_download <- function(
   total_bytes = NULL,
   max_concurrency = NULL
 ) {
+  max_parallelization <- resolve_config(
+    "max_parallelization",
+    max_parallelization,
+    parallelly::availableCores()
+  )
   avg_file_size <- if (!is.null(total_bytes) && length(uris) > 0) {
     total_bytes / length(uris)
   } else {
@@ -260,7 +371,7 @@ perform_parallel_download <- function(
   # Need a local variable for parallelization to work
   .perform_parallel_download_worker <- perform_parallel_download_worker
 
-  furrr::future_map(tasks, function(task) {
+  future_map_chunked(tasks, function(task) {
     .perform_parallel_download_worker(
       uris = task$uris,
       download_paths = task$download_paths,
@@ -313,6 +424,11 @@ perform_parallel_download_worker <- function(
 
   # track open connections so we can clean up on exit
   file_connections <- vector("list", length(uris))
+  # Downloads write to a partial file alongside their destination, which is
+  # only moved there once complete and verified. Any left on exit are from
+  # downloads that failed.
+  partial_paths <- get_partial_download_path(unlist(download_paths))
+  started_downloads <- logical(length(uris))
 
   on.exit(
     {
@@ -328,6 +444,7 @@ perform_parallel_download_worker <- function(
           )
         }
       }
+      unlink(partial_paths[started_downloads])
     },
     add = TRUE
   )
@@ -360,10 +477,12 @@ perform_parallel_download_worker <- function(
     index,
     retry_count = 0L,
     start_byte = 0L,
-    auth_failures = character()
+    auth_failures = character(),
+    did_restart_for_hash = FALSE
   ) {
     max_retries <- 10L
     download_path <- download_paths[[index]]
+    partial_path <- partial_paths[[index]]
     url <- generate_api_url(uris[[index]])
     did_check_existing <- FALSE
 
@@ -400,9 +519,19 @@ perform_parallel_download_worker <- function(
     h <- curl::new_handle()
     handles[[index]] <<- h
 
-    headers <- get_authorization_header(as_list = TRUE)
+    # Public files can be downloaded without credentials, so they're only sent
+    # when available
+    headers <- get_authorization_header(as_list = TRUE, allow_anonymous = TRUE)
+    request_authorization <- headers$Authorization
+    # Request the file as stored, rather than compressed in transit (see
+    # perform_retryable_download)
+    headers[["Accept-Encoding"]] <- "identity"
     if (start_byte > 0) {
-      headers$Range <- sprintf("bytes=%d-", start_byte)
+      headers$Range <- paste0(
+        "bytes=",
+        format(start_byte, scientific = FALSE),
+        "-"
+      )
     }
     curl::handle_setheaders(h, .list = headers)
     curl::handle_setopt(h, url = url)
@@ -414,7 +543,15 @@ perform_parallel_download_worker <- function(
     # local state for this download
     file_con <- NULL
     content_length <- NULL
-    md5_hash <- NULL
+    md5_hash <- if (!is.null(md5_hashes) && index <= length(md5_hashes)) {
+      md5_hashes[[index]]
+    }
+    known_size <- if (!is.null(sizes) && index <= length(sizes)) {
+      sizes[[index]]
+    }
+    # A response that's decompressed in transit can't be checked against the
+    # stored file's size and hash
+    is_encoded <- FALSE
     bytes_written <- 0
     last_progress_time <- proc.time()[["elapsed"]]
     progress_bytes_written <- 0
@@ -461,9 +598,9 @@ perform_parallel_download_worker <- function(
           active_bytes <<- active_bytes - estimated_size
           # queue a retry
           resume_byte <- if (
-            supports_range_requests && file.exists(download_path)
+            supports_range_requests && file.exists(partial_path)
           ) {
-            file.size(download_path)
+            file.size(partial_path)
           } else {
             0
           }
@@ -471,7 +608,8 @@ perform_parallel_download_worker <- function(
             index = index,
             retry_count = retry_count + 1L,
             start_byte = resume_byte,
-            auth_failures = auth_failures
+            auth_failures = auth_failures,
+            did_restart_for_hash = did_restart_for_hash
           )
           return(FALSE)
         }
@@ -508,7 +646,7 @@ perform_parallel_download_worker <- function(
             auth_failure <- auth_failure_signature(
               status,
               if (is_json) response_content,
-              authenticated = TRUE
+              authenticated = !is.null(request_authorization)
             )
             # As in make_request(), only re-authenticate while it makes
             # progress; otherwise a token the server keeps rejecting would be
@@ -521,18 +659,28 @@ perform_parallel_download_worker <- function(
                 !(auth_failure %in% auth_failures) &&
                 length(auth_failures) < MAX_AUTH_ATTEMPTS
             ) {
-              refresh_credentials(
-                scope = if (!is.null(response_content$scope)) {
-                  strsplit(response_content$scope, " ")[[1]]
-                },
-                amr_values = response_content$amr_values
-              )
+              # Concurrent downloads are rejected together, so only the first
+              # to see it re-authenticates, and the rest retry with the
+              # credentials it got
+              current_authorization <- get_authorization_header(
+                as_list = TRUE,
+                allow_anonymous = TRUE
+              )$Authorization
+              if (identical(current_authorization, request_authorization)) {
+                refresh_credentials(
+                  scope = if (!is.null(response_content$scope)) {
+                    strsplit(response_content$scope, " ")[[1]]
+                  },
+                  amr_values = response_content$amr_values
+                )
+              }
               # Queue a retry with fresh credentials
               pending[[length(pending) + 1]] <<- list(
                 index = index,
                 retry_count = 0L,
                 start_byte = 0L,
-                auth_failures = c(auth_failures, auth_failure)
+                auth_failures = c(auth_failures, auth_failure),
+                did_restart_for_hash = did_restart_for_hash
               )
               return(FALSE)
             }
@@ -551,50 +699,30 @@ perform_parallel_download_worker <- function(
           supports_range_requests <<- TRUE
         }
 
-        content_range <- headers[["content-range"]]
-        if (!is.null(content_range)) {
-          #  Use numeric to avoid int32 overflow
-          content_length <<- as.numeric(sub(".*/", "", content_range))
-        } else {
-          #  Use numeric to avoid int32 overflow
-          content_length <<- as.numeric(headers[["content-length"]])
+        # A response that doesn't resume where we left off starts the download
+        # over
+        if (
+          start_byte > 0 &&
+            (status != 206L ||
+              get_content_range_start(headers[["content-range"]]) != start_byte)
+        ) {
+          start_byte <<- 0
         }
 
-        if (length(content_length) == 0 || is.na(content_length)) {
-          content_length <<- NULL
-        }
+        content_length <<- get_total_size(
+          headers[["content-range"]],
+          headers[["content-length"]]
+        ) %||%
+          known_size
+        content_encoding <- headers[["content-encoding"]]
+        is_encoded <<- !is.null(content_encoding) &&
+          tolower(content_encoding) != "identity"
+
+        # Prefer the hash the server reports, but keep the one we were given if
+        # it doesn't report one
+        md5_hash <<- get_md5_header(headers) %||% md5_hash
 
         if (!did_check_existing) {
-          # Prefer content-digest (values wrapped in colons, e.g. "md5=:uE0r1xmbDXTJAGiWL6xlHw==:")
-          # over x-goog-hash (no colons, e.g. "md5=uE0r1xmbDXTJAGiWL6xlHw==")
-          hash_header <- headers[["content-digest"]]
-          if (!is.null(hash_header)) {
-            extracted_md5 <- trimws(gsub(
-              ":",
-              "",
-              regmatches(
-                hash_header,
-                regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
-              )
-            ))
-            md5_hash <<- if (length(extracted_md5) == 0) NULL else extracted_md5
-          } else {
-            hash_header <- headers[["x-goog-hash"]]
-            if (is.null(hash_header)) {
-              md5_hash <<- NULL
-            } else {
-              extracted_md5 <- trimws(regmatches(
-                hash_header,
-                regexpr("(?<=md5=)[^,]+", hash_header, perl = TRUE)
-              ))
-              md5_hash <<- if (length(extracted_md5) == 0) {
-                NULL
-              } else {
-                extracted_md5
-              }
-            }
-          }
-
           exact_file_exists <- check_download_filename(
             filename = download_path,
             overwrite = overwrite,
@@ -627,9 +755,10 @@ perform_parallel_download_worker <- function(
           showWarnings = FALSE,
           recursive = TRUE
         )
+        started_downloads[[index]] <<- TRUE
         opened <- tryCatch(
           with_local_file_errors(download_path, base::file(
-            download_path,
+            partial_path,
             if (start_byte == 0) "wb" else "ab"
           )),
           redivis_error = function(e) e
@@ -663,17 +792,61 @@ perform_parallel_download_worker <- function(
       }
 
       # on final chunk, clean up if we're done
+      downloaded_size <- start_byte + bytes_written
       if (
-        final && (is.null(content_length) || bytes_written == content_length)
+        final &&
+          (is_encoded ||
+            is.null(content_length) ||
+            downloaded_size == content_length)
       ) {
         close(file_con)
         file_connections[[index]] <<- NULL
+        file_con <<- NULL
         if (!is.null(on_progress) && progress_bytes_written > 0) {
           on_progress(progress_bytes_written)
         }
+        if (
+          !is_encoded &&
+            !is.null(md5_hash) &&
+            !identical(get_file_md5(partial_path), decode_md5(md5_hash))
+        ) {
+          active_downloads <<- active_downloads - 1L
+          active_bytes <<- active_bytes - estimated_size
+          if (did_restart_for_hash) {
+            record_download_error(tryCatch(
+              abort_redivis_error(paste0(
+                "The downloaded file's MD5 hash doesn't match the expected hash: ",
+                download_path
+              )),
+              redivis_error = function(e) e
+            ))
+          } else {
+            # Try once more from scratch, in case the data was corrupted in
+            # transit
+            unlink(partial_path)
+            pending[[length(pending) + 1]] <<- list(
+              index = index,
+              retry_count = retry_count,
+              start_byte = 0,
+              auth_failures = auth_failures,
+              did_restart_for_hash = TRUE
+            )
+          }
+          return(invisible(NULL))
+        }
+        moved <- tryCatch(
+          with_local_file_errors(
+            download_path,
+            file.rename(partial_path, download_path)
+          ),
+          redivis_error = function(e) e
+        )
+        if (inherits(moved, "error")) {
+          return(fail_locally(moved))
+        }
         active_downloads <<- active_downloads - 1L
         active_bytes <<- active_bytes - estimated_size
-      } else if (final && bytes_written != content_length) {
+      } else if (final) {
         # Incomplete download — treat as a retriable error
         tryCatch(close(file_con), error = function(e) {})
         file_connections[[index]] <<- NULL
@@ -681,9 +854,9 @@ perform_parallel_download_worker <- function(
         active_bytes <<- active_bytes - estimated_size
         if (retry_count < max_retries) {
           resume_byte <- if (
-            supports_range_requests && file.exists(download_path)
+            supports_range_requests && file.exists(partial_path)
           ) {
-            file.size(download_path)
+            file.size(partial_path)
           } else {
             0
           }
@@ -691,13 +864,14 @@ perform_parallel_download_worker <- function(
             index = index,
             retry_count = retry_count + 1L,
             start_byte = resume_byte,
-            auth_failures = auth_failures
+            auth_failures = auth_failures,
+            did_restart_for_hash = did_restart_for_hash
           )
         } else {
           record_download_error(sprintf(
-            "Download incomplete for %s: got %d of %d bytes after %d retries",
+            "Download incomplete for %s: got %.0f of %.0f bytes after %d retries",
             download_path,
-            bytes_written,
+            downloaded_size,
             content_length,
             max_retries
           ))
@@ -719,9 +893,9 @@ perform_parallel_download_worker <- function(
       }
       if (retry_count < max_retries) {
         resume_byte <- if (
-          supports_range_requests && file.exists(download_path)
+          supports_range_requests && file.exists(partial_path)
         ) {
-          file.size(download_path)
+          file.size(partial_path)
         } else {
           0
         }
@@ -729,7 +903,8 @@ perform_parallel_download_worker <- function(
           index = index,
           retry_count = retry_count + 1L,
           start_byte = resume_byte,
-          auth_failures = auth_failures
+          auth_failures = auth_failures,
+          did_restart_for_hash = did_restart_for_hash
         )
       } else {
         did_short_circuit <<- TRUE
@@ -804,7 +979,8 @@ perform_parallel_download_worker <- function(
           task$index,
           retry_count = task$retry_count,
           start_byte = task$start_byte,
-          auth_failures = task$auth_failures %||% character()
+          auth_failures = task$auth_failures %||% character(),
+          did_restart_for_hash = isTRUE(task$did_restart_for_hash)
         )
       }
       # Make sure we wait for all retries to enqueue. Add 0.1s as additional buffer
@@ -864,12 +1040,7 @@ check_download_filename <- function(
         md5_hash <- jsonlite::base64_dec(md5_hash)
       }
 
-      file_hash <- digest::digest(
-        filename,
-        algo = "md5",
-        file = TRUE,
-        raw = TRUE
-      )
+      file_hash <- get_file_md5(filename)
 
       if (identical(file_hash, md5_hash)) {
         return(TRUE)

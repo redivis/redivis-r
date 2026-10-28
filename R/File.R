@@ -56,8 +56,9 @@ File <- R6::R6Class(
     download = function(
       path = NULL,
       overwrite = FALSE,
-      progress = TRUE
+      progress = NULL
     ) {
+      progress <- resolve_config("progress", progress)
       download_path <- path
       is_dir <- FALSE
 
@@ -66,11 +67,7 @@ File <- R6::R6Class(
         is_dir <- TRUE
       } else if (endsWith(download_path, '/')) {
         is_dir <- TRUE
-        download_path <- stringr::str_sub(
-          download_path,
-          1,
-          nchar(download_path) - 1
-        )
+        download_path <- substr(download_path, 1, nchar(download_path) - 1)
       } else if (dir.exists(download_path)) {
         is_dir <- TRUE
       }
@@ -103,6 +100,22 @@ File <- R6::R6Class(
         start_byte = start_byte,
         end_byte = end_byte
       )
+      is_range <- start_byte > 0 || !is.null(end_byte)
+      if (is_range && httr2::resp_status(res) != 206) {
+        # The server ignored the range and sent the whole file
+        content <- httr2::resp_body_raw(res)
+        end <- min(
+          if (is.null(end_byte)) length(content) else end_byte + 1,
+          length(content)
+        )
+        content <- content[seq_len(max(0, end - start_byte)) + start_byte]
+        if (as_text) {
+          text <- rawToChar(content)
+          Encoding(text) <- "UTF-8"
+          return(text)
+        }
+        return(content)
+      }
       if (as_text) httr2::resp_body_string(res) else httr2::resp_body_raw(res)
     },
 

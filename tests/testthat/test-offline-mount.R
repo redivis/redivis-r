@@ -3,6 +3,9 @@
 # via C_fuse_cache_open, so they need no FUSE installation. Runs against the
 # mock API in helper-mock-api.R.
 
+# Mounting isn't supported on Windows, where the C code isn't built
+skip_on_os("windows")
+
 BLOCK <- 1024
 # Kernel reads are much smaller than a block
 READ <- 256
@@ -18,7 +21,7 @@ file_bytes <- function(content, size = SIZE) {
 }
 
 cache_key <- function(content, size = SIZE) {
-  digest::digest(file_bytes(content, size), algo = "md5", serialize = FALSE)
+  as.character(openssl::md5(file_bytes(content, size)))
 }
 
 # The cache of a directory of files, given as list(name = list(content, size)),
@@ -39,12 +42,7 @@ local_mount_cache <- function(
     size <- files[[name]]$size %||% SIZE
     id <- paste0("id-", name)
     raw_files[[id]] <- list(content = files[[name]]$content, size = size)
-    md5 <- digest::digest(
-      file_bytes(files[[name]]$content, size),
-      algo = "md5",
-      serialize = FALSE,
-      raw = TRUE
-    )
+    md5 <- as.vector(openssl::md5(file_bytes(files[[name]]$content, size)))
     file <- File$new(
       id = id,
       name = name,
@@ -494,7 +492,6 @@ test_that("files are keyed by their hash, or their id and size without one", {
 })
 
 test_that("mount() rejects a negative max_cache_size", {
-  skip_on_os("windows")
   root <- Directory$new(path = "/", table = mock_table())
 
   expect_error(

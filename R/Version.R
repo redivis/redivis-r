@@ -82,9 +82,12 @@ Version <- R6::R6Class(
       self
     },
 
-    delete = function() {
+    delete = function(wait_for_finalization = FALSE) {
       self$properties <- make_request(method = "DELETE", path = self$uri)
       self$uri <- self$properties$uri
+      if (wait_for_finalization) {
+        wait_for_version_finalization(self)
+      }
       self
     },
 

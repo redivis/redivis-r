@@ -30,7 +30,7 @@ Export <- R6::R6Class(
     # export is downloaded to when a path to a directory is given
     get_download_name = function() {
       escape <- function(name) {
-        tolower(stringr::str_replace_all(name, "\\W+", "_"))
+        tolower(gsub("\\W+", "_", name, perl = TRUE))
       }
       if (!is.null(self$table)) {
         escape(self$table$properties$name %||% self$table$name %||% "table")
@@ -66,8 +66,9 @@ Export <- R6::R6Class(
       overwrite = FALSE,
       max_parallelization = NULL,
       max_concurrency = NULL,
-      progress = TRUE
+      progress = NULL
     ) {
+      progress <- resolve_config("progress", progress)
       if (progress) {
         progressr::with_progress(self$wait_for_finish())
       } else {
@@ -125,15 +126,15 @@ Export <- R6::R6Class(
         part_indices <- seq_len(file_count)
 
         args <- list(
-          uris = purrr::map(part_indices, function(i) {
+          uris = lapply(part_indices, function(i) {
             paste0(self$uri, "/download?filePart=", i - 1)
           }),
-          download_paths = purrr::map_chr(part_indices, function(i) {
+          download_paths = vapply(part_indices, function(i) {
             filename <- str_interp(
               "${formatC(i - 1, width = 6, flag = '0')}.${self$properties$format}"
             )
             file.path(path, filename)
-          }),
+          }, character(1)),
           overwrite = overwrite,
           max_parallelization = max_parallelization,
           max_concurrency = max_concurrency,

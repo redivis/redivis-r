@@ -282,10 +282,11 @@ Directory <- R6::R6Class(
       path = getwd(),
       overwrite = FALSE,
       max_results = NULL,
-      progress = TRUE,
+      progress = NULL,
       max_parallelization = NULL,
       max_concurrency = NULL
     ) {
+      progress <- resolve_config("progress", progress)
       files <- self$list(
         mode = "files",
         recursive = TRUE,
@@ -320,17 +321,17 @@ Directory <- R6::R6Class(
       # TODO: should include query params for table / query being downloaded from
       self_path <- gsub("^/+|/+$", "", as.character(self$path))
       args <- base::list(
-        uris = purrr::map(files, function(f) {
+        uris = lapply(files, function(f) {
           str_interp("/rawFiles/${f$id}")
         }),
-        sizes = purrr::map(files, function(f) {
+        sizes = lapply(files, function(f) {
           f$size
         }),
-        md5_hashes = purrr::map(files, function(f) {
+        md5_hashes = lapply(files, function(f) {
           f$hash
         }),
         total_bytes = total_bytes,
-        download_paths = purrr::map_chr(files, function(f) {
+        download_paths = vapply(files, function(f) {
           relative_path <- gsub(
             paste0("^", self_path, "/?"),
             "",
@@ -341,7 +342,7 @@ Directory <- R6::R6Class(
             file.path(gsub("/+$", "", path), relative_path),
             mustWork = FALSE
           )
-        }),
+        }, character(1)),
         overwrite = overwrite,
         max_parallelization = max_parallelization,
         max_concurrency = max_concurrency

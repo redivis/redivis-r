@@ -1,6 +1,17 @@
 # TODO: can this be some sort of weakRef, like in python?
 cached_directories <- new.env(parent = emptyenv())
 
+# A listing depends on the variables it was made with, as well as the table or
+# query
+get_directory_cache_key <- function(uri, file_id_variable, file_name_variable) {
+  paste(
+    uri,
+    file_id_variable %||% "",
+    file_name_variable %||% "",
+    sep = "\n"
+  )
+}
+
 #' @include read_rows.R Directory.R api_request.R
 TabularReader <- R6::R6Class(
   "TabularReader",
@@ -41,12 +52,20 @@ TabularReader <- R6::R6Class(
         check_is_ready(self)
       }
 
-      if (is.null(self$directory) && !is.null(cached_directories[[self$uri]])) {
-        self$directory <- cached_directories[[self$uri]]
-      }
+      private$directory_variables <- list(
+        file_id_variable = file_id_variable,
+        file_name_variable = file_name_variable
+      )
+      cache_key <- get_directory_cache_key(
+        self$uri,
+        file_id_variable,
+        file_name_variable
+      )
+      cached_directory <- cached_directories[[cache_key]]
 
       # Queries are immutable — return the cached directory if available
-      if (is_query && !is.null(self$directory)) {
+      if (is_query && !is.null(cached_directory)) {
+        self$directory <- cached_directory
         return(self$directory)
       }
 
@@ -54,10 +73,10 @@ TabularReader <- R6::R6Class(
       current_timestamp_ms <- as.numeric(Sys.time()) * 1000
 
       req_headers <- list()
-      if (!is.null(self$directory$last_cached_at)) {
+      if (!is.null(cached_directory$last_cached_at)) {
         req_headers[["If-Modified-Since"]] <- format(
           as.POSIXct(
-            self$directory$last_cached_at / 1000,
+            cached_directory$last_cached_at / 1000,
             origin = "1970-01-01",
             tz = "GMT"
           ),
@@ -91,7 +110,8 @@ TabularReader <- R6::R6Class(
 
       # 304 Not Modified — return cached directory
       if (httr2::resp_status(res) == 304L) {
-        self$directory$last_cached_at <- current_timestamp_ms
+        cached_directory$last_cached_at <- current_timestamp_ms
+        self$directory <- cached_directory
         return(self$directory)
       }
 
@@ -103,12 +123,15 @@ TabularReader <- R6::R6Class(
 
       raw_bytes <- httr2::resp_body_raw(res)
       file_specs <- arrow::read_ipc_stream(raw_bytes, as_data_frame = TRUE)
-      # IMPORTANT: need to explicitly set int64 as numeric to avoid purrr::transpose casting to an int32, which causes overflow issues when > 2^31-1
+      # IMPORTANT: need to explicitly set int64 as numeric, so that values > 2^31-1
+      # (e.g. file sizes) are extracted as plain numbers below
       int64_cols <- vapply(file_specs, inherits, logical(1), "integer64")
       file_specs[int64_cols] <- lapply(file_specs[int64_cols], as.numeric)
 
       # Convert to a list of rows upfront; each element is a named list of scalars
-      row_list <- purrr::transpose(as.list(file_specs))
+      row_list <- lapply(seq_len(nrow(file_specs)), function(i) {
+        lapply(file_specs, function(column) column[[i]])
+      })
 
       for (file_spec in row_list) {
         f <- File$new(
@@ -123,7 +146,7 @@ TabularReader <- R6::R6Class(
 
       self$directory <- dir
       self$directory$last_cached_at <- current_timestamp_ms
-      cached_directories[[self$uri]] <- dir
+      cached_directories[[cache_key]] <- dir
       dir
     },
 
@@ -131,7 +154,7 @@ TabularReader <- R6::R6Class(
       path = NULL,
       format = 'csv',
       overwrite = FALSE,
-      progress = TRUE,
+      progress = NULL,
       max_parallelization = NULL,
       max_concurrency = NULL
     ) {
@@ -163,11 +186,16 @@ TabularReader <- R6::R6Class(
     to_arrow_dataset = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
+      max_parallelization = NULL
     ) {
-      params <- get_table_request_params(self, max_results, variables)
+      params <- get_table_request_params(
+        self,
+        max_results,
+        variables,
+        for_read = TRUE
+      )
 
       make_rows_request(
         uri = params$uri,
@@ -180,6 +208,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
     },
@@ -187,11 +216,16 @@ TabularReader <- R6::R6Class(
     to_arrow_table = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores()
+      max_parallelization = NULL
     ) {
-      params <- get_table_request_params(self, max_results, variables)
+      params <- get_table_request_params(
+        self,
+        max_results,
+        variables,
+        for_read = TRUE
+      )
 
       make_rows_request(
         uri = params$uri,
@@ -204,6 +238,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
     },
@@ -211,9 +246,14 @@ TabularReader <- R6::R6Class(
     to_arrow_batch_reader = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE
+      progress = NULL
     ) {
-      params <- get_table_request_params(self, max_results, variables)
+      params <- get_table_request_params(
+        self,
+        max_results,
+        variables,
+        for_read = TRUE
+      )
 
       make_rows_request(
         uri = params$uri,
@@ -224,23 +264,25 @@ TabularReader <- R6::R6Class(
         variables = params$variables,
         progress = progress,
         coerce_schema = params$coerce_schema,
-        use_export_api = params$use_export_api
+        use_export_api = params$use_export_api,
+        rows_response = params$rows_response
       )
     },
 
     to_tibble = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores(),
+      max_parallelization = NULL,
       labelled = FALSE
     ) {
       params <- get_table_request_params(
         self,
         max_results,
         variables,
-        include_value_labels = labelled
+        include_value_labels = labelled,
+        for_read = TRUE
       )
 
       df <- make_rows_request(
@@ -254,6 +296,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
 
@@ -267,9 +310,9 @@ TabularReader <- R6::R6Class(
       max_results = NULL,
       variables = NULL,
       geography_variable = '',
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores(),
+      max_parallelization = NULL,
       labelled = FALSE
     ) {
       if (!requireNamespace("sf", quietly = TRUE)) {
@@ -282,7 +325,8 @@ TabularReader <- R6::R6Class(
         max_results,
         variables,
         geography_variable,
-        include_value_labels = labelled
+        include_value_labels = labelled,
+        for_read = TRUE
       )
 
       if (is.null(params$geography_variable)) {
@@ -302,6 +346,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
 
@@ -314,16 +359,17 @@ TabularReader <- R6::R6Class(
     to_data_frame = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores(),
+      max_parallelization = NULL,
       labelled = FALSE
     ) {
       params <- get_table_request_params(
         self,
         max_results,
         variables,
-        include_value_labels = labelled
+        include_value_labels = labelled,
+        for_read = TRUE
       )
 
       df <- make_rows_request(
@@ -337,6 +383,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
 
@@ -349,16 +396,22 @@ TabularReader <- R6::R6Class(
     to_data_table = function(
       max_results = NULL,
       variables = NULL,
-      progress = TRUE,
+      progress = NULL,
       batch_preprocessor = NULL,
-      max_parallelization = parallelly::availableCores(),
+      max_parallelization = NULL,
       labelled = FALSE
     ) {
+      if (!requireNamespace("data.table", quietly = TRUE)) {
+        abort_redivis_error(
+          "The data.table package must be installed to use to_data_table()."
+        )
+      }
       params <- get_table_request_params(
         self,
         max_results,
         variables,
-        include_value_labels = labelled
+        include_value_labels = labelled,
+        for_read = TRUE
       )
 
       df <- make_rows_request(
@@ -372,6 +425,7 @@ TabularReader <- R6::R6Class(
         coerce_schema = params$coerce_schema,
         batch_preprocessor = batch_preprocessor,
         use_export_api = params$use_export_api,
+        rows_response = params$rows_response,
         max_parallelization = max_parallelization
       )
 
@@ -423,20 +477,27 @@ TabularReader <- R6::R6Class(
     },
 
     file = function(path) {
-      if (is.null(self$directory)) {
-        self$directory <- cached_directories[[self$uri]]
-      }
-      cache_age_ms <- if (!is.null(self$directory$last_cached_at)) {
-        as.numeric(Sys.time()) * 1000 - self$directory$last_cached_at
+      # Look files up with the same variables as the last listing, if any
+      variables <- private$directory_variables
+      directory <- cached_directories[[get_directory_cache_key(
+        self$uri,
+        variables$file_id_variable,
+        variables$file_name_variable
+      )]]
+      cache_age_ms <- if (!is.null(directory$last_cached_at)) {
+        as.numeric(Sys.time()) * 1000 - directory$last_cached_at
       } else {
         Inf
       }
 
-      if (is.null(self$directory) || cache_age_ms >= 30 * 1000) {
-        self$to_directory()
+      if (is.null(directory) || cache_age_ms >= 30 * 1000) {
+        directory <- self$to_directory(
+          file_id_variable = variables$file_id_variable,
+          file_name_variable = variables$file_name_variable
+        )
       }
 
-      node <- self$directory$get(path)
+      node <- directory$get(path)
       if (inherits(node, "Directory")) {
         abort_redivis_value_error(str_interp(
           "'${path}' is a directory, not a file"
@@ -473,7 +534,7 @@ TabularReader <- R6::R6Class(
       overwrite = FALSE,
       max_results = NULL,
       file_id_variable = NULL,
-      progress = TRUE,
+      progress = NULL,
       max_parallelization = NULL
     ) {
       self$to_directory(file_id_variable = file_id_variable)
@@ -489,6 +550,10 @@ TabularReader <- R6::R6Class(
         max_parallelization = max_parallelization
       )
     }
+  ),
+  private = list(
+    # The variables of the last file listing, which file() looks files up with
+    directory_variables = list()
   )
 )
 
@@ -520,9 +585,20 @@ get_table_request_params <- function(
   variables = NULL,
   geography_variable = NULL,
   refresh = TRUE,
-  include_value_labels = FALSE
+  include_value_labels = FALSE,
+  for_read = FALSE
 ) {
   if (inherits(instance, "ReadStream")) {
+    if (!is.null(variables)) {
+      abort_redivis_value_error(
+        "A read stream's variables are chosen when it's created; pass them to to_read_streams() instead"
+      )
+    }
+    if (!is.null(max_results)) {
+      abort_redivis_value_error(
+        "max_results isn't supported for read streams, which each read their share of the read session"
+      )
+    }
     res <- get_table_request_params(
       if (!is.null(instance$table)) {
         instance$table
@@ -531,7 +607,6 @@ get_table_request_params <- function(
       } else {
         instance$query
       },
-      max_results = max_results,
       variables = instance$selected_variable_names,
       geography_variable = geography_variable,
       # The parent was fetched when the read session was created, and
@@ -544,7 +619,13 @@ get_table_request_params <- function(
     return(res)
   }
 
-  if (inherits(instance, "Table") && refresh) {
+  # The response containing the rows, when a read runs a query that returns
+  # them along with it. Only a read asks for them, so nothing else downloads
+  # rows it doesn't need.
+  rows_response <- NULL
+  if (inherits(instance, "Query") && for_read) {
+    rows_response <- query_prepare_read(instance, max_results, variables)
+  } else if (inherits(instance, "Table") && refresh) {
     # Refetch rather than trusting properties cached on this object by an
     # earlier call, since the read depends on them being current: e.g. a
     # listRows read verifies completion against numRows, which changes when the
@@ -556,14 +637,23 @@ get_table_request_params <- function(
   }
 
   # TODO: do we need all this variable fetching complexity still? Can we just handle everything on the BE?
-  all_variables <- make_paginated_request(
-    path = str_interp("${instance$uri}/variables"),
-    query = if (include_value_labels) {
-      list(includeValueLabels = "true")
-    } else {
-      list()
-    },
-    page_size = 1000
+  all_variables <- tryCatch(
+    make_paginated_request(
+      path = str_interp("${instance$uri}/variables"),
+      query = if (include_value_labels) {
+        list(includeValueLabels = "true")
+      } else {
+        list()
+      },
+      page_size = 1000
+    ),
+    error = function(e) {
+      # The rows won't be read, so don't leave their connection open
+      if (!is.null(rows_response)) {
+        close(rows_response)
+      }
+      stop(e)
+    }
   )
 
   if (is.null(variables)) {
@@ -601,6 +691,16 @@ get_table_request_params <- function(
         break
       }
     }
+  } else if (!is.null(geography_variable)) {
+    # Variable names are case-insensitive; use the variable's own name, which
+    # is what the column is called
+    match_index <- match(
+      tolower(geography_variable),
+      tolower(vapply(variables_list, function(v) v$name, character(1)))
+    )
+    geography_variable <- if (!is.na(match_index)) {
+      variables_list[[match_index]]$name
+    }
   }
 
   max_streaming_bytes <- if (
@@ -625,6 +725,7 @@ get_table_request_params <- function(
     "geography_variable" = geography_variable,
     "coerce_schema" = inherits(instance, "Table") &&
       instance$properties$container$kind == 'dataset',
-    "use_export_api" = should_use_export_api
+    "use_export_api" = should_use_export_api,
+    "rows_response" = rows_response
   )
 }

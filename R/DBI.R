@@ -425,8 +425,7 @@ setMethod(
 
 # --- dbplyr backend --------------------------------------------------------
 
-#' @importFrom dbplyr dbplyr_edition
-#' @export
+#' @exportS3Method dbplyr::dbplyr_edition
 dbplyr_edition.RedivisConnection <- function(con) 2L
 
 # dbplyr >= 2.6.0 no longer routes string literals through dbQuoteString(), and
@@ -439,8 +438,7 @@ sql_escape_string.RedivisConnection <- function(con, x) {
   DBI::dbQuoteString(con, x)
 }
 
-#' @importFrom dbplyr sql_escape_date
-#' @export
+#' @exportS3Method dbplyr::sql_escape_date
 sql_escape_date.RedivisConnection <- function(con, x) {
   out <- paste0("DATE '", format(x, "%Y-%m-%d"), "'")
   out[is.na(x)] <- "NULL"
@@ -449,8 +447,7 @@ sql_escape_date.RedivisConnection <- function(con, x) {
 
 # Redivis dateTime variables are DATETIMEs (no time zone), which can't be
 # compared with dbplyr's default ISO 8601 "...Z" string literals
-#' @importFrom dbplyr sql_escape_datetime
-#' @export
+#' @exportS3Method dbplyr::sql_escape_datetime
 sql_escape_datetime.RedivisConnection <- function(con, x) {
   out <- paste0(
     "DATETIME '",
@@ -461,15 +458,13 @@ sql_escape_datetime.RedivisConnection <- function(con, x) {
   DBI::SQL(out)
 }
 
-#' @importFrom dbplyr db_connection_describe
-#' @export
+#' @exportS3Method dbplyr::db_connection_describe
 db_connection_describe.RedivisConnection <- function(con, ...) {
   label <- if (is.null(con@owner)) "<global>" else con@owner$qualified_reference
   paste0("Redivis: ", label)
 }
 
-#' @importFrom dbplyr sql_translation
-#' @export
+#' @exportS3Method dbplyr::sql_translation
 sql_translation.RedivisConnection <- function(con) {
   dbplyr::sql_variant(
     scalar = dbplyr::sql_translator(
@@ -867,8 +862,7 @@ sql_translation.RedivisConnection <- function(con) {
   )
 }
 
-#' @importFrom dbplyr sql_query_fields
-#' @export
+#' @exportS3Method dbplyr::sql_query_fields
 sql_query_fields.RedivisConnection <- function(con, sql, ...) {
   # In dbplyr edition 2, sql_query_fields returns SQL that
   # dbplyr_query_fields then executes via db_get_query to get column names.

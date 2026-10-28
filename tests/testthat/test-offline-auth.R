@@ -71,12 +71,47 @@ test_that("a login saves credentials privately, creating their directory", {
 
   saved <- jsonlite::fromJSON(get_credentials_file())
   expect_equal(saved$refresh_token, "refresh-token")
+
+  # Windows files don't have Unix permissions
+  skip_on_os("windows")
   expect_equal(format(file.info(get_credentials_file())$mode), "600")
+  expect_equal(format(file.info(get_credentials_dir())$mode), "700")
+})
+
+test_that("the credentials directory can be overridden", {
+  local_mock_api()
+  config_dir <- file.path(withr::local_tempdir(), "config")
+  withr::local_envvar(REDIVIS_CONFIG_DIR = config_dir)
+
+  write_cached_credentials()
+
+  credentials_file <- file.path(
+    config_dir, "environments", get_environment_host(), "r_credentials"
+  )
+  expect_equal(get_credentials_file(), credentials_file)
+  expect_true(file.exists(credentials_file))
+})
+
+test_that("a failed save raises an error, and leaves no temporary file behind", {
+  local_mock_api()
+  # A non-empty directory in the way, so the file can't be moved into place
+  dir.create(file.path(get_credentials_file(), "occupied"), recursive = TRUE)
+
+  expect_error(
+    suppressWarnings(write_cached_credentials()),
+    class = "redivis_error"
+  )
+  expect_equal(
+    list.files(get_credentials_dir(), all.files = TRUE, no.. = TRUE),
+    "r_credentials"
+  )
 })
 
 test_that("saving credentials restricts an existing file, and restores the umask", {
+  # Windows files don't have Unix permissions
+  skip_on_os("windows")
   local_mock_api()
-  dir.create(get_redivis_dir(), recursive = TRUE, showWarnings = FALSE)
+  dir.create(get_credentials_dir(), recursive = TRUE, showWarnings = FALSE)
   writeLines("{}", get_credentials_file())
   Sys.chmod(get_credentials_file(), mode = "0644")
   umask <- Sys.umask()
@@ -130,7 +165,7 @@ test_that("has_credentials() finds each source of credentials", {
   local_mock_api(authenticated = FALSE)
   expect_false(has_credentials())
 
-  dir.create(get_redivis_dir())
+  dir.create(get_credentials_dir(), recursive = TRUE)
   writeLines(jsonlite::toJSON(fake_credentials(), auto_unbox = TRUE), get_credentials_file())
   expect_true(has_credentials())
   expect_equal(auth_vars$cached_credentials$refresh_token, "refresh-token")
@@ -139,4 +174,124 @@ test_that("has_credentials() finds each source of credentials", {
   unlink(get_credentials_file())
   withr::local_envvar(REDIVIS_API_TOKEN = "token")
   expect_true(has_credentials())
+})
+
+local_token_response <- function(response, env = parent.frame()) {
+  local_mocked_bindings(
+    req_perform = function(req, ...) response,
+    .package = "httr2",
+    .env = env
+  )
+}
+
+test_that("a server error while refreshing keeps the credentials", {
+  local_mock_api()
+  write_cached_credentials()
+  local_token_response(httr2::response(
+    status_code = 502,
+    headers = list(`Content-Type` = "text/html"),
+    body = charToRaw("<html>Bad gateway</html>")
+  ))
+
+  expect_error(refresh_credentials(), class = "redivis_api_error")
+
+  expect_equal(auth_vars$cached_credentials$refresh_token, "refresh-token")
+  expect_true(file.exists(get_credentials_file()))
+})
+
+test_that("a rotated refresh token replaces the one that was used", {
+  local_mock_api()
+  sent <- NULL
+  local_mocked_bindings(
+    req_perform = function(req, ...) {
+      # Form fields are kept as-is (I()) until the request is sent
+      sent <<- unclass(req$body$data$refresh_token)
+      httr2::response(
+        status_code = 200,
+        headers = list(`Content-Type` = "application/json"),
+        body = charToRaw(jsonlite::toJSON(
+          list(
+            access_token = fake_credentials()$access_token,
+            refresh_token = "refresh-2",
+            expires_at = as.numeric(Sys.time()) + 3600,
+            expires_in = 3600
+          ),
+          auto_unbox = TRUE,
+          digits = NA
+        ))
+      )
+    },
+    .package = "httr2"
+  )
+  auth_vars$cached_credentials$expires_at <- as.numeric(Sys.time())
+
+  get_auth_token()
+
+  expect_equal(sent, "refresh-token")
+  saved <- jsonlite::fromJSON(readLines(get_credentials_file(), warn = FALSE))
+  expect_equal(saved$refresh_token, "refresh-2")
+})
+
+test_that("credentials another process refreshed are used", {
+  # Rather than refreshing with the refresh token they replaced, which the server
+  # takes as a sign that it was stolen
+  local_mock_api()
+  # e.g. a second R session, sharing the credentials file
+  theirs <- fake_credentials()
+  theirs$access_token <- paste0(theirs$access_token, "-theirs")
+  theirs$refresh_token <- "refresh-2"
+  dir.create(get_credentials_dir(), recursive = TRUE, showWarnings = FALSE)
+  writeLines(jsonlite::toJSON(theirs, auto_unbox = TRUE, digits = NA), get_credentials_file())
+  local_mocked_bindings(
+    req_perform = function(req, ...) stop("refreshed with a replaced refresh token"),
+    .package = "httr2"
+  )
+  auth_vars$cached_credentials$expires_at <- as.numeric(Sys.time())
+
+  expect_equal(get_auth_token(), theirs$access_token)
+  expect_equal(auth_vars$cached_credentials$refresh_token, "refresh-2")
+})
+
+test_that("a rejected refresh token prompts a login", {
+  local_mock_api()
+  write_cached_credentials()
+  local_token_response(httr2::response(
+    status_code = 400,
+    headers = list(`Content-Type` = "application/json"),
+    body = charToRaw('{"error":"invalid_grant"}')
+  ))
+  logins <- 0
+  local_mocked_bindings(perform_oauth_login = function(...) {
+    logins <<- logins + 1
+    auth_vars$cached_credentials <- fake_credentials()
+  })
+
+  expect_equal(refresh_credentials(), fake_credentials()$access_token)
+
+  expect_equal(logins, 1)
+  expect_false(file.exists(get_credentials_file()))
+})
+
+test_that("each environment has its own credentials", {
+  local_mock_api()
+  withr::defer(redivis$config(api_endpoint = NULL))
+  # Those for redivis.com are kept directly in the config directory
+  environment_dirs <- c(
+    "https://redivis.com/api/v1" = "",
+    "https://REDIVIS.com:443/api/v1" = "",
+    "http://localhost:8080/api/v1" = "environments/localhost_8080",
+    "https://local.host:8443/api/v1" = "environments/local.host_8443"
+  )
+  for (api_endpoint in names(environment_dirs)) {
+    redivis$config(api_endpoint = api_endpoint)
+    environment_dir <- environment_dirs[[api_endpoint]]
+    expect_equal(
+      get_credentials_file(),
+      if (nzchar(environment_dir)) {
+        file.path(get_redivis_dir(), environment_dir, "r_credentials")
+      } else {
+        file.path(get_redivis_dir(), "r_credentials")
+      }
+    )
+  }
 })

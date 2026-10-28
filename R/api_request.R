@@ -38,7 +38,7 @@ make_request <- function(
     auth_failures = auth_failures
   )
 
-  if (start_byte || resumable_byte) {
+  if (start_byte || resumable_byte || !is.null(end_byte)) {
     if (!is.null(end_byte)) {
       headers$Range <- str_interp(
         "bytes=${start_byte+resumable_byte}-${end_byte}"
@@ -60,6 +60,18 @@ make_request <- function(
 
   can_retry_503 <- retry_count < 10
 
+  # Retries a request that failed to connect (or timed out), returning the
+  # retry's result. Only idempotent requests are safe to repeat, since we can't
+  # know whether the server received the original.
+  retry_failed_request <- function(failure) {
+    if (!(toupper(method) %in% c("GET", "HEAD")) || retry_count >= 10) {
+      stop(failure)
+    }
+    retry_sleep(retry_count)
+    args$retry_count <- args$retry_count + 1
+    do.call(make_request, args)
+  }
+
   req <- httr2::request(generate_api_url(path)) |>
     httr2::req_method(method) |>
     httr2::req_headers(!!!all_headers) |>
@@ -77,7 +89,11 @@ make_request <- function(
       if (inherits(file_val, "form_file")) {
         req <- req |>
           httr2::req_body_multipart(
-            !!nm := curl::form_file(file_val$path, type = file_val$type)
+            !!nm := curl::form_file(
+              file_val$path,
+              type = file_val$type,
+              name = file_val$name
+            )
           )
       } else {
         req <- req |> httr2::req_body_multipart(!!nm := file_val)
@@ -97,7 +113,13 @@ make_request <- function(
 
   if (!is.null(stream_callback) || as_connection) {
     # Streaming response via connection
-    res <- httr2::req_perform_connection(req)
+    res <- tryCatch(
+      httr2::req_perform_connection(req),
+      httr2_failure = function(e) e
+    )
+    if (inherits(res, "httr2_failure")) {
+      return(retry_failed_request(res))
+    }
 
     # If we're returning the connection,
     if (!as_connection) {
@@ -155,9 +177,15 @@ make_request <- function(
         str_interp("File already exists: ${download_path}"),
       )
     }
-    res <- httr2::req_perform(req, path = download_path)
+    res <- tryCatch(
+      httr2::req_perform(req, path = download_path),
+      httr2_failure = function(e) e
+    )
   } else {
-    res <- httr2::req_perform(req)
+    res <- tryCatch(httr2::req_perform(req), httr2_failure = function(e) e)
+  }
+  if (inherits(res, "httr2_failure")) {
+    return(retry_failed_request(res))
   }
 
   status <- httr2::resp_status(res)
@@ -194,7 +222,7 @@ make_request <- function(
   content_type <- resp_headers[["content-type"]]
   if (
     !is.null(content_type) &&
-      stringr::str_starts(content_type, 'application/json')
+      startsWith(content_type, 'application/json')
   ) {
     response_content <- jsonlite::fromJSON(
       response_content,
@@ -264,7 +292,7 @@ handle_error_response <- function(
     content_type <- resp_headers[["content-type"]]
     if (
       !is.null(content_type) &&
-        stringr::str_starts(content_type, 'application/json')
+        startsWith(content_type, 'application/json')
     ) {
       is_json <- TRUE
       response_content <- jsonlite::fromJSON(
@@ -325,14 +353,17 @@ handle_error_response <- function(
 parse_curl_headers <- function(res_data) {
   vec <- curl::parse_headers(res_data$headers)
 
-  header_names <- purrr::map(vec, function(header) {
-    tolower(strsplit(header, ':')[[1]][[1]])
-  })
-  header_contents <- purrr::map(vec, function(header) {
+  header_names <- vapply(
+    vec,
+    function(header) tolower(strsplit(header, ':')[[1]][[1]]),
+    character(1),
+    USE.NAMES = FALSE
+  )
+  header_contents <- lapply(vec, function(header) {
     split <- strsplit(header, ':\\s+')[[1]]
     paste0(tail(split, -1), collapse = ':')
   })
-  headers <- purrr::set_names(header_contents, header_names)
+  headers <- setNames(header_contents, header_names)
 }
 
 make_paginated_request <- function(
@@ -383,7 +414,7 @@ make_paginated_request <- function(
 
 generate_api_url <- function(path) {
   str_interp(
-    '${if (Sys.getenv("REDIVIS_API_ENDPOINT") == "") "https://redivis.com/api/v1" else Sys.getenv("REDIVIS_API_ENDPOINT")}${utils::URLencode(path)}'
+    '${get_config("api_endpoint")}${utils::URLencode(path)}'
   )
 }
 

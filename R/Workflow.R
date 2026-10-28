@@ -26,11 +26,11 @@ Workflow <- R6::R6Class(
           username <- split[[1]]
           parsed_user <- User$new(name = username)
           parsed_organization <- Organization$new(name = username)
-        } else if (Sys.getenv("REDIVIS_DEFAULT_USER", FALSE)) {
-          parsed_user <- User$new(name = Sys.getenv("REDIVIS_DEFAULT_USER"))
-        } else if (Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION", FALSE)) {
+        } else if (!is.null(get_config("default_user"))) {
+          parsed_user <- User$new(name = get_config("default_user"))
+        } else if (!is.null(get_config("default_organization"))) {
           parsed_organization <- Organization$new(
-            name = Sys.getenv("REDIVIS_DEFAULT_ORGANIZATION")
+            name = get_config("default_organization")
           )
         } else {
           abort_redivis_value_error(
@@ -73,6 +73,33 @@ Workflow <- R6::R6Class(
       res <- make_request(path = self$uri)
       update_workflow_properties(self, res)
       self
+    },
+
+    create = function(description = NULL, is_public = FALSE) {
+      rectify_ambiguous_workflow_owner(self)
+      path <- if (is.null(self$organization)) {
+        str_interp(
+          "/users/${URLencode(self$user$name, reserved = TRUE)}/workflows"
+        )
+      } else {
+        str_interp(
+          "/organizations/${URLencode(self$organization$name, reserved = TRUE)}/workflows"
+        )
+      }
+
+      payload <- list(name = self$name, isPublic = is_public)
+      if (!is.null(description)) {
+        payload$description <- description
+      }
+
+      res <- make_request(method = "POST", path = path, payload = payload)
+      update_workflow_properties(self, res)
+      self
+    },
+
+    delete = function() {
+      make_request(method = "DELETE", path = self$uri)
+      invisible(NULL)
     },
 
     exists = function() {
@@ -126,7 +153,7 @@ Workflow <- R6::R6Class(
         page_size = 100,
         max_results = max_results
       )
-      purrr::map(tables, function(table_properties) {
+      lapply(tables, function(table_properties) {
         Table$new(
           name = table_properties$name,
           workflow = self,
@@ -141,7 +168,7 @@ Workflow <- R6::R6Class(
         page_size = 100,
         max_results = max_results,
       )
-      purrr::map(transforms, function(transform_properties) {
+      lapply(transforms, function(transform_properties) {
         Transform$new(
           name = transform_properties$name,
           workflow = self,
@@ -156,7 +183,7 @@ Workflow <- R6::R6Class(
         page_size = 100,
         max_results = max_results,
       )
-      purrr::map(notebooks, function(notebook_properties) {
+      lapply(notebooks, function(notebook_properties) {
         Notebook$new(
           name = notebook_properties$name,
           workflow = self,
@@ -171,7 +198,7 @@ Workflow <- R6::R6Class(
         page_size = 100,
         max_results = max_results,
       )
-      purrr::map(parameters, function(parameter_properties) {
+      lapply(parameters, function(parameter_properties) {
         Parameter$new(
           name = parameter_properties$name,
           workflow = self,
@@ -186,7 +213,7 @@ Workflow <- R6::R6Class(
         page_size = 100,
         max_results = max_results,
       )
-      purrr::map(datasources, function(datasource_properties) {
+      lapply(datasources, function(datasource_properties) {
         Datasource$new(
           source = datasource_properties$id,
           workflow = self,
@@ -212,10 +239,29 @@ Workflow <- R6::R6Class(
   )
 )
 
+# A reference like "owner.workflow_name" could be owned by a user or an
+# organization
+rectify_ambiguous_workflow_owner <- function(workflow) {
+  if (!is.null(workflow$user) && !is.null(workflow$organization)) {
+    if (!is.null(workflow$properties[["owner"]])) {
+      if (workflow$properties[["owner"]][["kind"]] == "user") {
+        workflow$organization <- NULL
+      } else {
+        workflow$user <- NULL
+      }
+    } else if (workflow$organization$exists()) {
+      workflow$user <- NULL
+    } else {
+      workflow$organization <- NULL
+    }
+  }
+}
+
 update_workflow_properties <- function(instance, properties) {
   instance$properties <- properties
   instance$qualified_reference <- properties$qualifiedReference
   instance$scoped_reference <- properties$scopedReference
   instance$name <- properties$name
   instance$uri <- properties$uri
+  rectify_ambiguous_workflow_owner(instance)
 }
