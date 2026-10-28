@@ -199,6 +199,59 @@ test_that("a server error while refreshing keeps the credentials", {
   expect_true(file.exists(get_credentials_file()))
 })
 
+test_that("a rotated refresh token replaces the one that was used", {
+  local_mock_api()
+  sent <- NULL
+  local_mocked_bindings(
+    req_perform = function(req, ...) {
+      # Form fields are kept as-is (I()) until the request is sent
+      sent <<- unclass(req$body$data$refresh_token)
+      httr2::response(
+        status_code = 200,
+        headers = list(`Content-Type` = "application/json"),
+        body = charToRaw(jsonlite::toJSON(
+          list(
+            access_token = fake_credentials()$access_token,
+            refresh_token = "refresh-2",
+            expires_at = as.numeric(Sys.time()) + 3600,
+            expires_in = 3600
+          ),
+          auto_unbox = TRUE,
+          digits = NA
+        ))
+      )
+    },
+    .package = "httr2"
+  )
+  auth_vars$cached_credentials$expires_at <- as.numeric(Sys.time())
+
+  get_auth_token()
+
+  expect_equal(sent, "refresh-token")
+  saved <- jsonlite::fromJSON(readLines(get_credentials_file(), warn = FALSE))
+  expect_equal(saved$refresh_token, "refresh-2")
+})
+
+test_that("credentials another process refreshed are used", {
+  # Rather than refreshing with the refresh token they replaced, which the server
+  # takes as a sign that it was stolen
+  local_mock_api()
+  # e.g. a second R session, sharing the credentials file
+  theirs <- fake_credentials()
+  theirs$access_token <- paste0(theirs$access_token, "-theirs")
+  theirs$refresh_token <- "refresh-2"
+  dir.create(get_credentials_dir(), recursive = TRUE, showWarnings = FALSE)
+  writeLines(jsonlite::toJSON(theirs, auto_unbox = TRUE, digits = NA), get_credentials_file())
+  local_mocked_bindings(
+    req_perform = function(req, ...) stop("refreshed with a replaced refresh token"),
+    .package = "httr2"
+  )
+  auth_vars$cached_credentials$expires_at <- as.numeric(Sys.time())
+
+  expect_equal(get_auth_token(), theirs$access_token)
+  expect_equal(auth_vars$cached_credentials$refresh_token, "refresh-2")
+})
+
 test_that("a rejected refresh token prompts a login", {
   local_mock_api()
   write_cached_credentials()
