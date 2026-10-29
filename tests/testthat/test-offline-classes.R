@@ -119,6 +119,22 @@ test_that("a dataset's previous version is the dataset at that version", {
   expect_equal(previous$qualified_reference, "owner.ds:v0_9")
 })
 
+test_that("a version's tag is the dotted form, while references use v1_0", {
+  for (tag in c("v1.0", "v1_0", "1.0")) {
+    version <- Dataset$new("owner.ds")$version(tag)
+    expect_equal(version$tag, "v1.0")
+    expect_equal(version$uri, "/datasets/owner.ds/versions/v1_0")
+    expect_equal(version$dataset()$qualified_reference, "owner.ds:v1_0")
+  }
+  expect_equal(Dataset$new("owner.ds:v1_0")$version()$tag, "v1.0")
+  expect_equal(Dataset$new("owner.ds")$version("next")$tag, "next")
+  expect_output(
+    print(Dataset$new("owner.ds:v1_0")$version()),
+    "<Version owner.ds:v1_0>",
+    fixed = TRUE
+  )
+})
+
 # --- Transforms and notebooks -------------------------------------------------
 
 test_that("an unnamed transform is named when it's created", {

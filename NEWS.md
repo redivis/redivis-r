@@ -1,3 +1,12 @@
+# redivis 0.14.1
+
+## Improvements and fixes
+
+- `version$tag` is now always the version's tag as the API returns it, e.g.
+  `v1.0`, rather than sometimes the form used in references (`v1_0`), e.g. for
+  `dataset$version()` on a dataset referenced as `owner.dataset:v1_0`. Either
+  form is still accepted wherever a tag is passed.
+
 # redivis 0.14.0
 
 ## What's new

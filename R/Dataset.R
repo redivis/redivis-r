@@ -64,7 +64,7 @@ Dataset <- R6::R6Class(
       # In the form used in references (v1_0, rather than v1.0), since a dot
       # would also separate the parts of a reference
       if (!is.null(version_arg)) {
-        version_arg <- normalize_version_tag(version_arg)
+        version_arg <- normalize_version_tag(version_arg, for_reference = TRUE)
       }
 
       version_string <- ""
@@ -383,8 +383,16 @@ Dataset <- R6::R6Class(
   )
 )
 
-normalize_version_tag <- function(tag) {
-  sub("^(v\\d+)\\.(\\d+)$", "\\1_\\2", tag)
+# A version's tag is e.g. v1.0, but since a dot also separates the parts of a
+# reference, a reference writes it as the equivalent v1_0 (`for_reference`).
+# Either form is normalized to the one asked for.
+normalize_version_tag <- function(tag, for_reference = FALSE) {
+  sub(
+    "^(v\\d+)[._](\\d+)$",
+    if (for_reference) "\\1_\\2" else "\\1.\\2",
+    tag,
+    ignore.case = TRUE
+  )
 }
 
 rectify_ambiguous_dataset_owner <- function(dataset) {
@@ -410,7 +418,10 @@ update_dataset_properties <- function(instance, properties) {
   instance$name <- properties$name
   instance$uri <- properties$uri
   if (!is.null(properties$version$tag)) {
-    instance$version_tag <- normalize_version_tag(properties$version$tag)
+    instance$version_tag <- normalize_version_tag(
+      properties$version$tag,
+      for_reference = TRUE
+    )
   }
   rectify_ambiguous_dataset_owner(instance)
 }

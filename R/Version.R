@@ -20,23 +20,35 @@ Version <- R6::R6Class(
     properties = NULL,
 
     initialize = function(tag, dataset, properties = list()) {
-      self$tag <- .normalize_tag(tag)
+      # e.g. v1.0, even if given in the form used in references (v1_0)
+      self$tag <- normalize_version_tag(.normalize_tag(tag))
       self$ds <- dataset
       self$properties <- properties
 
       if (!is.null(properties$uri)) {
         self$uri <- properties$uri
       } else {
-        self$uri <- sprintf("%s/versions/%s", dataset$uri, self$tag)
+        self$uri <- sprintf(
+          "%s/versions/%s",
+          dataset$uri,
+          normalize_version_tag(self$tag, for_reference = TRUE)
+        )
       }
     },
 
     print = function(...) {
-      if (grepl(self$tag, str_interp(":${self$ds$qualified_reference}"))) {
+      reference_tag <- normalize_version_tag(self$tag, for_reference = TRUE)
+      if (
+        grepl(
+          str_interp(":${reference_tag}"),
+          self$ds$qualified_reference,
+          fixed = TRUE
+        )
+      ) {
         cat(str_interp("<Version ${self$ds$qualified_reference}>\n"))
       } else {
         cat(str_interp(
-          "<Version ${self$ds$qualified_reference}:${self$tag}>\n"
+          "<Version ${self$ds$qualified_reference}:${reference_tag}>\n"
         ))
       }
       invisible(self)
