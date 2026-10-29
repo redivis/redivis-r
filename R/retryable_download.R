@@ -521,7 +521,7 @@ perform_parallel_download_worker <- function(
 
     # Public files can be downloaded without credentials, so they're only sent
     # when available
-    headers <- get_authorization_header(as_list = TRUE, allow_anonymous = TRUE)
+    headers <- get_authorization_header(as_list = TRUE)
     request_authorization <- headers$Authorization
     # Request the file as stored, rather than compressed in transit (see
     # perform_retryable_download)
@@ -663,8 +663,7 @@ perform_parallel_download_worker <- function(
               # to see it re-authenticates, and the rest retry with the
               # credentials it got
               current_authorization <- get_authorization_header(
-                as_list = TRUE,
-                allow_anonymous = TRUE
+                as_list = TRUE
               )$Authorization
               if (identical(current_authorization, request_authorization)) {
                 refresh_credentials(

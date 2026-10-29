@@ -62,6 +62,35 @@ test_that("a private resource prompts a login, then succeeds", {
   expect_equal(mock$authorized(), c(FALSE, TRUE))
 })
 
+test_that("a login that the API asks for is requested with the current token", {
+  local_mock_api()
+  local_real_login()
+  auth_vars$cached_credentials <- fake_credentials()
+  request <- NULL
+  local_mocked_bindings(
+    req_perform = function(req, ...) {
+      request <<- req
+      stop("stopped before the login")
+    },
+    .package = "httr2"
+  )
+
+  expect_error(
+    perform_oauth_login(
+      scope = NULL,
+      amr_values = "123 456",
+      upgrade_credentials = TRUE
+    ),
+    "stopped before the login"
+  )
+
+  expect_equal(httr2::req_get_body(request)$amr_values, "123 456")
+  expect_equal(
+    httr2::req_get_headers(request, "reveal")$Authorization,
+    paste("Bearer", fake_credentials()$access_token)
+  )
+})
+
 test_that("a login saves credentials privately, creating their directory", {
   local_mock_api(authenticated = FALSE)
   local_real_login()
@@ -270,6 +299,44 @@ test_that("a rejected refresh token prompts a login", {
 
   expect_equal(logins, 1)
   expect_false(file.exists(get_credentials_file()))
+})
+
+test_that("a rejected refresh token falls back to an anonymous request", {
+  # Rather than prompting a login before the request is even sent, since the
+  # resource may be public
+  mock <- local_mock_api()
+  auth_vars$cached_credentials$expires_at <- as.numeric(Sys.time()) + 60
+  write_cached_credentials()
+  real_req_perform <- httr2::req_perform
+  local_mocked_bindings(
+    req_perform = function(req, ...) {
+      if (!endsWith(req$url, "/oauth/token")) {
+        return(real_req_perform(req, ...))
+      }
+      httr2::response(
+        status_code = 400,
+        headers = list(`Content-Type` = "application/json"),
+        body = charToRaw('{"error":"invalid_grant"}')
+      )
+    },
+    .package = "httr2"
+  )
+
+  expect_equal(make_request(path = TABLE)$name, "mock")
+
+  expect_equal(mock$authorized(), FALSE)
+  expect_false(file.exists(get_credentials_file()))
+})
+
+test_that("a token without the default scope is sent as is", {
+  # Rather than prompting a login for the default scope first; the server says
+  # if the resource needs more
+  mock <- local_mock_api()
+  auth_vars$cached_credentials$access_token <- jwt_with_scope("data.data")
+
+  make_request(path = TABLE)
+
+  expect_equal(mock$authorized(), TRUE)
 })
 
 test_that("each environment has its own credentials", {

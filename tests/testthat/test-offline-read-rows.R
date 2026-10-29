@@ -50,6 +50,17 @@ test_that("a large table reads via a read session", {
   expect_equal(sort(as.numeric(df$id)), 0:499)
 })
 
+test_that("a public table reads via a read session without credentials", {
+  mock <- local_mock_api(authenticated = FALSE)
+  mock$set(num_bytes = 5e8)
+
+  df <- mock_table()$to_tibble(progress = FALSE, max_parallelization = 1)
+
+  expect_equal(data_paths(mock), c(READ_SESSIONS, "/api/v1/readStreams/s0"))
+  expect_false(any(mock$authorized()))
+  expect_equal(nrow(df), 500)
+})
+
 test_that("the listRows size threshold is exclusive", {
   mock <- local_mock_api()
 

@@ -48,13 +48,10 @@ make_request <- function(
     }
   }
 
-  # Only authenticate when we already have credentials on hand; otherwise the
-  # request goes out anonymously, since the resource may be publicly
-  # accessible. If it isn't, handle_error_response() logs in and retries.
-  auth_headers <- get_authorization_header(
-    as_list = TRUE,
-    allow_anonymous = TRUE
-  )
+  # Without credentials on hand, the request goes out anonymously, since the
+  # resource may be publicly accessible. If it isn't, handle_error_response()
+  # logs in and retries.
+  auth_headers <- get_authorization_header(as_list = TRUE)
   all_headers <- c(auth_headers, headers)
   authenticated <- !is.null(auth_headers$Authorization)
 
@@ -420,17 +417,22 @@ generate_api_url <- function(path) {
 
 version_info <- R.Version()
 redivis_version <- utils::packageVersion("redivis")
-# With allow_anonymous, the Authorization header is omitted when no
-# credentials are available, rather than prompting for a login
-get_authorization_header <- function(as_list = FALSE, allow_anonymous = FALSE) {
+# The Authorization header is omitted when no token can be obtained without
+# logging in, rather than prompting for a login, since the resource may be
+# publicly accessible. If it isn't, or needs more scope than the token has, the
+# server says so, and the caller logs in and retries.
+get_authorization_header <- function(as_list = FALSE) {
   headers <- list(
     "User-Agent" = str_interp(
       "redivis-r/${redivis_version} (${version_info$platform}; R/${version_info$major}.${version_info$minor})"
     )
   )
-  if (!allow_anonymous || has_credentials()) {
+  auth_token <- if (has_credentials()) {
+    get_auth_token(scope = list(), allow_login = FALSE)
+  }
+  if (!is.null(auth_token)) {
     headers <- c(
-      list("Authorization" = str_interp("Bearer ${get_auth_token()}")),
+      list("Authorization" = str_interp("Bearer ${auth_token}")),
       headers
     )
   }

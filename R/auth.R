@@ -141,7 +141,9 @@ write_cached_credentials <- function() {
   }
 }
 
-get_auth_token <- function(scope = NULL) {
+# With allow_login = FALSE, returns NULL rather than logging in when no token
+# can be obtained without one
+get_auth_token <- function(scope = NULL, allow_login = TRUE) {
   if (is.null(scope)) {
     scope <- auth_vars$default_scope
   }
@@ -173,17 +175,21 @@ get_auth_token <- function(scope = NULL) {
       auth_vars$cached_credentials$expires_at <
         (as.numeric(Sys.time()) + 5 * 60)
     ) {
-      refresh_credentials()
+      refresh_cached_credentials()
     }
-
-    return(auth_vars$cached_credentials$access_token)
-  } else {
-    perform_oauth_login(
-      scope = if (length(missing_scope)) missing_scope else scope,
-      upgrade_credentials = length(missing_scope) > 0
-    )
-    return(auth_vars$cached_credentials$access_token)
+    if (!is.null(auth_vars$cached_credentials)) {
+      return(auth_vars$cached_credentials$access_token)
+    }
   }
+
+  if (!allow_login) {
+    return(NULL)
+  }
+  perform_oauth_login(
+    scope = if (length(missing_scope)) missing_scope else scope,
+    upgrade_credentials = length(missing_scope) > 0
+  )
+  return(auth_vars$cached_credentials$access_token)
 }
 
 clear_cached_credentials <- function() {
@@ -207,12 +213,24 @@ perform_oauth_login <- function(
   challenge <- pkce$challenge
   verifier <- pkce$verifier
 
+  # Sent along so that the new token is merged with the scopes and logins of the
+  # current one, and so that the user can be asked to sign in with a login it
+  # needs (amr_values), which only the user it belongs to can look up
+  headers <- list()
+  if (upgrade_credentials && !is.null(auth_vars$cached_credentials)) {
+    headers <- list(
+      'Authorization' = str_interp(
+        "Bearer ${auth_vars$cached_credentials$access_token}"
+      )
+    )
+  }
+
   req <- httr2::request(paste0(
     get_base_url(),
     "/oauth/device_authorization"
   )) |>
     httr2::req_method("POST") |>
-    httr2::req_headers("Content-Type" = "application/json") |>
+    httr2::req_headers(!!!headers, "Content-Type" = "application/json") |>
     httr2::req_body_json(list(
       client_id = auth_vars$client_id,
       scope = paste(scope, collapse = " "),
@@ -243,14 +261,6 @@ perform_oauth_login <- function(
   }
   flush.console()
 
-  headers <- list()
-  if (upgrade_credentials && !is.null(auth_vars$cached_credentials)) {
-    headers <- list(
-      'Authorization' = str_interp(
-        "Bearer ${auth_vars$cached_credentials$access_token}"
-      )
-    )
-  }
 
   started_polling_at <- Sys.time()
   while (TRUE) {
@@ -314,76 +324,85 @@ refresh_credentials <- function(scope = NULL, amr_values = NULL) {
       amr_values = amr_values,
       upgrade_credentials = TRUE
     )
-  } else if (!is.null(auth_vars$cached_credentials$refresh_token)) {
-    # Each refresh replaces the refresh token, and the server revokes the login if
-    # a replaced one is used again. So if another process sharing these
-    # credentials (e.g. a second R session) has refreshed them since they were
-    # read, use what it saved instead.
-    saved_credentials <- read_credentials_file(get_credentials_file())
-    if (
-      is.list(saved_credentials) &&
-        !is.null(saved_credentials$refresh_token) &&
-        !identical(saved_credentials$refresh_token, auth_vars$cached_credentials$refresh_token)
-    ) {
-      auth_vars$cached_credentials <- saved_credentials
-      if (
-        !is.null(saved_credentials$expires_at) &&
-          saved_credentials$expires_at > as.numeric(Sys.time()) + 5 * 60
-      ) {
-        return(get_auth_token())
-      }
-    }
-
-    refresh_req <- httr2::request(paste0(get_base_url(), "/oauth/token")) |>
-      httr2::req_method("POST") |>
-      httr2::req_body_form(
-        client_id = auth_vars$client_id,
-        grant_type = 'refresh_token',
-        refresh_token = auth_vars$cached_credentials$refresh_token
-      ) |>
-      httr2::req_error(is_error = function(resp) FALSE)
-
-    if (!get_verify_ssl()) {
-      refresh_req <- refresh_req |> httr2::req_options(ssl_verifypeer = 0L)
-    }
-
-    res <- httr2::req_perform(refresh_req)
-
-    status <- httr2::resp_status(res)
-    if (status %in% c(400, 401)) {
-      # The refresh token was rejected (e.g. revoked or expired), so the user
-      # needs to log in again
-      clear_cached_credentials()
-    } else if (status >= 400) {
-      # Anything else (e.g. a 503 during a deploy) says nothing about the
-      # refresh token, so keep it for a later call to retry with
-      resp_body <- tryCatch(httr2::resp_body_string(res), error = function(e) "")
-      response_json <- tryCatch(
-        jsonlite::fromJSON(resp_body, simplifyVector = FALSE),
-        error = function(e) NULL
-      )
-      raise_api_error(
-        response_json = if (is.list(response_json)) response_json,
-        response_text = resp_body,
-        response = res
-      )
-    } else {
-      refresh_response <- httr2::resp_body_json(res)
-      auth_vars$cached_credentials$access_token <- refresh_response$access_token
-      auth_vars$cached_credentials$expires_at <- refresh_response$expires_at
-      auth_vars$cached_credentials$expires_in <- refresh_response$expires_in
-      # The server rotates refresh tokens, returning a new one to replace the one
-      # that was just used
-      if (!is.null(refresh_response$refresh_token)) {
-        auth_vars$cached_credentials$refresh_token <- refresh_response$refresh_token
-      }
-      write_cached_credentials()
-    }
   } else {
-    clear_cached_credentials()
+    refresh_cached_credentials()
   }
 
   return(get_auth_token())
+}
+
+# Exchanges the refresh token for a new access token, clearing the credentials
+# if it's been rejected
+refresh_cached_credentials <- function() {
+  if (is.null(auth_vars$cached_credentials$refresh_token)) {
+    clear_cached_credentials()
+    return(invisible(NULL))
+  }
+
+  # Each refresh replaces the refresh token, and the server revokes the login if
+  # a replaced one is used again. So if another process sharing these
+  # credentials (e.g. a second R session) has refreshed them since they were
+  # read, use what it saved instead.
+  saved_credentials <- read_credentials_file(get_credentials_file())
+  if (
+    is.list(saved_credentials) &&
+      !is.null(saved_credentials$refresh_token) &&
+      !identical(saved_credentials$refresh_token, auth_vars$cached_credentials$refresh_token)
+  ) {
+    auth_vars$cached_credentials <- saved_credentials
+    if (
+      !is.null(saved_credentials$expires_at) &&
+        saved_credentials$expires_at > as.numeric(Sys.time()) + 5 * 60
+    ) {
+      return(invisible(NULL))
+    }
+  }
+
+  refresh_req <- httr2::request(paste0(get_base_url(), "/oauth/token")) |>
+    httr2::req_method("POST") |>
+    httr2::req_body_form(
+      client_id = auth_vars$client_id,
+      grant_type = 'refresh_token',
+      refresh_token = auth_vars$cached_credentials$refresh_token
+    ) |>
+    httr2::req_error(is_error = function(resp) FALSE)
+
+  if (!get_verify_ssl()) {
+    refresh_req <- refresh_req |> httr2::req_options(ssl_verifypeer = 0L)
+  }
+
+  res <- httr2::req_perform(refresh_req)
+
+  status <- httr2::resp_status(res)
+  if (status %in% c(400, 401)) {
+    # The refresh token was rejected (e.g. revoked or expired), so the user
+    # needs to log in again
+    clear_cached_credentials()
+  } else if (status >= 400) {
+    # Anything else (e.g. a 503 during a deploy) says nothing about the
+    # refresh token, so keep it for a later call to retry with
+    resp_body <- tryCatch(httr2::resp_body_string(res), error = function(e) "")
+    response_json <- tryCatch(
+      jsonlite::fromJSON(resp_body, simplifyVector = FALSE),
+      error = function(e) NULL
+    )
+    raise_api_error(
+      response_json = if (is.list(response_json)) response_json,
+      response_text = resp_body,
+      response = res
+    )
+  } else {
+    refresh_response <- httr2::resp_body_json(res)
+    auth_vars$cached_credentials$access_token <- refresh_response$access_token
+    auth_vars$cached_credentials$expires_at <- refresh_response$expires_at
+    auth_vars$cached_credentials$expires_in <- refresh_response$expires_in
+    # The server rotates refresh tokens, returning a new one to replace the one
+    # that was just used
+    if (!is.null(refresh_response$refresh_token)) {
+      auth_vars$cached_credentials$refresh_token <- refresh_response$refresh_token
+    }
+    write_cached_credentials()
+  }
 }
 
 get_current_credential_scope <- function() {
