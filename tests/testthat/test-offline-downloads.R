@@ -5,20 +5,35 @@ FILE_SIZE <- 5000
 
 # The bytes the mock API serves for a file (see raw_file_contents in
 # helper-mock-api.R)
-raw_file_bytes <- function(content, size = FILE_SIZE) {
-  withr::with_seed(
+raw_file_bytes <- function(content, size = FILE_SIZE, gzipped = FALSE) {
+  bytes <- withr::with_seed(
     sum(utf8ToInt(content)),
     as.raw(sample.int(256, size, replace = TRUE) - 1L)
   )
+  if (!gzipped) {
+    return(bytes)
+  }
+  path <- withr::local_tempfile()
+  con <- gzfile(path, "wb")
+  writeBin(bytes, con)
+  close(con)
+  read_bytes(path)
 }
 
 md5_base64 <- function(bytes) {
   jsonlite::base64_enc(as.vector(openssl::md5(bytes)))
 }
 
-local_raw_file <- function(mock, content = "contents", size = FILE_SIZE) {
-  mock$set(raw_files = list(f1 = list(content = content, size = size)))
-  raw_file_bytes(content, size)
+local_raw_file <- function(
+  mock,
+  content = "contents",
+  size = FILE_SIZE,
+  gzipped = FALSE
+) {
+  mock$set(
+    raw_files = list(f1 = list(content = content, size = size, gzipped = gzipped))
+  )
+  raw_file_bytes(content, size, gzipped)
 }
 
 read_bytes <- function(path) {
@@ -60,6 +75,40 @@ test_that("a download that doesn't match its hash is retried once, then fails wi
   expect_length(mock$paths("rawFiles"), 2)
   expect_false(file.exists(path))
   expect_false(file.exists(get_partial_download_path(path)))
+})
+
+# file() decompresses a compressed file as it's read, so these check that the
+# hash is of the file's bytes as stored
+test_that("a compressed file is verified against the hash of its bytes as stored", {
+  mock <- local_mock_api()
+  expected <- local_raw_file(mock, gzipped = TRUE)
+  path <- file.path(withr::local_tempdir(), "f.rds")
+
+  perform_retryable_download(
+    "/rawFiles/f1",
+    download_path = path,
+    size = length(expected),
+    md5_hash = md5_base64(expected)
+  )
+
+  expect_length(mock$paths("rawFiles"), 1)
+  expect_equal(read_bytes(path), expected)
+})
+
+test_that("a compressed file that's already downloaded isn't downloaded again", {
+  mock <- local_mock_api()
+  expected <- local_raw_file(mock, gzipped = TRUE)
+  path <- file.path(withr::local_tempdir(), "f.rds")
+  writeBin(expected, path)
+
+  perform_retryable_download(
+    "/rawFiles/f1",
+    download_path = path,
+    size = length(expected),
+    md5_hash = md5_base64(expected)
+  )
+
+  expect_length(mock$paths("rawFiles"), 0)
 })
 
 test_that("a resume the server doesn't honor starts the download over", {
@@ -157,6 +206,23 @@ test_that("parallel downloads verify their hashes, and leave no partial files", 
   expect_equal(read_bytes(paths[[1]]), expected[[1]])
   expect_equal(read_bytes(paths[[2]]), expected[[2]])
   expect_setequal(list.files(dir), c("one", "two"))
+})
+
+test_that("parallel downloads verify a compressed file against the hash of its bytes as stored", {
+  mock <- local_mock_api()
+  expected <- local_raw_file(mock, gzipped = TRUE)
+  path <- file.path(withr::local_tempdir(), "f.rds")
+
+  perform_parallel_download(
+    uris = list("/rawFiles/f1"),
+    download_paths = path,
+    sizes = list(length(expected)),
+    md5_hashes = list(md5_base64(expected)),
+    max_parallelization = 1
+  )
+
+  expect_length(mock$paths("rawFiles"), 1)
+  expect_equal(read_bytes(path), expected)
 })
 
 test_that("a parallel download that doesn't match its hash fails after one retry, leaving no files", {

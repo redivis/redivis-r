@@ -277,7 +277,10 @@ decode_md5 <- function(md5_hash) {
 }
 
 get_file_md5 <- function(path) {
-  as.vector(openssl::md5(file(path)))
+  # raw = TRUE hashes the file's bytes as stored: otherwise a connection that's
+  # opened after it's created (as openssl does) decompresses a gzip, bzip2, or
+  # xz file, e.g. an .rds file
+  as.vector(openssl::md5(file(path, raw = TRUE)))
 }
 
 perform_parallel_download <- function(
