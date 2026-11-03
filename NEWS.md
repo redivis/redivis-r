@@ -1,3 +1,15 @@
+# redivis 0.14.3
+
+## Improvements and fixes
+
+- Downloading a compressed file, such as an `.rds` or `.gz` file, no longer
+  fails with "The downloaded file's MD5 hash doesn't match the expected hash".
+  The file's hash was computed from its decompressed contents, so the check
+  added in 0.14.0 failed for every such file, even though it had downloaded
+  correctly. For the same reason, an identical copy that was already downloaded
+  is now skipped, rather than raising "File already exists" unless
+  `overwrite = TRUE`.
+
 # redivis 0.14.2
 
 ## Improvements and fixes

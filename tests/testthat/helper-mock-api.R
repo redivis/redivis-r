@@ -40,8 +40,8 @@ mock_api_server <- function(port) {
     state$truncate_rows_once <- 0
     # A column that listRows and read streams leave out
     state$omit_column <- NULL
-    # Raw files by id, as list(content, size): their bytes are generated from
-    # content (see raw_file_contents)
+    # Raw files by id, as list(content, size, gzipped): their bytes are
+    # generated from content (see raw_file_contents)
     state$raw_files <- list()
     # The Range header of each rawFiles request ("none" if absent)
     state$raw_file_ranges <- list()
@@ -116,14 +116,23 @@ mock_api_server <- function(port) {
   }
 
   # Random bytes, the same for the same content (tests generate them the same
-  # way, to compare against)
-  raw_file_contents <- function(content, size) {
+  # way, to compare against), gzip-compressed for a gzipped file
+  raw_file_contents <- function(content, size, gzipped = FALSE) {
     set.seed(sum(utf8ToInt(content)))
-    as.raw(sample.int(256, size, replace = TRUE) - 1L)
+    bytes <- as.raw(sample.int(256, size, replace = TRUE) - 1L)
+    if (!isTRUE(gzipped)) {
+      return(bytes)
+    }
+    path <- tempfile()
+    on.exit(unlink(path))
+    con <- gzfile(path, "wb")
+    writeBin(bytes, con)
+    close(con)
+    readBin(path, "raw", file.size(path))
   }
 
   raw_file <- function(file, range) {
-    data <- raw_file_contents(file$content, file$size)
+    data <- raw_file_contents(file$content, file$size, file$gzipped)
     state$raw_file_ranges[[length(state$raw_file_ranges) + 1]] <- range %||% "none"
     start <- 0
     end <- length(data) - 1
