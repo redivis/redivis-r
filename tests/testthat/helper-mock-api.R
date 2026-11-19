@@ -263,6 +263,8 @@ mock_api_server <- function(port) {
     committed <- length(session$received)
     if (committed >= session$size) {
       if (!identical(md5_base64(session$received), session$md5)) {
+        # As in GCS, a session that fails its md5 check can't be used again
+        state$upload_sessions[[upload_id]]$dead <- TRUE
         return(json(list(status = 400, error = "bad_digest"), 400))
       }
       state$import_files[[paste0(session$import, "/", session$name)]] <- list(

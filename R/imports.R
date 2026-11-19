@@ -18,6 +18,10 @@ IMPORT_CHUNK_MAX_BYTES <- 128 * 2^20
 # How many times in a row a chunk can fail without any progress before the
 # upload gives up
 IMPORT_MAX_CHUNK_FAILURES <- 10
+# How many times a file's session can be replaced. A session also dies when the
+# file fails its md5 check on completion (e.g., it changed while it was
+# uploaded), which uploading it again is unlikely to fix.
+IMPORT_MAX_SESSION_REPLACEMENTS <- 3
 
 # A session that was cancelled, expired, or otherwise ended answers a chunk or
 # a status query with one of these
@@ -104,6 +108,7 @@ upload_import_file_in_chunks <- function(
   )
   committed <- 0
   failures <- 0
+  session_replacements <- 0
   # Start by asking the session what it already has
   needs_status_query <- TRUE
 
@@ -156,7 +161,16 @@ upload_import_file_in_chunks <- function(
           "The upload session for this file has ended (status ${outcome$status}), since the import was cancelled or expired. Imports must be finalized within 20 hours of being created."
         ))
       }
+      session_replacements <- session_replacements + 1
+      if (session_replacements > IMPORT_MAX_SESSION_REPLACEMENTS) {
+        abort_redivis_error(str_interp(
+          "The upload failed on ${IMPORT_MAX_SESSION_REPLACEMENTS + 1} upload sessions (the last ended with status ${outcome$status}). The file may have changed while it was uploaded."
+        ))
+      }
+      # The new session starts from nothing
       session_uri <- new_session_uri
+      committed <- 0
+      failures <- 0
       needs_status_query <- TRUE
       next
     }

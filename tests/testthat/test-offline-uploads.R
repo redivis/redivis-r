@@ -456,6 +456,31 @@ test_that("an upload fails when its dead session is all the import offers", {
   expect_length(mock$imports()$files, 0)
 })
 
+test_that("an upload gives up after its sessions keep dying", {
+  mock <- local_mock_api()
+  local_small_chunks()
+  import <- create_import(mock_table(), list(totalFileCount = 1))
+  content <- random_bytes(2^19)
+
+  # Each session fails its md5 check on completion, and the API replaces it
+  expect_error(
+    upload_import_file(
+      import,
+      "f.bin",
+      content,
+      md5 = openssl::base64_encode(as.raw(openssl::md5(raw(1))))
+    ),
+    "failed on 4 upload sessions",
+    class = "redivis_error"
+  )
+  requests <- session_requests(mock)
+  expect_equal(
+    sum(vapply(requests, function(r) r$method == "POST", logical(1))),
+    IMPORT_MAX_SESSION_REPLACEMENTS + 1 + 1
+  )
+  expect_length(mock$imports()$files, 0)
+})
+
 test_that("a failed import raises a job error", {
   mock <- local_mock_api()
   mock$set(import_statuses = list("failed"))
