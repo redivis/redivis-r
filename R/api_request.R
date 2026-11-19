@@ -3,7 +3,8 @@ make_request <- function(
   method = 'GET',
   query = NULL,
   payload = NULL,
-  files = NULL, # TODO: remove once we remove multipart uploads
+  # A raw vector to send as the request's body, instead of a JSON payload
+  body = NULL,
   parse_response = TRUE,
   path = "",
   download_path = NULL,
@@ -16,13 +17,16 @@ make_request <- function(
   end_byte = NULL,
   resumable_byte = 0,
   retry_count = 0,
-  auth_failures = character()
+  auth_failures = character(),
+  # Whether the request is safe to repeat, so that it's retried after a
+  # network error or a transient error status, whatever its method
+  idempotent = FALSE
 ) {
   args <- list(
     method = method,
     query = query,
     payload = payload,
-    files = files,
+    body = body,
     parse_response = parse_response,
     path = path,
     download_path = download_path,
@@ -35,7 +39,8 @@ make_request <- function(
     end_byte = end_byte,
     resumable_byte = resumable_byte,
     retry_count = retry_count,
-    auth_failures = auth_failures
+    auth_failures = auth_failures,
+    idempotent = idempotent
   )
 
   if (start_byte || resumable_byte || !is.null(end_byte)) {
@@ -55,13 +60,34 @@ make_request <- function(
   all_headers <- c(auth_headers, headers)
   authenticated <- !is.null(auth_headers$Authorization)
 
-  can_retry_503 <- retry_count < 10
+  # Any request can be retried when the API is unavailable, since it wasn't
+  # processed. Idempotent requests can also be retried after other transient
+  # errors.
+  can_retry_status <- function(status) {
+    retry_count < 10 &&
+      (status == 503 ||
+        (idempotent && status %in% c(408, 429, 500, 502, 504)))
+  }
+
+  # Retries a request after a retryable status, waiting as long as the API
+  # asks to when it's idempotent
+  retry_after_status <- function(resp_headers) {
+    retry_after <- if (idempotent) {
+      parse_retry_after(resp_headers[["retry-after"]])
+    }
+    retry_sleep(max(retry_count, retry_after))
+    args$retry_count <- args$retry_count + 1
+    do.call(make_request, args)
+  }
 
   # Retries a request that failed to connect (or timed out), returning the
   # retry's result. Only idempotent requests are safe to repeat, since we can't
   # know whether the server received the original.
   retry_failed_request <- function(failure) {
-    if (!(toupper(method) %in% c("GET", "HEAD")) || retry_count >= 10) {
+    if (
+      !(idempotent || toupper(method) %in% c("GET", "HEAD")) ||
+        retry_count >= 10
+    ) {
       stop(failure)
     }
     retry_sleep(retry_count)
@@ -79,23 +105,9 @@ make_request <- function(
     req <- req |> httr2::req_url_query(!!!query)
   }
 
-  if (!is.null(files)) {
-    # Multipart upload
-    for (nm in names(files)) {
-      file_val <- files[[nm]]
-      if (inherits(file_val, "form_file")) {
-        req <- req |>
-          httr2::req_body_multipart(
-            !!nm := curl::form_file(
-              file_val$path,
-              type = file_val$type,
-              name = file_val$name
-            )
-          )
-      } else {
-        req <- req |> httr2::req_body_multipart(!!nm := file_val)
-      }
-    }
+  if (!is.null(body)) {
+    req <- req |>
+      httr2::req_body_raw(body, type = "application/octet-stream")
   } else if (!is.null(payload)) {
     body <- jsonlite::toJSON(
       payload,
@@ -125,12 +137,11 @@ make_request <- function(
 
     status <- httr2::resp_status(res)
 
-    if (status == 503 && can_retry_503) {
+    if (can_retry_status(status)) {
+      resp_headers <- httr2::resp_headers(res)
       close(res)
       on.exit(NULL, add = FALSE)
-      retry_sleep(retry_count)
-      args$retry_count <- args$retry_count + 1
-      return(do.call(make_request, args))
+      return(retry_after_status(resp_headers))
     }
 
     if (status >= 400) {
@@ -187,13 +198,11 @@ make_request <- function(
 
   status <- httr2::resp_status(res)
 
-  if (status == 503 && can_retry_503) {
-    retry_sleep(retry_count)
-    args$retry_count <- args$retry_count + 1
-    return(do.call(make_request, args))
-  }
-
   resp_headers <- httr2::resp_headers(res)
+
+  if (can_retry_status(status)) {
+    return(retry_after_status(resp_headers))
+  }
 
   redivis_warning <- resp_headers[["x-redivis-warning"]]
   if (
@@ -228,6 +237,26 @@ make_request <- function(
   }
 
   response_content
+}
+
+# The seconds to wait before retrying, from a Retry-After header, which gives
+# either a number of seconds or a date. NULL if there's no usable header.
+parse_retry_after <- function(header) {
+  if (is.null(header)) {
+    return(NULL)
+  }
+  seconds <- suppressWarnings(as.numeric(header))
+  if (is.na(seconds)) {
+    date <- as.POSIXct(
+      strptime(header, "%a, %d %b %Y %H:%M:%S", tz = "GMT")
+    )
+    seconds <- as.numeric(difftime(date, Sys.time(), units = "secs"))
+  }
+  if (is.na(seconds)) {
+    return(NULL)
+  }
+  # Don't wait unreasonably long on a server's say-so
+  min(max(seconds, 0), 600)
 }
 
 # A backstop on authentication retries, in case the server's failures keep

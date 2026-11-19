@@ -1,4 +1,4 @@
-#' @include Dataset.R Workflow.R Variable.R Export.R util.R api_request.R TabularReader.R
+#' @include Dataset.R Workflow.R Variable.R Export.R util.R api_request.R TabularReader.R imports.R
 Table <- R6::R6Class(
   "Table",
   inherit = TabularReader,
@@ -220,45 +220,34 @@ Table <- R6::R6Class(
           }
         }
 
-        pb_bytes_multiplier <- 100 / total_size
+        if (length(files) == 0) {
+          return(invisible(NULL))
+        }
+
+        # The files are all added by one import, which processes them once
+        # they've all been uploaded
+        import <- create_import(
+          self,
+          list(
+            sourceType = "local",
+            totalFileCount = length(files),
+            totalSize = total_size
+          )
+        )
+
+        pb_bytes_multiplier <- if (total_size > 0) 100 / total_size else 0
         pb_bytes <- progressr::progressor(steps = 100)
 
+        # Files are uploaded in batches, sized to take about a minute, so that
+        # progress is reported steadily
         current_batch_timestamp <- as.numeric(Sys.time())
-        uploaded_files <- list()
         current_batch_files <- list()
-        current_temp_uploads_batch <- list()
         target_batch_size <- 1e8
         current_batch_size <- 0
-        progress_count <- 0
 
         for (i in seq_along(files)) {
           file <- files[[i]]
-
-          if (((i - 1) %% 1000) == 0) {
-            batch_end <- min(i + 999, length(files))
-            batch <- files[i:batch_end]
-            payload <- list(
-              tempUploads = lapply(batch, function(f) {
-                list(
-                  size = f$size,
-                  name = f$name,
-                  resumable = f$size > 5e7
-                )
-              })
-            )
-            res <- make_request(
-              method = "POST",
-              path = paste0(self$uri, "/tempUploads"),
-              payload = payload
-            )
-            current_temp_uploads_batch <- res$results
-          }
-
-          batch_index <- ((i - 1) %% 1000) + 1
-          current_batch_files[[length(current_batch_files) + 1]] <- list(
-            file = file,
-            temp_upload = current_temp_uploads_batch[[batch_index]]
-          )
+          current_batch_files[[length(current_batch_files) + 1]] <- file
           current_batch_size <- current_batch_size + file$size
 
           if (
@@ -268,6 +257,7 @@ Table <- R6::R6Class(
           ) {
             perform_table_parallel_file_upload(
               batch_files = current_batch_files,
+              import = import,
               max_parallelization = max_parallelization,
               pb_bytes = pb_bytes,
               pb_bytes_multiplier = pb_bytes_multiplier
@@ -280,38 +270,20 @@ Table <- R6::R6Class(
               target_batch_size <- target_batch_size * 2
             }
 
-            payload <- list(
-              files = lapply(current_batch_files, function(batch_file) {
-                list(
-                  name = batch_file$file$name,
-                  tempUploadId = batch_file$temp_upload$id
-                )
-              })
-            )
-            response <- make_request(
-              method = "POST",
-              path = paste0(self$uri, "/rawFiles"),
-              payload = payload
-            )
-
-            new_files <- lapply(response$results, function(f) {
-              File$new(id = f$id, table = self, properties = f)
-            })
-            uploaded_files <- c(uploaded_files, new_files)
-
             current_batch_timestamp <- as.numeric(Sys.time())
             current_batch_files <- list()
             current_batch_size <- 0
           }
         }
 
-        uploaded_files
+        wait_for_import(finalize_import(import), raise_on_fail = TRUE)
       }
       if (progress) {
         progressr::with_progress(add_table_files())
       } else {
         add_table_files()
       }
+      invisible(self)
     },
 
     list_uploads = function(max_results = NULL) {
@@ -380,58 +352,59 @@ rectify_ambiguous_table_container <- function(table) {
 
 perform_table_parallel_file_upload <- function(
   batch_files,
+  import,
   max_parallelization,
   pb_bytes = NULL,
   pb_bytes_multiplier = 1
 ) {
+  # Need a local variable for parallelization to work
+  local_upload_import_file <- upload_import_file
+
+  # redivis$config() overrides live only in this R session, and a multisession
+  # worker is a new one, which would otherwise send every upload request to the
+  # default api_endpoint. They're copied into the worker's own redivis namespace,
+  # which is where get_config() reads them
+  config_snapshot <- as.list(config_overrides, all.names = TRUE)
+  restore_config <- function() {
+    worker_config_overrides <- get("config_overrides", envir = asNamespace("redivis"))
+    for (key in names(config_snapshot)) {
+      assign(key, config_snapshot[[key]], envir = worker_config_overrides)
+    }
+  }
+
+  upload_file <- function(file_obj) {
+    restore_config()
+    # The upload reports how many bytes it has sent in total, while the
+    # progressor counts increments
+    reported_bytes <- 0
+    local_upload_import_file(
+      import,
+      name = file_obj$name,
+      source = if ("path" %in% names(file_obj)) file_obj$path else file_obj$data,
+      size = file_obj$size,
+      on_progress = if (!is.null(pb_bytes)) {
+        function(bytes) {
+          pb_bytes(amount = (bytes - reported_bytes) * pb_bytes_multiplier)
+          reported_bytes <<- bytes
+        }
+      }
+    )
+  }
+
+  if (max_parallelization <= 1 || length(batch_files) <= 1) {
+    lapply(batch_files, upload_file)
+    return(invisible(NULL))
+  }
+
   if (parallelly::supportsMulticore()) {
     oplan <- future::plan(future::multicore, workers = max_parallelization)
   } else {
     oplan <- future::plan(future::multisession, workers = max_parallelization)
   }
-
   on.exit(future::plan(oplan), add = TRUE)
 
-  local_perform_resumable_upload <- perform_resumable_upload
-  local_perform_standard_upload <- perform_standard_upload
-
-  results <- future_map_chunked(batch_files, function(batch_file) {
-    file_obj <- batch_file[["file"]]
-    temp_upload <- batch_file[["temp_upload"]]
-
-    if ("path" %in% names(file_obj)) {
-      data <- base::file(file_obj$path, "rb")
-      on.exit(close(data), add = TRUE)
-    } else {
-      data <- file_obj$data
-    }
-
-    if (isTRUE(temp_upload[["resumable"]])) {
-      local_perform_resumable_upload(
-        data = data,
-        on_progress = if (is.null(pb_bytes)) {
-          NULL
-        } else {
-          # The upload reports how many bytes it has sent in total, while the
-          # progressor counts increments
-          reported_bytes <- 0
-          function(bytes) {
-            pb_bytes(amount = (bytes - reported_bytes) * pb_bytes_multiplier)
-            reported_bytes <<- bytes
-          }
-        },
-        temp_upload_url = temp_upload[["url"]]
-      )
-    } else {
-      local_perform_standard_upload(
-        data = data,
-        temp_upload_url = temp_upload[["url"]],
-      )
-      if (!is.null(pb_bytes)) {
-        pb_bytes(amount = file_obj$size * pb_bytes_multiplier)
-      }
-    }
-  })
+  future_map_chunked(batch_files, upload_file)
+  invisible(NULL)
 }
 
 

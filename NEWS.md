@@ -1,3 +1,21 @@
+# redivis (development version)
+
+## What's new
+
+- Uploads (`Upload$create()` for files, data frames, and transfers, and
+  `Table$add_files()`) now use the Redivis imports API. Files are uploaded in
+  resumable chunks with MD5 verification, and requests are retried on
+  transient errors. Stream uploads and notebook output tables are unchanged.
+- `Table$add_files()` adds all of its files in a single import, and waits for
+  it to finish, raising an error if it fails. It now returns the table
+  (invisibly), rather than a list of `File` objects; use
+  `table$list_files()` or `table$file(path)` to get the files.
+
+## Improvements and fixes
+
+- `Upload$create()` no longer fails with "argument is of length zero" when
+  `schema` is given without a `type`.
+
 # redivis 0.14.3
 
 ## Improvements and fixes

@@ -133,13 +133,15 @@ test_that("a subdirectory can be downloaded", {
 test_that("files can be added from memory", {
   table <- local_live_table(is_file_index = TRUE)
 
-  table$add_files(
+  result <- table$add_files(
     files = list(
       list(name = "a.txt", data = "text content"),
       list(name = "dir/b.bin", data = as.raw(0:2))
     ),
     progress = FALSE
   )
+
+  expect_identical(result, table)
 
   expect_equal(table$file("a.txt")$read(), charToRaw("text content"))
   expect_equal(table$file("dir/b.bin")$read(), as.raw(0:2))

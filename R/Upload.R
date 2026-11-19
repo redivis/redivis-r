@@ -1,4 +1,4 @@
-#' @include Table.R Variable.R api_request.R TabularReader.R
+#' @include Table.R Variable.R api_request.R TabularReader.R imports.R
 Upload <- R6::R6Class(
   "Upload",
   inherit = TabularReader,
@@ -15,10 +15,7 @@ Upload <- R6::R6Class(
       if (!is.null(properties$uri)) {
         self$uri <- properties$uri
       } else {
-        escaped_name <- gsub('\\.', '_', name)
-        self$uri <- str_interp(
-          "${table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}"
-        )
+        self$uri <- upload_uri(table, name)
       }
     },
 
@@ -120,10 +117,6 @@ Upload <- R6::R6Class(
       progress = NULL
     ) {
       progress <- resolve_config("progress", progress)
-      MAX_SIMPLE_UPLOAD_SIZE = 2**20 # 1MB
-      MIN_RESUMABLE_UPLOAD_SIZE = 2**25 # 32MB
-
-      temp_upload_id <- NULL
 
       if (isTRUE(replace_on_conflict) && isTRUE(rename_on_conflict)) {
         abort_redivis_value_error(
@@ -131,21 +124,29 @@ Upload <- R6::R6Class(
         )
       }
 
-      if (self$name == "") {
-        if (is.character(content) && base::file.exists(content)) {
-          self$name <- basename(content)
-        } else if (inherits(content, "connection")) {
-          self$name <- basename(get_conn_name(content))
-        }
+      is_stream <- identical(type, "stream")
+      if (is_stream && !is.null(content)) {
+        abort_redivis_value_error(
+          "Stream uploads can't be created with content. Create the upload, then add rows to it with insert_rows()."
+        )
+      }
+
+      # The path of the file being uploaded, if content is one
+      content_path <- NULL
+      if (is.character(content) && base::file.exists(content)) {
+        content_path <- content
+      } else if (inherits(content, "connection")) {
+        content_path <- get_conn_name(content)
+      }
+
+      if (self$name == "" && !is.null(content_path)) {
+        self$name <- basename(content_path)
       }
 
       ## Check for a conflicting upload before uploading anything
       if (self$name != "") {
         if (is.null(self$properties$uri)) {
-          escaped_name <- gsub('\\.', '_', self$name)
-          self$uri <- str_interp(
-            "${self$table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}"
-          )
+          self$uri <- upload_uri(self$table, self$name)
         }
         if (self$exists()) {
           if (if_not_exists) {
@@ -161,13 +162,9 @@ Upload <- R6::R6Class(
         }
       }
 
-      ## If `content` is a file path (a string) then open it as a binary connection
+      ## Uploaded content is either a file, or a raw vector held in memory
       if (is.character(content)) {
-        if (base::file.exists(content)) {
-          f <- base::file(content, open = "rb", blocking = FALSE)
-          on.exit(close(f), add = TRUE)
-          content <- f
-        } else {
+        if (!base::file.exists(content)) {
           if (nchar(content) < 200) {
             abort_redivis_value_error(str_interp(
               "No file found at path provided for `content` argument: ${content}"
@@ -178,91 +175,49 @@ Upload <- R6::R6Class(
             )
           }
         }
-      } else if (
-        !is.null(content) &&
-          !inherits(content, "connection") &&
-          !is.raw(content)
-      ) {
-        temp_file_path <- convert_data_to_parquet(content)
-        f <- base::file(temp_file_path, open = "rb", blocking = FALSE)
-        on.exit(close(f), add = TRUE)
-        on.exit(base::file.remove(temp_file_path), add = TRUE)
+      } else if (inherits(content, "connection")) {
+        content <- content_path
+      } else if (!is.null(content) && !is.raw(content)) {
+        content <- convert_data_to_parquet(content)
+        on.exit(base::file.remove(content), add = TRUE)
         type <- "parquet"
-        content <- f
       }
 
-      ## Check if content is large enough to need a temporary upload.
-      if (
-        !is.null(content) &&
-          ((inherits(content, "connection") &&
-            file.exists(get_conn_name(content)) &&
-            file.info(get_conn_name(content))$size > MAX_SIMPLE_UPLOAD_SIZE) ||
-            (!inherits(content, "connection") &&
-              length(content) > MAX_SIMPLE_UPLOAD_SIZE))
-      ) {
-        size <- if (inherits(content, "connection")) {
-          file.info(get_conn_name(content))$size
-        } else {
-          length(content)
-        }
-
-        res <- make_request(
-          method = "POST",
-          path = str_interp("${self$table$uri}/tempUploads"),
-          payload = list(
-            tempUploads = list(list(
-              size = size,
-              name = self$name,
-              resumable = size >= MIN_RESUMABLE_UPLOAD_SIZE
-            ))
-          )
-        )
-        temp_upload <- res$results[[1]]
-
-        pbar_bytes <- NULL
-        on_progress <- NULL
-        if (progress) {
-          pbar_bytes <- txtProgressBar(min = 0, max = size, style = 3)
-          on_progress <- function(num_bytes) {
-            setTxtProgressBar(pbar_bytes, num_bytes)
-          }
-          on.exit(close(pbar_bytes), add = TRUE)
-        }
-
-        if (isTRUE(temp_upload$resumable)) {
-          perform_resumable_upload(
-            data = content,
-            on_progress = on_progress,
-            temp_upload_url = temp_upload$url
-          )
-        } else {
-          perform_standard_upload(
-            data = content,
-            temp_upload_url = temp_upload$url,
-            on_progress = on_progress
-          )
-        }
-
-        if (!is.null(on_progress)) {
-          on_progress(size)
-        }
-
-        temp_upload_id <- temp_upload$id
-        content <- NULL
-      }
-
-      if (!is.null(schema) && type != "stream") {
+      if (!is.null(schema) && !is_stream) {
         warning(
           "The schema option is ignored for uploads that aren't of type `stream`",
           call. = FALSE
         )
       }
 
-      files <- NULL
-      payload <- list(
-        name = self$name,
+      ## Stream uploads, and uploads created without data, are created directly
+      if (is_stream || (is.null(content) && is.null(transfer_specification))) {
+        response <- make_request(
+          method = "POST",
+          path = paste0(self$table$uri, "/uploads"),
+          payload = list(
+            name = self$name,
+            type = type,
+            schema = schema,
+            metadata = metadata,
+            hasHeaderRow = has_header_row,
+            skipBadRecords = skip_bad_records,
+            hasQuotedNewlines = has_quoted_newlines,
+            allowJaggedRows = allow_jagged_rows,
+            quoteCharacter = quote_character,
+            escapeCharacter = escape_character,
+            nullMarkers = null_markers,
+            delimiter = delimiter
+          )
+        )
+        self$properties <- response
+        self$uri <- self$properties$uri
+        return(self)
+      }
+
+      ## Anything else is imported: from the content, or a transfer's source
+      tabular_options <- list(
         type = type,
-        schema = schema,
         metadata = metadata,
         hasHeaderRow = has_header_row,
         skipBadRecords = skip_bad_records,
@@ -271,83 +226,105 @@ Upload <- R6::R6Class(
         quoteCharacter = quote_character,
         escapeCharacter = escape_character,
         nullMarkers = null_markers,
-        delimiter = delimiter,
-        tempUploadId = temp_upload_id,
-        transferSpecification = transfer_specification
+        delimiter = delimiter
       )
+      name <- if (self$name != "") self$name
 
-      if (!is.null(content)) {
-        data <- NULL
-        if (inherits(content, "connection")) {
-          data <- curl::form_file(get_conn_name(content))
-        } else {
-          # The API only accepts data sent as a file, which needs a file name
-          data_file <- tempfile()
-          writeBin(content, data_file)
-          on.exit(unlink(data_file), add = TRUE)
-          data <- curl::form_file(
-            data_file,
-            name = if (self$name != "") self$name else "data"
+      if (!is.null(transfer_specification)) {
+        import <- create_import(
+          self$table,
+          c(
+            list(
+              name = name,
+              sourceType = transfer_specification$sourceType,
+              sourcePaths = list(transfer_specification$sourcePath),
+              identity = transfer_specification$identity
+            ),
+            tabular_options
           )
-        }
-        metadata_file <- tempfile()
-        writeLines(
-          jsonlite::toJSON(payload, auto_unbox = TRUE, null = "null"),
-          metadata_file
         )
-        on.exit(unlink(metadata_file), add = TRUE)
+      } else {
+        size <- import_source_size(content)
+        md5 <- compute_md5_base64(content)
+        import <- create_import(
+          self$table,
+          c(
+            list(
+              name = name,
+              sourceType = "local",
+              totalFileCount = 1,
+              totalSize = size
+            ),
+            tabular_options
+          )
+        )
 
-        files <- list(
-          metadata = curl::form_file(
-            metadata_file,
-            type = "application/json"
-          ),
-          data = data
+        on_progress <- NULL
+        if (progress) {
+          pbar_bytes <- txtProgressBar(min = 0, max = max(size, 1), style = 3)
+          on_progress <- function(num_bytes) {
+            setTxtProgressBar(pbar_bytes, num_bytes)
+          }
+          on.exit(close(pbar_bytes), add = TRUE)
+        }
+
+        file_name <- if (!is.null(content_path)) {
+          basename(content_path)
+        } else if (!is.null(import$name)) {
+          import$name
+        } else {
+          str_interp("data.${type %||% 'csv'}")
+        }
+        upload_import_file(
+          import,
+          name = file_name,
+          source = content,
+          size = size,
+          md5 = md5,
+          on_progress = on_progress
         )
-        payload <- NULL
+        import <- finalize_import(import)
       }
 
-      response <- make_request(
-        method = "POST",
-        path = paste0(self$table$uri, "/uploads"),
-        payload = payload,
-        files = files
-      )
+      # The API renames the upload if its name was taken. The upload is still
+      # addressed by name, as any other is.
+      private$import_uri <- import$uri
+      self$name <- import$name %||% self$name
+      self$uri <- upload_uri(self$table, self$name)
+      self$properties <- import
 
-      self$properties <- response
-      self$uri <- self$properties$uri
-
-      ## Wait for the upload to finish if required
-      if (
-        (!is.null(content) ||
-          !is.null(temp_upload_id) ||
-          !is.null(transfer_specification)) &&
-          wait_for_finish
-      ) {
-        repeat {
-          poll_sleep(2)
-          self$get()
-          status <- self$properties$status
-          if (status == "completed") {
-            break
-          } else if (status == "failed") {
-            failed_properties <- self$properties
-            if (remove_on_fail) {
-              self$delete()
-            }
-            if (raise_on_fail) {
-              abort_redivis_job_error(
-                message = failed_properties$errorMessage,
-                kind = failed_properties$kind,
-                status = failed_properties$status
-              )
-            }
-            break
+      if (wait_for_finish) {
+        import <- wait_for_import(import, raise_on_fail = FALSE)
+        if (import$status %in% c("failed", "cancelled")) {
+          self$properties <- import
+          if (remove_on_fail) {
+            tryCatch(self$delete(), redivis_not_found_error = function(e) NULL)
           }
+          if (raise_on_fail) {
+            abort_redivis_job_error(
+              message = import$errorMessage,
+              kind = import$kind,
+              status = import$status
+            )
+          }
+        } else {
+          self$get()
         }
       }
 
       return(self)
     }
+  ),
+  private = list(
+    # The import that created this upload, if it was created through one
+    import_uri = NULL
   )
 )
+
+# The URI of a table's upload, by name
+upload_uri <- function(table, name) {
+  escaped_name <- gsub('\\.', '_', name)
+  str_interp(
+    "${table$uri}/uploads/${URLencode(escaped_name, reserved=TRUE)}"
+  )
+}
