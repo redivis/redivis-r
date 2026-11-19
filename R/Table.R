@@ -396,6 +396,16 @@ perform_table_parallel_file_upload <- function(
     return(invisible(NULL))
   }
 
+  # Workers authenticate with a token from this session, which is never within 5
+  # minutes of expiring (see get_auth_token()), while a batch takes about a
+  # minute. Only opening an upload session or uploading a file directly needs
+  # it: the chunks sent to a session are never sent credentials.
+  worker_auth_token <- get_auth_token()
+  local_with_worker_auth_token <- with_worker_auth_token
+  upload_file_in_worker <- function(file_obj) {
+    local_with_worker_auth_token(worker_auth_token, upload_file(file_obj))
+  }
+
   if (parallelly::supportsMulticore()) {
     oplan <- future::plan(future::multicore, workers = max_parallelization)
   } else {
@@ -403,7 +413,7 @@ perform_table_parallel_file_upload <- function(
   }
   on.exit(future::plan(oplan), add = TRUE)
 
-  future_map_chunked(batch_files, upload_file)
+  future_map_chunked(batch_files, upload_file_in_worker)
   invisible(NULL)
 }
 

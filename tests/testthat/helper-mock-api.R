@@ -80,6 +80,10 @@ mock_api_server <- function(port) {
     state$chunk_violations <- list()
     state$requests <- list()
     state$oauth_scopes <- list()
+    # How long the tokens that refreshing a login returns are valid for
+    state$token_lifetime <- 3600
+    # The refreshes of a login, each as the number of requests made before it
+    state$token_refreshes <- list()
   }
   reset_state()
 
@@ -472,7 +476,8 @@ mock_api_server <- function(port) {
         return(json(list(
           requests = state$requests,
           oauth_scopes = state$oauth_scopes,
-          raw_file_ranges = state$raw_file_ranges
+          raw_file_ranges = state$raw_file_ranges,
+          token_refreshes = state$token_refreshes
         )))
       }
       if (path == "/__mock/imports") {
@@ -496,14 +501,16 @@ mock_api_server <- function(port) {
       )))
     }
     if (path == "/oauth/token") {
+      state$token_refreshes[[length(state$token_refreshes) + 1]] <-
+        length(state$requests)
       payload <- jsonlite::base64url_enc(charToRaw(
         '{"scope":"data.edit workflow.write"}'
       ))
       return(json(list(
         access_token = paste0("header.", sub("=+$", "", payload), ".signature"),
         refresh_token = "refresh-token",
-        expires_at = as.numeric(Sys.time()) + 3600,
-        expires_in = 3600
+        expires_at = as.numeric(Sys.time()) + state$token_lifetime,
+        expires_in = state$token_lifetime
       )))
     }
 
@@ -878,6 +885,9 @@ local_mock_api <- function(authenticated = TRUE, env = parent.frame()) {
     set = function(...) mock_api_control("/__mock/state", body = list(...)),
     requests = function() mock_api_control("/__mock/requests")$requests,
     oauth_scopes = function() unlist(mock_api_control("/__mock/requests")$oauth_scopes),
+    token_refreshes = function() {
+      as.integer(unlist(mock_api_control("/__mock/requests")$token_refreshes))
+    },
     raw_file_ranges = function() {
       unlist(mock_api_control("/__mock/requests")$raw_file_ranges)
     },

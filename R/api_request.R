@@ -348,6 +348,7 @@ handle_error_response <- function(
 
   if (
     is_auth_failure &&
+      is.null(auth_vars$worker_auth_token) &&
       is.na(Sys.getenv("REDIVIS_API_TOKEN", unset = NA)) &&
       is.na(Sys.getenv("REDIVIS_DEFAULT_NOTEBOOK", unset = NA)) &&
       !(auth_failure %in% args$auth_failures) &&

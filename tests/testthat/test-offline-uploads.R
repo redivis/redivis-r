@@ -512,6 +512,42 @@ test_that("files are added by a single import", {
   )
 })
 
+test_that("a compressed file is hashed as stored, rather than decompressed", {
+  mock <- local_mock_api()
+  path <- file.path(withr::local_tempdir(), "data.csv.gz")
+  con <- gzfile(path, "w")
+  writeLines(rep("a,b,c", 100), con)
+  close(con)
+
+  # The mock refuses a file whose Content-MD5 doesn't match the bytes sent
+  mock_table()$add_files(files = list(path), progress = FALSE, max_parallelization = 1)
+
+  expect_named(mock$imports()$files, "i1/data.csv.gz")
+})
+
+test_that("parallel workers upload with this session's token, never refreshing the login", {
+  testthat::skip_if_not(parallelly::supportsMulticore(), "needs forked workers")
+  mock <- local_mock_api()
+  # Every token is within 5 minutes of expiring, so any request made with the
+  # saved login refreshes it first
+  mock$set(token_lifetime = 60)
+  auth_vars$cached_credentials$expires_at <- as.numeric(Sys.time()) + 60
+  files <- lapply(1:4, function(i) {
+    list(name = paste0(i, ".txt"), data = paste("file", i))
+  })
+
+  mock_table()$add_files(files = files, progress = FALSE, max_parallelization = 2)
+
+  file_requests <- which(grepl("^/api/v1/imports/i1/files/", mock$paths()))
+  expect_length(file_requests, 4)
+  expect_true(all(mock$authorized()[file_requests]))
+  # Refreshes are numbered by the requests made before them. Any between the
+  # first and last file uploads were made by the workers.
+  refreshes <- mock$token_refreshes()
+  expect_gt(length(refreshes), 0)
+  expect_false(any(refreshes >= min(file_requests) & refreshes < max(file_requests)))
+})
+
 test_that("a directory's files are added under their relative paths", {
   mock <- local_mock_api()
   dir <- withr::local_tempdir()

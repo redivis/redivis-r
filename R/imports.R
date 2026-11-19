@@ -280,8 +280,11 @@ compute_md5_base64 <- function(source) {
   digest <- if (is.raw(source)) {
     openssl::md5(source)
   } else {
-    # An unopened connection, which openssl opens and closes
-    openssl::md5(base::file(source))
+    # An unopened connection, which openssl opens and closes. raw = TRUE hashes
+    # the file's bytes as stored, which is what's uploaded: otherwise opening it
+    # decompresses a gzip, bzip2, or xz file (e.g. a .csv.gz or .rds), and the
+    # digest wouldn't match
+    openssl::md5(base::file(source, raw = TRUE))
   }
   openssl::base64_encode(as.raw(digest))
 }
