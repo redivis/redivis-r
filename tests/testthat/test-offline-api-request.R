@@ -66,6 +66,44 @@ test_that("persistent 503s eventually raise", {
   expect_length(mock$paths(), 11)
 })
 
+test_that("only idempotent requests retry other transient errors", {
+  mock <- local_mock_api()
+  waits <- c()
+  local_mocked_bindings(retry_sleep = function(seconds) waits <<- c(waits, seconds))
+  internal_error <- list(status = 500, body = list(status = 500, error = "internal_error"))
+  too_many <- list(
+    status = 429,
+    body = list(status = 429, error = "too_many_requests"),
+    headers = list("Retry-After" = "7")
+  )
+
+  mock$set(response_script = list(internal_error))
+  expect_error(
+    make_request(method = "POST", path = TABLE, payload = list(a = 1)),
+    class = "redivis_api_error"
+  )
+  expect_length(mock$paths(), 1)
+
+  mock$set(response_script = list(internal_error, too_many, PASS))
+  make_request(
+    method = "POST",
+    path = TABLE,
+    payload = list(a = 1),
+    idempotent = TRUE
+  )
+  expect_length(mock$paths(), 4)
+  # The API's Retry-After is honored
+  expect_equal(waits, c(0, 7))
+})
+
+test_that("parse_retry_after reads seconds or a date", {
+  expect_equal(parse_retry_after("12"), 12)
+  expect_null(parse_retry_after(NULL))
+  expect_null(parse_retry_after("soon"))
+  later <- format(Sys.time() + 60, "%a, %d %b %Y %H:%M:%S GMT", tz = "GMT")
+  expect_gt(parse_retry_after(later), 50)
+})
+
 # --- authentication retries --------------------------------------------------
 
 test_that("a request that succeeds after re-authenticating returns its result", {

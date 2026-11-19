@@ -9,6 +9,9 @@ auth_vars$cached_credentials <- NULL
 # The file that cached_credentials were loaded from, which changes when
 # config_dir does
 auth_vars$cached_credentials_file <- NULL
+# A token that a parallel worker was handed by the session that started it,
+# used in place of any login (see with_worker_auth_token())
+auth_vars$worker_auth_token <- NULL
 auth_vars$default_scope <- list('data.edit', 'workflow.write')
 auth_vars$client_id <- 'Ah850nGnQg5mFWd25nkyk9Y3'
 
@@ -104,7 +107,10 @@ load_cached_credentials <- function() {
 # can't, make_request() sends requests anonymously, since the resource may be
 # publicly accessible, and only prompts for a login if the server rejects it.
 has_credentials <- function() {
-  if (!is.na(Sys.getenv("REDIVIS_API_TOKEN", unset = NA))) {
+  if (
+    !is.null(auth_vars$worker_auth_token) ||
+      !is.na(Sys.getenv("REDIVIS_API_TOKEN", unset = NA))
+  ) {
     return(TRUE)
   }
   load_cached_credentials()
@@ -144,6 +150,9 @@ write_cached_credentials <- function() {
 # With allow_login = FALSE, returns NULL rather than logging in when no token
 # can be obtained without one
 get_auth_token <- function(scope = NULL, allow_login = TRUE) {
+  if (!is.null(auth_vars$worker_auth_token)) {
+    return(auth_vars$worker_auth_token)
+  }
   if (is.null(scope)) {
     scope <- auth_vars$default_scope
   }
@@ -190,6 +199,19 @@ get_auth_token <- function(scope = NULL, allow_login = TRUE) {
     upgrade_credentials = length(missing_scope) > 0
   )
   return(auth_vars$cached_credentials$access_token)
+}
+
+# Evaluates code, in a parallel worker, authenticated with a token from the
+# session that started the worker, rather than with the worker's own copy of the
+# saved login. A worker must never refresh that login: each refresh replaces its
+# refresh token, and the server revokes the login when a replaced one is used
+# again, as it would be by workers that refreshed at once. Nor can a worker log
+# in. A request the token is rejected for fails, rather than re-authenticating.
+with_worker_auth_token <- function(token, code) {
+  previous_token <- auth_vars$worker_auth_token
+  auth_vars$worker_auth_token <- token
+  on.exit(auth_vars$worker_auth_token <- previous_token, add = TRUE)
+  force(code)
 }
 
 clear_cached_credentials <- function() {

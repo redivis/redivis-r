@@ -132,7 +132,7 @@ large_csv <- function(num_rows) {
   ))
 }
 
-test_that("content over 1MB is sent through temporary storage", {
+test_that("content over 1MB is uploaded through an import", {
   table <- local_live_table()
   content <- large_csv(40000)
   expect_gt(length(content), 2^20)
@@ -143,7 +143,7 @@ test_that("content over 1MB is sent through temporary storage", {
   expect_equal(table$get()$properties$numRows, 40000)
 })
 
-test_that("a file over 1MB is sent through temporary storage", {
+test_that("a file over 1MB is uploaded through an import", {
   table <- local_live_table()
   path <- withr::local_tempfile(fileext = ".csv")
   writeBin(large_csv(40000), path)
@@ -154,12 +154,12 @@ test_that("a file over 1MB is sent through temporary storage", {
   expect_equal(upload$properties$numRows, 40000)
 })
 
-test_that("a file of 32MB or more is uploaded resumably", {
+test_that("a file over 32MB is uploaded in chunks", {
   skip_unless_slow()
   table <- local_live_table()
   path <- withr::local_tempfile(fileext = ".csv")
   writeBin(large_csv(1e6), path)
-  expect_gte(file.size(path), 2^25)
+  expect_gt(file.size(path), 2^25)
 
   upload <- table$upload()$create(path, progress = FALSE)
 

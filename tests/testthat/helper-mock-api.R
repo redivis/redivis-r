@@ -2,8 +2,8 @@
 # credentials. It runs in a background R process (the client blocks on its
 # requests, so it can't be served from the test process), and implements just
 # enough of the API to exercise the read paths (listRows, read sessions,
-# exports, raw files), retries, and authentication, with knobs for injecting
-# failures.
+# exports, raw files), imports, retries, and authentication, with knobs for
+# injecting failures.
 #
 # Tests call local_mock_api(), which points the client at the mock with a clean
 # state, and returns helpers for adjusting that state and inspecting requests.
@@ -33,8 +33,8 @@ mock_api_server <- function(port) {
     state$require_auth <- FALSE
     # Return 503 for the next N requests
     state$fail_503 <- 0
-    # Queued responses for the next requests, as list(status, body). A NULL
-    # status lets that request through to the normal handler.
+    # Queued responses for the next requests, as list(status, body, headers).
+    # A NULL status lets that request through to the normal handler.
     state$response_script <- list()
     # The next listRows response stops after this many rows
     state$truncate_rows_once <- 0
@@ -53,8 +53,37 @@ mock_api_server <- function(port) {
     # the first has expired
     state$storage_sessions <- 0
     state$expire_first_storage_session <- FALSE
+    # Whether a HEAD request finds an upload (GETs always do)
+    state$uploads_exist <- TRUE
+    # Imports by id, and the ids of the idempotency keys they were created with
+    state$imports <- list()
+    state$import_keys <- list()
+    # The name imports are given, as when the API renames one on a conflict
+    state$import_name <- NULL
+    # The statuses that polling a running import returns in turn, ending in
+    # "completed" once they run out. A failed import has import_error_message.
+    state$import_statuses <- list()
+    state$import_error_message <- "Bad data"
+    # The files uploaded to imports, as "importId/name" -> list(size, md5)
+    state$import_files <- list()
+    # Upload sessions by id, as list(import, name, size, md5, received, dead)
+    state$upload_sessions <- list()
+    # Opening a session again hands back the same one, even once it's dead
+    state$reopen_dead_sessions <- FALSE
+    # The next chunk sent fails with a 503, without committing anything
+    state$fail_chunk_once <- FALSE
+    # The next chunk sent only has this many of its bytes committed
+    state$partial_commit_once <- 0
+    # The next chunk sent finds its session dead
+    state$kill_session_once <- FALSE
+    # Chunks that broke the protocol's rules, as descriptions
+    state$chunk_violations <- list()
     state$requests <- list()
     state$oauth_scopes <- list()
+    # How long the tokens that refreshing a login returns are valid for
+    state$token_lifetime <- 3600
+    # The refreshes of a login, each as the number of requests made before it
+    state$token_refreshes <- list()
   }
   reset_state()
 
@@ -217,12 +246,216 @@ mock_api_server <- function(port) {
     )
   }
 
+  md5_base64 <- function(bytes) {
+    openssl::base64_encode(as.raw(openssl::md5(bytes)))
+  }
+
+  decode_file_name <- function(encoded) {
+    padded <- chartr("-_", "+/", encoded)
+    padded <- paste0(padded, strrep("=", (4 - nchar(padded) %% 4) %% 4))
+    rawToChar(openssl::base64_decode(padded))
+  }
+
+  # The response to a chunk, or a query of a session's status: complete, or
+  # how much has been committed so far
+  upload_session_status <- function(upload_id) {
+    session <- state$upload_sessions[[upload_id]]
+    committed <- length(session$received)
+    if (committed >= session$size) {
+      if (!identical(md5_base64(session$received), session$md5)) {
+        # As in GCS, a session that fails its md5 check can't be used again
+        state$upload_sessions[[upload_id]]$dead <- TRUE
+        return(json(list(status = 400, error = "bad_digest"), 400))
+      }
+      state$import_files[[paste0(session$import, "/", session$name)]] <- list(
+        size = committed,
+        md5 = session$md5
+      )
+      return(json(list(ok = TRUE)))
+    }
+    headers <- list()
+    if (committed > 0) {
+      headers$Range <- sprintf("bytes=0-%.0f", committed - 1)
+    }
+    list(status = 308L, headers = headers, body = "")
+  }
+
+  import_route <- function(method, path, query, body, body_raw, req) {
+    if (grepl("^/api/v1/tables/[^/]+/imports$", path) && method == "POST") {
+      request <- jsonlite::fromJSON(body, simplifyVector = FALSE)
+      id <- state$import_keys[[request$idempotencyKey]]
+      if (is.null(id)) {
+        id <- paste0("i", length(state$imports) + 1)
+        state$import_keys[[request$idempotencyKey]] <- id
+        state$imports[[id]] <- list(
+          kind = "import",
+          id = id,
+          uri = paste0("/imports/", id),
+          name = state$import_name %||% request$name %||% "imported",
+          # Remote sources are transferred right away
+          status = if (identical(request$sourceType %||% "local", "local")) {
+            "queued"
+          } else {
+            "running"
+          },
+          type = request$type,
+          totalFileCount = request$totalFileCount,
+          transferredFileCount = 0
+        )
+      }
+      return(json(state$imports[[id]]))
+    }
+
+    parts <- strsplit(sub("^/api/v1/imports/", "", path), "/", fixed = TRUE)[[1]]
+    id <- parts[[1]]
+    import <- state$imports[[id]]
+    if (is.null(import)) {
+      return(json(list(status = 404, error = "not_found"), 404))
+    }
+
+    if (length(parts) == 1 && method == "GET") {
+      if (import$status == "running") {
+        status <- "completed"
+        if (length(state$import_statuses) > 0) {
+          status <- state$import_statuses[[1]]
+          state$import_statuses <- state$import_statuses[-1]
+        }
+        import$status <- status
+        if (status == "failed") {
+          import$errorMessage <- state$import_error_message
+        }
+        state$imports[[id]] <- import
+      }
+      return(json(import))
+    }
+
+    if (length(parts) == 2 && parts[[2]] == "finalize" && method == "POST") {
+      if (import$status == "queued") {
+        import$status <- "running"
+        state$imports[[id]] <- import
+      }
+      return(json(import))
+    }
+
+    if (length(parts) >= 3 && parts[[2]] == "files") {
+      name <- decode_file_name(parts[[3]])
+
+      if (length(parts) == 3 && method == "POST") {
+        if (!identical(req$HTTP_CONTENT_MD5, md5_base64(body_raw))) {
+          return(list(
+            status = 400L,
+            headers = list("Content-Type" = "application/xml"),
+            body = "<Error><Code>BadDigest</Code></Error>"
+          ))
+        }
+        state$import_files[[paste0(id, "/", name)]] <- list(
+          size = length(body_raw),
+          md5 = req$HTTP_CONTENT_MD5
+        )
+        return(json(list(ok = TRUE)))
+      }
+
+      if (length(parts) == 4 && parts[[4]] == "uploadSession") {
+        if (method == "POST") {
+          request <- jsonlite::fromJSON(body, simplifyVector = FALSE)
+          # Asking again for the same file returns its session, while it's
+          # alive
+          upload_id <- NULL
+          for (session_id in names(state$upload_sessions)) {
+            session <- state$upload_sessions[[session_id]]
+            if (
+              session$import == id &&
+                session$name == name &&
+                session$size == request$size &&
+                session$md5 == request$md5Hash &&
+                (!session$dead || isTRUE(state$reopen_dead_sessions))
+            ) {
+              upload_id <- session_id
+            }
+          }
+          if (is.null(upload_id)) {
+            upload_id <- paste0("s", length(state$upload_sessions) + 1)
+            state$upload_sessions[[upload_id]] <- list(
+              import = id,
+              name = name,
+              size = request$size,
+              md5 = request$md5Hash,
+              received = raw(0),
+              dead = FALSE
+            )
+          }
+          return(json(list(
+            kind = "importUploadSession",
+            name = name,
+            size = request$size,
+            uri = sprintf(
+              "/imports/%s/files/%s/uploadSession?upload_id=%s",
+              id,
+              parts[[3]],
+              upload_id
+            )
+          )))
+        }
+
+        if (method == "PUT") {
+          upload_id <- query$upload_id
+          session <- state$upload_sessions[[upload_id]]
+          if (is.null(session) || isTRUE(session$dead)) {
+            return(json(list(status = 410, error = "gone"), 410))
+          }
+          if (isTRUE(state$kill_session_once)) {
+            state$kill_session_once <- FALSE
+            state$upload_sessions[[upload_id]]$dead <- TRUE
+            return(json(list(status = 410, error = "gone"), 410))
+          }
+          content_range <- req$HTTP_CONTENT_RANGE %||% ""
+          if (!startsWith(content_range, "bytes */")) {
+            if (isTRUE(state$fail_chunk_once)) {
+              state$fail_chunk_once <- FALSE
+              return(json(list(status = 503, error = "unavailable"), 503))
+            }
+            bounds <- as.numeric(regmatches(
+              content_range,
+              regexec("^bytes ([0-9]+)-([0-9]+)/([0-9]+)$", content_range)
+            )[[1]][-1])
+            committed <- length(session$received)
+            is_last <- bounds[[2]] == session$size - 1
+            if (bounds[[1]] != committed) {
+              state$chunk_violations[[length(state$chunk_violations) + 1]] <-
+                sprintf("chunk at %.0f, after %.0f committed", bounds[[1]], committed)
+            } else if (length(body_raw) != bounds[[2]] - bounds[[1]] + 1) {
+              state$chunk_violations[[length(state$chunk_violations) + 1]] <-
+                "chunk's length doesn't match its range"
+            } else if (!is_last && length(body_raw) %% 262144 != 0) {
+              state$chunk_violations[[length(state$chunk_violations) + 1]] <-
+                sprintf("chunk of %d bytes isn't a multiple of 256KiB", length(body_raw))
+            } else {
+              keep <- length(body_raw)
+              if (state$partial_commit_once > 0) {
+                keep <- min(keep, state$partial_commit_once)
+                state$partial_commit_once <- 0
+              }
+              state$upload_sessions[[upload_id]]$received <- c(
+                session$received,
+                body_raw[seq_len(keep)]
+              )
+            }
+          }
+          return(upload_session_status(upload_id))
+        }
+      }
+    }
+
+    json(list(status = 404, error = "not_found"), 404)
+  }
+
   route <- function(req) {
     method <- req$REQUEST_METHOD
     path <- req$PATH_INFO
     query <- parse_query(req$QUERY_STRING)
     body_raw <- req$rook.input$read()
-    body <- rawToChar(body_raw)
+    # Uploaded files' bodies are binary, and aren't read as text
+    body <- tryCatch(rawToChar(body_raw), error = function(e) "")
     authorized <- !is.null(req$HTTP_AUTHORIZATION)
 
     # Control endpoints for tests
@@ -245,7 +478,15 @@ mock_api_server <- function(port) {
         return(json(list(
           requests = state$requests,
           oauth_scopes = state$oauth_scopes,
-          raw_file_ranges = state$raw_file_ranges
+          raw_file_ranges = state$raw_file_ranges,
+          token_refreshes = state$token_refreshes
+        )))
+      }
+      if (path == "/__mock/imports") {
+        return(json(list(
+          imports = state$imports,
+          files = state$import_files,
+          chunk_violations = state$chunk_violations
         )))
       }
     }
@@ -262,26 +503,31 @@ mock_api_server <- function(port) {
       )))
     }
     if (path == "/oauth/token") {
+      state$token_refreshes[[length(state$token_refreshes) + 1]] <-
+        length(state$requests)
       payload <- jsonlite::base64url_enc(charToRaw(
         '{"scope":"data.edit workflow.write"}'
       ))
       return(json(list(
         access_token = paste0("header.", sub("=+$", "", payload), ".signature"),
         refresh_token = "refresh-token",
-        expires_at = as.numeric(Sys.time()) + 3600,
-        expires_in = 3600
+        expires_at = as.numeric(Sys.time()) + state$token_lifetime,
+        expires_in = state$token_lifetime
       )))
     }
 
+    content_type <- req$CONTENT_TYPE %||% req$HTTP_CONTENT_TYPE %||% ""
     state$requests[[length(state$requests) + 1]] <- list(
       method = method,
       path = path,
       query = query,
       authorized = authorized,
-      # The payloads of the queries created
-      payload = if (method == "POST" && path == "/api/v1/queries") {
+      # The payloads of JSON requests
+      payload = if (startsWith(content_type, "application/json")) {
         jsonlite::fromJSON(body, simplifyVector = FALSE)
-      }
+      },
+      content_range = req$HTTP_CONTENT_RANGE,
+      content_md5 = req$HTTP_CONTENT_MD5
     )
 
     # A stand-in for the signed URLs that temp uploads are sent to. A resumable
@@ -322,7 +568,9 @@ mock_api_server <- function(port) {
       scripted <- state$response_script[[1]]
       state$response_script <- state$response_script[-1]
       if (!is.null(scripted$status)) {
-        return(json(scripted$body, scripted$status))
+        res <- json(scripted$body, scripted$status)
+        res$headers <- c(res$headers, scripted$headers)
+        return(res)
       }
     } else if (
       isTRUE(state$require_auth) && !authorized && !endsWith(path, "/rows")
@@ -335,6 +583,10 @@ mock_api_server <- function(port) {
         ),
         401
       ))
+    }
+
+    if (grepl("^/api/v1/(tables/[^/]+/imports$|imports/)", path)) {
+      return(import_route(method, path, query, body, body_raw, req))
     }
 
     if (startsWith(path, "/api/v1/rawFiles/")) {
@@ -478,6 +730,9 @@ mock_api_server <- function(port) {
     }
 
     if (grepl("/uploads/", path, fixed = TRUE)) {
+      if (method == "HEAD" && !isTRUE(state$uploads_exist)) {
+        return(json(list(status = 404, error = "not_found"), 404))
+      }
       completed <- state$upload_status == "completed"
       return(json(list(
         uri = "/tables/a.b.mock/uploads/u1",
@@ -632,9 +887,13 @@ local_mock_api <- function(authenticated = TRUE, env = parent.frame()) {
     set = function(...) mock_api_control("/__mock/state", body = list(...)),
     requests = function() mock_api_control("/__mock/requests")$requests,
     oauth_scopes = function() unlist(mock_api_control("/__mock/requests")$oauth_scopes),
+    token_refreshes = function() {
+      as.integer(unlist(mock_api_control("/__mock/requests")$token_refreshes))
+    },
     raw_file_ranges = function() {
       unlist(mock_api_control("/__mock/requests")$raw_file_ranges)
     },
+    imports = function() mock_api_control("/__mock/imports"),
     paths = function(pattern = NULL) {
       paths <- vapply(
         mock_api_control("/__mock/requests")$requests,

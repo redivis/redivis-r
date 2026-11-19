@@ -1,6 +1,5 @@
 #' @include config.R
 #' @importFrom later later
-#' @importFrom rlang :=
 #' @importFrom stats setNames
 #' @importFrom utils browseURL flush.console object.size tail URLdecode
 NULL
